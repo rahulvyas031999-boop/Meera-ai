@@ -112,7 +112,7 @@ fun SplashScreen() {
                     .background(Brush.radialGradient(listOf(Color(0xFF9DB7FF), Color(0xFF5B8CFF), Color(0xFF1B2A6B))), CircleShape)
             )
             Spacer(Modifier.height(28.dp))
-            Text("मेरा AI", color = Color.White, fontSize = 36.sp, fontWeight = FontWeight.Bold)
+            Text("मीरा AI", color = Color.White, fontSize = 36.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(10.dp))
             Text("स्टार्ट हो रही है…", color = Muted, fontSize = 15.sp, modifier = Modifier.alpha(a))
         }
@@ -149,7 +149,15 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit) {
         drawerContent = {
             ModalDrawerSheet(drawerContainerColor = Panel) {
                 Column(Modifier.verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
-                    Text("मेरा AI", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(24.dp))
+                    Row(
+                        Modifier.fillMaxWidth().padding(start = 24.dp, end = 12.dp, top = 16.dp, bottom = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("मीरा AI", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        TextButton(onClick = { scope.launch { drawer.close() } }) {
+                            Text("✕ बंद करें", color = Muted, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
                     NavigationDrawerItem(
                         label = { Text("API Key") },
                         icon = { Text("🔑") },
