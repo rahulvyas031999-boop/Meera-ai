@@ -36,6 +36,8 @@ class VoiceViewModel(app: Application) : AndroidViewModel(app) {
             mode = prefs.mode,
             voice = prefs.voice,
             liveModel = prefs.liveModel,
+            chatModel = prefs.chatModel,
+            ttsModel = prefs.ttsModel,
             hasKey = prefs.apiKey.isNotBlank()
         )
     )
@@ -89,6 +91,20 @@ class VoiceViewModel(app: Application) : AndroidViewModel(app) {
         stop()
         prefs.liveModel = m
         _ui.update { it.copy(liveModel = m, error = null) }
+    }
+
+    fun setChatModel(m: String) {
+        if (m == prefs.chatModel) return
+        stop()
+        prefs.chatModel = m
+        _ui.update { it.copy(chatModel = m, error = null) }
+    }
+
+    fun setTtsModel(m: String) {
+        if (m == prefs.ttsModel) return
+        stop()
+        prefs.ttsModel = m
+        _ui.update { it.copy(ttsModel = m, error = null) }
     }
 
     fun saveKey(k: String) {
@@ -344,7 +360,7 @@ class VoiceViewModel(app: Application) : AndroidViewModel(app) {
                 }
 
                 try {
-                    rest.streamChat(history.takeLast(10), SystemPrompt.build()) { s ->
+                    rest.streamChat(history.takeLast(10), SystemPrompt.build(), prefs.chatModel) { s ->
                         full.append(s).append(' ')
                         _ui.update { it.copy(ai = full.toString().trim()) }
                         val cleanText = s.replace(Regex("[*#_~`]"), "").trim()

@@ -120,10 +120,14 @@ class GeminiRest(private val http: OkHttpClient, private val key: () -> String) 
     suspend fun streamChat(
         history: List<Pair<String, String>>,
         system: String,
+        preferredModel: String = Cfg.CHAT_MODELS.first(),
         onSentence: suspend (String) -> Unit,
     ): Unit = withContext<Unit>(Dispatchers.IO) {
         var last: Exception? = null
-        for (m in Cfg.CHAT_MODELS) {
+        val isDeep = preferredModel == "gemini-3.8-flash-thinking"
+        val firstModel = if (isDeep) "gemini-3.8-flash" else preferredModel
+        val modelList = (listOf(firstModel) + Cfg.CHAT_MODELS).distinct()
+        for (m in modelList) {
             val levels = listOf("MINIMAL", null)
             for (lv in levels) {
                 var emitted = false
@@ -180,9 +184,10 @@ class GeminiRest(private val http: OkHttpClient, private val key: () -> String) 
     }
 
     // ---- 3. Glitch-Free TTS (Proper WAV 'data' parser + Smooth Fade-In/Out) ----
-    suspend fun tts(text: String, voice: String): ByteArray = withContext(Dispatchers.IO) {
+    suspend fun tts(text: String, voice: String, preferredTts: String = Cfg.TTS_MODELS.first()): ByteArray = withContext(Dispatchers.IO) {
         var last: Exception? = null
-        for (ttsModel in Cfg.TTS_MODELS) {
+        val ttsList = (listOf(preferredTts) + Cfg.TTS_MODELS).distinct()
+        for (ttsModel in ttsList) {
             try {
                 val part = JSONObject().put("text", text)
                 val body = JSONObject()

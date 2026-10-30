@@ -112,7 +112,7 @@ fun SplashScreen() {
                     .background(Brush.radialGradient(listOf(Color(0xFF9DB7FF), Color(0xFF5B8CFF), Color(0xFF1B2A6B))), CircleShape)
             )
             Spacer(Modifier.height(28.dp))
-            Text("मीरा AI", color = Color.White, fontSize = 36.sp, fontWeight = FontWeight.Bold)
+            Text("Meera AI", color = Color.White, fontSize = 36.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(10.dp))
             Text("स्टार्ट हो रही है…", color = Muted, fontSize = 15.sp, modifier = Modifier.alpha(a))
         }
@@ -153,7 +153,7 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit) {
                         Modifier.fillMaxWidth().padding(start = 24.dp, end = 12.dp, top = 16.dp, bottom = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("मीरा AI", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        Text("Meera AI", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                         TextButton(onClick = { scope.launch { drawer.close() } }) {
                             Text("✕ बंद करें", color = Muted, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                         }
@@ -176,6 +176,17 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit) {
                         Text("Live मॉडल चुनें", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
                         Cfg.LIVE_MODELS.forEach { m ->
                             ModeRow(m, "WebSocket Bidi Audio", ui.liveModel == m) { vm.setLiveModel(m) }
+                        }
+                    } else {
+                        HorizontalDivider(Modifier.padding(vertical = 12.dp), color = Color(0xFF232C52))
+                        Text("Modular चैट ब्रेन (LLM / Reasoning)", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
+                        Cfg.CHAT_BRAIN_OPTIONS.forEach { (mCode, mDesc) ->
+                            ModeRow(mCode, mDesc, ui.chatModel == mCode) { vm.setChatModel(mCode) }
+                        }
+                        HorizontalDivider(Modifier.padding(vertical = 12.dp), color = Color(0xFF232C52))
+                        Text("Modular आवाज़ इंजन (TTS)", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
+                        Cfg.TTS_ENGINE_OPTIONS.forEach { (tCode, tDesc) ->
+                            ModeRow(tCode, tDesc, ui.ttsModel == tCode) { vm.setTtsModel(tCode) }
                         }
                     }
 

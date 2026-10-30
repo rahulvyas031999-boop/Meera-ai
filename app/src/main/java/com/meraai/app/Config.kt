@@ -12,6 +12,22 @@ object Cfg {
     )
 
     // स्पीड टेस्ट विजेता: ~2.0s से ~2.4s
+    val CHAT_BRAIN_OPTIONS = listOf(
+        "gemini-flash-lite-latest" to "⚡ Fast Chat (~2.0s)",
+        "gemini-3.5-flash-lite" to "⚡ Lite Chat Brain (~2.4s)",
+        "gemini-3.5-flash" to "🧠 Smart Balanced Brain (~2.4s)",
+        "gemini-3.6-flash" to "🧠 Advanced Flash (~3.7s)",
+        "gemini-3.8-flash" to "🚀 Gemini 3.8 Flash",
+        "gemini-3.8-flash-thinking" to "🔬 Deep Reasoning (Hard Tasks)",
+        "gemini-3.1-pro-preview" to "👑 Pro Brain (Complex & Coding)"
+    )
+
+    val TTS_ENGINE_OPTIONS = listOf(
+        "gemini-3.8-flash-lite-tts" to "⚡ Fast TTS (~1.5s)",
+        "gemini-3.8-flash-tts" to "🎙️ Expressive HD TTS (~1.8s)",
+        "gemini-2.5-flash-preview-tts" to "🛡️ Stable Fallback TTS (~2.6s)"
+    )
+
     val CHAT_MODELS = listOf(
         "gemini-flash-lite-latest",
         "gemini-3.5-flash-lite",
@@ -76,6 +92,8 @@ data class UiState(
     val mode: Mode = Mode.LIVE,
     val voice: String = "Kore",
     val liveModel: String = Cfg.LIVE_MODELS.first(),
+    val chatModel: String = Cfg.CHAT_BRAIN_OPTIONS.first().first,
+    val ttsModel: String = Cfg.TTS_ENGINE_OPTIONS.first().first,
     val hasKey: Boolean = false,
     val user: String = "",
     val ai: String = "",
@@ -102,6 +120,12 @@ class Prefs(ctx: Context) {
     var liveModel: String
         get() = sp.getString("live_model", Cfg.LIVE_MODELS.first()) ?: Cfg.LIVE_MODELS.first()
         set(v) { sp.edit().putString("live_model", v).apply() }
+    var chatModel: String
+        get() = sp.getString("chat_model", Cfg.CHAT_BRAIN_OPTIONS.first().first) ?: Cfg.CHAT_BRAIN_OPTIONS.first().first
+        set(v) { sp.edit().putString("chat_model", v).apply() }
+    var ttsModel: String
+        get() = sp.getString("tts_model", Cfg.TTS_ENGINE_OPTIONS.first().first) ?: Cfg.TTS_ENGINE_OPTIONS.first().first
+        set(v) { sp.edit().putString("tts_model", v).apply() }
 
     var silenceMs: Int
         get() = sp.getInt("silence_ms", Cfg.DEFAULT_SILENCE_MS)
