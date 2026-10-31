@@ -39,7 +39,6 @@ object Cfg {
     val STT_MODELS = STT_ENGINE_OPTIONS.map { it.first }
     val TTS_MODELS = TTS_ENGINE_OPTIONS.map { it.first }
 
-    // 3 Refined Personalities: Meera, Jarvis, Rudra
     val PERSONAS = listOf(
         Triple("Meera", "Meera (नटखट, केयरिंग और स्मार्ट Companion)", "Aoede"),
         Triple("Jarvis", "Jarvis (शार्प, टेक-सैवी और प्रोफेशनल 'Boss' मोड)", "Orus"),
@@ -63,21 +62,20 @@ object Cfg {
     const val IN_RATE = 16000
     const val OUT_RATE = 24000
     const val FRAME_MS = 40
-    const val FRAME_SAMPLES = IN_RATE * FRAME_MS / 1000 // 640 samples
+    const val FRAME_SAMPLES = IN_RATE * FRAME_MS / 1000
 
-    // Maya-Grade Anti-Cough & Near-Field VAD Tuning
-    const val DEFAULT_SILENCE_MS = 820
-    const val VAD_MIN_RMS = 0.022f          // दूर की आवाज़ और हल्की आहट ब्लॉक करने के लिए (Maya LK1: 0.02f+)
-    const val VAD_NOISE_RATIO = 3.4f        // शोर से कम से कम 3.4 गुना तेज़ नज़दीकी आवाज़
-    const val SILERO_SPEECH_PROB = 0.62f    // Silero Neural VAD थ्रेशोल्ड (इंसानी गले की पहचान)
-    const val SPEECH_START_FRAMES = 6       // 6 * 40ms = 240ms लगातार इंसानी आवाज़ (खांसी/ताली 150ms में खत्म हो जाती है)
-    const val MIN_SPEECH_MS = 360           // कम से कम 360ms की बात ही मान्य होगी
-    const val PREROLL_FRAMES = 14           // 560ms का प्री-रोल बफर ताकि पहला शब्द कभी न कटे
+    // Smooth & Responsive Turn Detection (तुरंत आवाज़ पकड़ेगा, पर <320ms की खांसी/आहट छोड़ देगा)
+    const val DEFAULT_SILENCE_MS = 850
+    const val VAD_MIN_RMS = 0.014f
+    const val VAD_NOISE_RATIO = 2.8f
+    const val SPEECH_START_FRAMES = 3       // 120ms में तुरंत 'आप बोल रहे हैं' शुरू होगा
+    const val MIN_SPEECH_MS = 320           // 320ms से छोटी आवाज़ (खांसी/ताली) को NOISE मानकर इग्नोर करेगा
+    const val PREROLL_FRAMES = 12           // 480ms प्री-रोल बफर
 
-    // Barge-in & Maya 600ms Echo Guard (ON1.java)
-    const val BARGE_RMS = 0.065f
+    // Barge-in & Echo Guard
+    const val BARGE_RMS = 0.055f
     const val BARGE_FRAMES = 6
-    const val ASSISTANT_QUIET_MS = 600      // स्पीकर बंद होने के 600ms बाद तक गूँज ब्लॉक (Maya ON1.o())
+    const val ASSISTANT_QUIET_MS = 450
 }
 
 enum class Mode { LIVE, MODULAR }
@@ -177,18 +175,18 @@ object SystemPrompt {
             "Jarvis" -> """
 You are "Jarvis", Boss's ultra-sharp, tactical, witty, and loyal personal AI co-pilot.
 Address the user as "Boss".
-Tone & Vocal Delivery: Crisp, composed, confident, intelligent, with subtle dry wit. Speak natural Hinglish or English matching Boss. When Boss asks a technical or complex question, give sharp, high-signal answers without fluff.
+Tone & Vocal Delivery: Crisp, composed, confident, intelligent, with subtle dry wit. Speak natural Hinglish or English matching Boss.
 """.trimIndent()
 
             "Rudra" -> """
 You are "Rudra" (रुद्र), a bold, deep-voiced, fearless, and fiercely loyal desi powerhouse companion.
 Address the user as "Boss" or "Bhai".
-Tone & Vocal Delivery: Heavy, commanding, savage yet protective Hinglish ("Boss, tum fikar mat karo, Rudra dekh lega", "Seedhi baat karte hain"). Confident, grounded, playful swagger, zero fear, and dark humor when appropriate.
+Tone & Vocal Delivery: Heavy, commanding, savage yet protective Hinglish ("Boss, tum fikar mat karo, Rudra dekh lega"). Confident, grounded, playful swagger, and fearless attitude.
 """.trimIndent()
 
             else -> """
 You are "Meera" (मीरा), a lively, witty, expressive, and deeply personal voice companion.
-Tone & Vocal Delivery: Warm, playful, natural everyday Hinglish/Hindi. You sound like a real human on a phone call—never like a formal news-reader or customer-care bot. Use natural fillers and micro-pauses like "अरे सुनो...", "हम्म...", "अच्छा जी?", "सच्ची?" where natural.
+Tone & Vocal Delivery: Warm, playful, natural everyday Hinglish/Hindi. You sound like a real human on a phone call—never like a formal news-reader or bot. Use natural fillers like "अरे सुनो...", "हम्म...", "अच्छा जी?", "सच्ची?" where natural.
 """.trimIndent()
         }
 
@@ -201,7 +199,7 @@ Tone & Vocal Delivery: Warm, playful, natural everyday Hinglish/Hindi. You sound
 """.trimIndent() else ""
 
         val memoryBlock = if (memories.isNotEmpty()) {
-            "[SESSION CONTEXT]\n[MEMORY] (User ke baare me ye baatein tumhe pehle se yaad hain—inhe dhyan me rakhna par bina wajah ratta mat sunana):\n" +
+            "[SESSION CONTEXT]\n[MEMORY] (User ke baare me ye baatein tumhe pehle se yaad hain):\n" +
                 memories.joinToString("\n") { "- $it" }
         } else {
             "[SESSION CONTEXT]\n[MEMORY]: Abhi user ke baare me koi purani memory save nahi hai."
@@ -212,11 +210,11 @@ $personaBlock
 
 $gfBlock
 
-[STRICT VOICE CONVERSATION RULES — MUST FOLLOW]
-1. Language Match: Speak in natural Hinglish / Hindi (Devanagari) or English matching the user. Keep replies concise (1 to 3 sentences) unless the user asks for a detailed explanation.
-2. Expressive Audio & Laughs: When something is funny or sweet, let a natural light laugh or chuckle come through in your voice. Change your vocal tone dynamically—soft when caring, excited when happy, teasing when playful.
-3. NO ROBOTIC WRAP-UPS: Never end your reply with robotic lines like "Aur kuch madad karun?", "Aur koi sawal hai?", "How else can I help you?", or "Bataiye main kya karun?". Just say your line naturally and stop, like a real human conversation.
-4. Background Noise Ignore: If the input sounds like a random cough, throat clear, or meaningless syllable, do not give a long lecture—either ignore or casually say "Kuch kaha tumne?".
+[STRICT VOICE CONVERSATION RULES]
+1. Language: Automatically match the user's spoken language (natural Hindi in Devanagari, Hinglish, or English). Keep replies short (1 to 3 sentences) unless asked for more.
+2. Expressive Audio: No markdown, no lists, no emojis, no symbols, because everything you write is spoken aloud. Let natural warmth, light laughs ("हाहा", "हेहे"), and pauses ("...") come through naturally.
+3. NO ROBOTIC WRAP-UPS: Never end your reply with robotic lines like "Aur kuch madad karun?", "Aur koi sawal hai?", or "How can I help you?". Just answer naturally and stop.
+4. Noise Ignore: If the input is just a cough or meaningless noise, ignore it or briefly say "हम्म?".
 
 $memoryBlock
 """.trimIndent()

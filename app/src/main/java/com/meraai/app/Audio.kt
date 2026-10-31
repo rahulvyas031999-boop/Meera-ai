@@ -1,7 +1,6 @@
 package com.meraai.app
 
 import android.annotation.SuppressLint
-import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioRecord
@@ -12,14 +11,9 @@ import android.media.audiofx.AudioEffect
 import android.media.audiofx.AutomaticGainControl
 import android.media.audiofx.NoiseSuppressor
 import android.util.Base64
-import org.tensorflow.lite.Interpreter
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.util.Arrays
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
-import kotlin.math.abs
 import kotlin.math.sqrt
 
 fun rmsOf(s: ShortArray): Float {
@@ -27,103 +21,6 @@ fun rmsOf(s: ShortArray): Float {
     var sum = 0.0
     for (v in s) { val f = v / 32768.0; sum += f * f }
     return sqrt(sum / s.size).toFloat()
-}
-
-/**
- * इंसानी गले की आवाज़ बनाम खांसी/शोर/दूसरे मोबाइल की आवाज़ की पहचान (Zero-Crossing + Vocal Formant Check).
- * खांसी, ताली या दूसरे मोबाइल के स्पीकर में हाई-फ्रीक्वेंसी शोर ज़्यादा होता है.
- */
-fun isHumanVocalFrame(s: ShortArray, rms: Float): Boolean {
-    if (s.size < 64 || rms < Cfg.VAD_MIN_RMS) return false
-    var zc = 0
-    var diffSum = 0.0
-    var prev = s[0].toInt()
-    for (i in 1 until s.size) {
-        val cur = s[i].toInt()
-        if ((prev >= 0 && cur < 0) || (prev < 0 && cur >= 0)) zc++
-        val d = (cur - prev) / 32768.0
-        diffSum += d * d
-        prev = cur
-    }
-    val zcr = zc.toFloat() / s.size
-    val hfRms = sqrt(diffSum / s.size).toFloat()
-    // इंसानी आवाज़ का ZCR आमतौर पर 0.02 से 0.28 के बीच होता है; खांसी/हिस्स/मोबाइल स्पीकर टोन में HF/RMS अनुपात बहुत तीखा होता है
-    val spectralRatio = hfRms / (rms + 1e-5f)
-    return zcr in 0.015f..0.30f && spectralRatio in 0.12f..1.15f
-}
-
-/**
- * Maya APK (C0115Bl1.java) का ओरिजिनल Silero VAD v4 TFLite इंजन:
- * 512 samples (32ms @ 16kHz) लेता है और 0.0 से 1.0 के बीच Human Speech Probability देता है.
- */
-class SileroVadEngine(ctx: Context) {
-    private var interpreter: Interpreter? = null
-    private val hState = FloatArray(128)
-    private val cState = FloatArray(128)
-    private val xInput = Array(1) { FloatArray(512) }
-    private val hInput = Array(2) { Array(1) { FloatArray(64) } }
-    private val cInput = Array(2) { Array(1) { FloatArray(64) } }
-    private val probOut = Array(1) { FloatArray(1) }
-    private val hOut = Array(1) { Array(2) { FloatArray(64) } }
-    private val cOut = Array(1) { Array(2) { FloatArray(64) } }
-
-    val isAvailable: Boolean get() = interpreter != null
-
-    init {
-        try {
-            val bytes = ctx.assets.open("guardian/silero_vad.tflite").use { it.readBytes() }
-            val buf = ByteBuffer.allocateDirect(bytes.size).order(ByteOrder.nativeOrder())
-            buf.put(bytes)
-            buf.rewind()
-            val opts = Interpreter.Options().setNumThreads(1)
-            val interp = Interpreter(buf, opts)
-            if (interp.inputTensorCount == 3 && interp.outputTensorCount == 3) {
-                interpreter = interp
-            } else {
-                interp.close()
-            }
-        } catch (_: Throwable) {
-            interpreter = null
-        }
-    }
-
-    @Synchronized
-    fun resetState() {
-        Arrays.fill(hState, 0f)
-        Arrays.fill(cState, 0f)
-    }
-
-    @Synchronized
-    fun speechProbability(frame: ShortArray): Float {
-        val interp = interpreter ?: return -1f
-        if (frame.size < 512) return -1f
-        return try {
-            for (i in 0 until 512) {
-                xInput[0][i] = frame[i] / 32768.0f
-            }
-            System.arraycopy(hState, 0, hInput[0][0], 0, 64)
-            System.arraycopy(hState, 64, hInput[1][0], 0, 64)
-            System.arraycopy(cState, 0, cInput[0][0], 0, 64)
-            System.arraycopy(cState, 64, cInput[1][0], 0, 64)
-
-            val inputs = arrayOf<Any>(xInput, hInput, cInput)
-            val outputs = mapOf<Int, Any>(0 to probOut, 1 to hOut, 2 to cOut)
-            interp.runForMultipleInputsOutputs(inputs, outputs)
-
-            System.arraycopy(hOut[0][0], 0, hState, 0, 64)
-            System.arraycopy(hOut[0][1], 0, hState, 64, 64)
-            System.arraycopy(cOut[0][0], 0, cState, 0, 64)
-            System.arraycopy(cOut[0][1], 0, cState, 64, 64)
-            probOut[0][0]
-        } catch (_: Throwable) {
-            -1f
-        }
-    }
-
-    fun close() {
-        try { interpreter?.close() } catch (_: Throwable) {}
-        interpreter = null
-    }
 }
 
 fun ShortArray.toLeBytes(): ByteArray {
@@ -163,7 +60,6 @@ fun pcmToWav(pcm: ByteArray, rate: Int): ByteArray {
 fun b64(b: ByteArray): String = Base64.encodeToString(b, Base64.NO_WRAP)
 fun unb64(s: String): ByteArray = Base64.decode(s, Base64.DEFAULT)
 
-/** माइक: 16kHz mono, VOICE_COMMUNICATION source + हार्डवेयर Echo Canceller / Noise Suppressor / AGC (Maya NI0.java स्टाइल हाई-प्रायोरिटी थ्रेड). */
 class MicRecorder(private val onFrame: (ShortArray) -> Unit) {
     private var rec: AudioRecord? = null
     private var thread: Thread? = null
@@ -176,7 +72,7 @@ class MicRecorder(private val onFrame: (ShortArray) -> Unit) {
         val r = AudioRecord(
             MediaRecorder.AudioSource.VOICE_COMMUNICATION, Cfg.IN_RATE,
             AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
-            maxOf(min, Cfg.FRAME_SAMPLES * 2 * 8)
+            maxOf(min, Cfg.FRAME_SAMPLES * 2 * 6)
         )
         if (r.state != AudioRecord.STATE_INITIALIZED) {
             r.release()
@@ -198,7 +94,7 @@ class MicRecorder(private val onFrame: (ShortArray) -> Unit) {
                 val n = r.read(buf, 0, buf.size)
                 if (n > 0) onFrame(buf.copyOf(n)) else if (n < 0) break
             }
-        }, "meera-micbus").also { it.isDaemon = true; it.start() }
+        }, "meera-mic").also { it.isDaemon = true; it.start() }
     }
 
     fun stop() {
@@ -212,7 +108,6 @@ class MicRecorder(private val onFrame: (ShortArray) -> Unit) {
     }
 }
 
-/** 24kHz PCM16 स्ट्रीमिंग प्लेयर + Maya 600ms Echo Guard Cooldown. */
 class PcmPlayer {
     private class Chunk(val data: ByteArray, val gen: Int)
 
@@ -221,15 +116,12 @@ class PcmPlayer {
     private val pending = AtomicInteger(0)
     @Volatile private var gen = 0
     @Volatile private var playUntil = 0L
-    @Volatile var lastActiveAt = 0L
-        private set
     @Volatile private var alive = true
     @Volatile var level = 0f
         private set
     private val thread: Thread
 
     val busy: Boolean get() = pending.get() > 0 || System.nanoTime() < playUntil
-    val inEchoCooldown: Boolean get() = busy || (System.currentTimeMillis() - lastActiveAt < Cfg.ASSISTANT_QUIET_MS)
 
     init {
         val rate = Cfg.OUT_RATE
@@ -267,7 +159,6 @@ class PcmPlayer {
                     val w = track.write(c.data, off, n)
                     if (w < 0) break
                     off += w
-                    lastActiveAt = System.currentTimeMillis()
                     playUntil = maxOf(playUntil, System.nanoTime()) + w * 1_000_000_000L / (Cfg.OUT_RATE * 2)
                 }
                 if (c.gen == gen) pending.addAndGet(-c.data.size)
@@ -290,7 +181,6 @@ class PcmPlayer {
     @Synchronized
     fun enqueue(pcm: ByteArray) {
         if (pcm.isEmpty()) return
-        lastActiveAt = System.currentTimeMillis()
         pending.addAndGet(pcm.size)
         queue.put(Chunk(pcm, gen))
     }
@@ -313,53 +203,25 @@ class PcmPlayer {
     }
 }
 
-/**
- * Maya-Grade TurnDetector:
- * 1) Near-field adaptive SNR gate (दूर की आवाज़ और हल्की खटपट रोके)
- * 2) Silero Neural VAD + Vocal Formant check (खांसी, ताली और दूसरे फोन की आवाज़ रोके)
- * 3) 240ms onset + 360ms minimum duration (छोटी खांसी या हिचकी पर कभी ट्रिगर न हो)
- */
-class TurnDetector(
-    private val silero: SileroVadEngine?,
-    private val silenceMs: () -> Int
-) {
+class TurnDetector(private val silenceMs: () -> Int) {
     enum class Ev { NONE, SPEECH_START, SPEECH_END, NOISE }
 
-    private var floor = 0.006f
+    private var floor = 0.004f
     private var speaking = false
     private var onset = 0
     private var voicedMs = 0
     private var silentMs = 0
 
-    val isUserSpeaking: Boolean @Synchronized get() = speaking
+    @Synchronized fun reset() { speaking = false; onset = 0; voicedMs = 0; silentMs = 0 }
+
+    @Synchronized fun forceSpeaking() { speaking = true; onset = 0; voicedMs = Cfg.MIN_SPEECH_MS; silentMs = 0 }
 
     @Synchronized
-    fun reset() {
-        speaking = false; onset = 0; voicedMs = 0; silentMs = 0
-        silero?.resetState()
-    }
-
-    @Synchronized
-    fun forceSpeaking() {
-        speaking = true; onset = 0; voicedMs = Cfg.MIN_SPEECH_MS; silentMs = 0
-    }
-
-    @Synchronized
-    fun process(frame: ShortArray, rms: Float): Ev {
+    fun process(rms: Float): Ev {
         val threshold = maxOf(Cfg.VAD_MIN_RMS, floor * Cfg.VAD_NOISE_RATIO)
-        val energyOk = rms > threshold
-        val vocalFormantOk = isHumanVocalFrame(frame, rms)
-        val sileroProb = if (energyOk && silero?.isAvailable == true) silero.speechProbability(frame) else -1f
-
-        // यदि Silero TFLite उपलब्ध है तो उसकी पुष्टि अनिवार्य है; अन्यथा फॉर्मैंट + एनर्जी चेक
-        val isRealHumanVoice = if (sileroProb >= 0f) {
-            energyOk && sileroProb >= Cfg.SILERO_SPEECH_PROB && vocalFormantOk
-        } else {
-            energyOk && vocalFormantOk
-        }
-
+        val voiced = rms > threshold
         if (!speaking) {
-            if (isRealHumanVoice) {
+            if (voiced) {
                 onset++
                 if (onset >= Cfg.SPEECH_START_FRAMES) {
                     speaking = true
@@ -368,28 +230,20 @@ class TurnDetector(
                     return Ev.SPEECH_START
                 }
             } else {
-                if (onset > 0) onset--
-                // केवल शांत फ्रेम्स से नॉइज़ फ्लोर अपडेट करें
-                if (rms < threshold) {
-                    floor = (floor * 0.94f + rms * 0.06f).coerceIn(0.003f, 0.035f)
-                }
+                onset = 0
+                floor = (floor * 0.95f + rms * 0.05f).coerceIn(0.001f, 0.03f)
             }
             return Ev.NONE
         }
-
-        // एक बार बोलना शुरू होने के बाद वाक्य के बीच में नरम थ्रेशोल्ड रखें ताकि शब्द न टूटें
-        val continuationVoiced = (rms > threshold * 0.72f) && (sileroProb < 0f || sileroProb >= 0.42f)
-        if (continuationVoiced) {
+        if (rms > threshold * 0.75f) {
             voicedMs += Cfg.FRAME_MS
             silentMs = 0
         } else {
             silentMs += Cfg.FRAME_MS
         }
-
         if (silentMs >= silenceMs()) {
             val ok = voicedMs >= Cfg.MIN_SPEECH_MS
             speaking = false; onset = 0; voicedMs = 0; silentMs = 0
-            silero?.resetState()
             return if (ok) Ev.SPEECH_END else Ev.NOISE
         }
         return Ev.NONE
