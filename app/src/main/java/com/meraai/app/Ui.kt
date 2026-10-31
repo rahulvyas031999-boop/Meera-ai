@@ -14,6 +14,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -42,6 +43,7 @@ import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
@@ -122,10 +124,10 @@ fun SplashScreen() {
 private fun statusText(s: UiState): String = when (s.state) {
     VState.IDLE -> "माइक दबाकर बात शुरू करें"
     VState.CONNECTING -> "कनेक्ट हो रहा है…"
-    VState.LISTENING -> "सुन रहा हूँ…"
+    VState.LISTENING -> "सुन रही हूँ…"
     VState.USER_SPEAKING -> "आप बोल रहे हैं"
-    VState.PROCESSING -> "सोच रहा हूँ…"
-    VState.ASSISTANT_SPEAKING -> "बोल रहा हूँ…"
+    VState.PROCESSING -> "सोच रही हूँ…"
+    VState.ASSISTANT_SPEAKING -> "बोल रही हूँ…"
     VState.ERROR -> s.error ?: "कुछ गड़बड़ हुई"
 }
 
@@ -135,6 +137,7 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit) {
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     var showKey by remember { mutableStateOf(false) }
+    var showMemory by remember { mutableStateOf(false) }
     LaunchedEffect(ui.askKey) { if (ui.askKey) { showKey = true; vm.consumeAskKey() } }
 
     val active = ui.state != VState.IDLE && ui.state != VState.ERROR
@@ -151,13 +154,15 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit) {
                 Column(Modifier.verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
                     Row(
                         Modifier.fillMaxWidth().padding(start = 24.dp, end = 12.dp, top = 16.dp, bottom = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Meera AI", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        Text("Meera AI", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
                         TextButton(onClick = { scope.launch { drawer.close() } }) {
                             Text("✕ बंद करें", color = Muted, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                         }
                     }
+
                     NavigationDrawerItem(
                         label = { Text("API Key") },
                         icon = { Text("🔑") },
@@ -166,31 +171,68 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit) {
                         onClick = { scope.launch { drawer.close() }; showKey = true },
                         modifier = Modifier.padding(horizontal = 12.dp)
                     )
-                    HorizontalDivider(Modifier.padding(vertical = 12.dp), color = Color(0xFF232C52))
+
+                    NavigationDrawerItem(
+                        label = { Text("Long-Term Memory (यादें)") },
+                        icon = { Text("🧠") },
+                        badge = { Text("${ui.memoryCount} सेव", color = Color(0xFF2EE6A8)) },
+                        selected = false,
+                        onClick = { scope.launch { drawer.close() }; showMemory = true },
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    )
+
+                    HorizontalDivider(Modifier.padding(vertical = 10.dp), color = Color(0xFF232C52))
+                    Text("पर्सनैलिटी चुनें (Meera / Jarvis / Rudra)", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
+                    Cfg.PERSONAS.forEach { (pCode, pDesc, _) ->
+                        ModeRow("🎭 $pCode", pDesc, ui.persona == pCode) { vm.setPersona(pCode) }
+                    }
+
+                    if (ui.persona == "Meera") {
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text("💖 Girlfriend / Companion Mode", color = Color.White, fontSize = 15.sp)
+                                Text("प्यार, नटखट नखरे, केयर और AI रोस्ट ऑन", color = Muted, fontSize = 12.sp)
+                            }
+                            Switch(checked = ui.girlfriendMode, onCheckedChange = { vm.setGirlfriendMode(it) })
+                        }
+                    }
+
+                    HorizontalDivider(Modifier.padding(vertical = 10.dp), color = Color(0xFF232C52))
                     Text("बातचीत का तरीका", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
-                    ModeRow("⚡ Live API", "Gemini Live — आवाज़ से आवाज़, सबसे तेज़", ui.mode == Mode.LIVE) { vm.setMode(Mode.LIVE) }
-                    ModeRow("🧩 Modular", "Fast STT (3.5) → Flash Lite → TTS (3.8)", ui.mode == Mode.MODULAR) { vm.setMode(Mode.MODULAR) }
+                    ModeRow("⚡ Live API", "Gemini Live — आवाज़ से आवाज़ (Affective Dialog)", ui.mode == Mode.LIVE) { vm.setMode(Mode.LIVE) }
+                    ModeRow("🧩 Modular", "Silero VAD → Fast STT → Brain → Expressive TTS", ui.mode == Mode.MODULAR) { vm.setMode(Mode.MODULAR) }
 
                     if (ui.mode == Mode.LIVE) {
-                        HorizontalDivider(Modifier.padding(vertical = 12.dp), color = Color(0xFF232C52))
+                        HorizontalDivider(Modifier.padding(vertical = 10.dp), color = Color(0xFF232C52))
                         Text("Live मॉडल चुनें", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
                         Cfg.LIVE_MODELS.forEach { m ->
-                            ModeRow(m, "WebSocket Bidi Audio", ui.liveModel == m) { vm.setLiveModel(m) }
+                            ModeRow(m, "WebSocket Bidi Audio + Silero Gate", ui.liveModel == m) { vm.setLiveModel(m) }
                         }
                     } else {
-                        HorizontalDivider(Modifier.padding(vertical = 12.dp), color = Color(0xFF232C52))
+                        HorizontalDivider(Modifier.padding(vertical = 10.dp), color = Color(0xFF232C52))
                         Text("Modular चैट ब्रेन (LLM / Reasoning)", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
                         Cfg.CHAT_BRAIN_OPTIONS.forEach { (mCode, mDesc) ->
                             ModeRow(mCode, mDesc, ui.chatModel == mCode) { vm.setChatModel(mCode) }
                         }
-                        HorizontalDivider(Modifier.padding(vertical = 12.dp), color = Color(0xFF232C52))
+
+                        HorizontalDivider(Modifier.padding(vertical = 10.dp), color = Color(0xFF232C52))
+                        Text("Modular सुनने का इंजन (STT)", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
+                        Cfg.STT_ENGINE_OPTIONS.forEach { (sCode, sDesc) ->
+                            ModeRow(sCode, sDesc, ui.sttModel == sCode) { vm.setSttModel(sCode) }
+                        }
+
+                        HorizontalDivider(Modifier.padding(vertical = 10.dp), color = Color(0xFF232C52))
                         Text("Modular आवाज़ इंजन (TTS)", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
                         Cfg.TTS_ENGINE_OPTIONS.forEach { (tCode, tDesc) ->
                             ModeRow(tCode, tDesc, ui.ttsModel == tCode) { vm.setTtsModel(tCode) }
                         }
                     }
 
-                    HorizontalDivider(Modifier.padding(vertical = 12.dp), color = Color(0xFF232C52))
+                    HorizontalDivider(Modifier.padding(vertical = 10.dp), color = Color(0xFF232C52))
                     Text("आवाज़ चुनें (Google Voices)", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
                     Cfg.VOICES.forEach { (vCode, vLabel) ->
                         ModeRow("🔊 $vCode", vLabel, ui.voice == vCode) { vm.setVoice(vCode) }
@@ -207,15 +249,21 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit) {
                 IconButton(onClick = { scope.launch { drawer.open() } }, modifier = Modifier.align(Alignment.CenterStart)) {
                     Icon(Icons.Default.Menu, contentDescription = "मेन्यू", tint = Color.White)
                 }
+                val gfTag = if (ui.persona == "Meera" && ui.girlfriendMode) " 💖" else ""
+                val modeTag = if (ui.mode == Mode.LIVE) "Live" else "Modular"
                 Text(
-                    if (ui.mode == Mode.LIVE) "Live (${ui.liveModel}) • ${ui.voice}" else "Modular • ${ui.voice}",
+                    "${ui.persona}$gfTag • $modeTag • ${ui.voice} • 🧠${ui.memoryCount}",
                     color = Muted, fontSize = 13.sp, modifier = Modifier.align(Alignment.Center)
                 )
             }
             Spacer(Modifier.weight(1f))
             Orb(ui.state, vm, Modifier.size(280.dp))
             Spacer(Modifier.height(20.dp))
-            Text(statusText(ui), color = if (ui.state == VState.ERROR) Color(0xFFFF6B6B) else Color.White, fontSize = 18.sp, textAlign = TextAlign.Center)
+            Text(
+                statusText(ui),
+                color = if (ui.state == VState.ERROR) Color(0xFFFF6B6B) else Color.White,
+                fontSize = 18.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center
+            )
             ui.latencyMs?.let { Text("⏱ $it ms", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp)) }
             Spacer(Modifier.height(14.dp))
             Column(Modifier.fillMaxWidth().heightIn(min = 110.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -235,6 +283,65 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit) {
             onDismiss = { showKey = false }
         )
     }
+
+    if (showMemory) {
+        MemoryDialog(
+            memories = vm.getMemoriesList(),
+            onAdd = { vm.addManualMemory(it) },
+            onClear = { vm.clearAllMemories(); showMemory = false },
+            onDismiss = { showMemory = false }
+        )
+    }
+}
+
+@Composable
+private fun MemoryDialog(
+    memories: List<String>,
+    onAdd: (String) -> Unit,
+    onClear: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    var newFact by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("🧠 Meera की Long-Term Memory") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text(
+                    "बातचीत के दौरान आप जो भी नाम, पसंद, काम या वादा बताते हैं, Meera उसे अपने आप यहाँ याद रखती है:",
+                    fontSize = 12.sp, color = Muted
+                )
+                Spacer(Modifier.height(10.dp))
+                if (memories.isEmpty()) {
+                    Text("अभी कोई याद सेव नहीं है।", fontSize = 13.sp, color = Color.White)
+                } else {
+                    memories.forEach { m ->
+                        Text("• $m", fontSize = 13.sp, color = Color.White, modifier = Modifier.padding(vertical = 2.dp))
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = newFact,
+                    onValueChange = { newFact = it },
+                    singleLine = true,
+                    label = { Text("नई बात जोड़ें (जैसे: मेरा नाम राहुल है)") }
+                )
+            }
+        },
+        confirmButton = {
+            Row {
+                if (memories.isNotEmpty()) {
+                    TextButton(onClick = onClear) { Text("सब मिटाएँ", color = Color(0xFFFF6B6B)) }
+                }
+                TextButton(
+                    onClick = {
+                        if (newFact.isNotBlank()) { onAdd(newFact); newFact = "" }
+                        else onDismiss()
+                    }
+                ) { Text(if (newFact.isNotBlank()) "जोड़ें" else "बंद करें") }
+            }
+        }
+    )
 }
 
 @Composable

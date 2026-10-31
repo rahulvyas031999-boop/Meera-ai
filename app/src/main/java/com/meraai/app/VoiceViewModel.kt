@@ -19,13 +19,15 @@ import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 class VoiceViewModel(app: Application) : AndroidViewModel(app) {
-
     private val prefs = Prefs(app)
+    private val silero = SileroVadEngine(app)
     private val http = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(45, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
         .build()
     private val wsHttp = http.newBuilder().readTimeout(0, TimeUnit.SECONDS).pingInterval(20, TimeUnit.SECONDS).build()
     private val rest = GeminiRest(http) { prefs.apiKey }
@@ -34,15 +36,18 @@ class VoiceViewModel(app: Application) : AndroidViewModel(app) {
     private val _ui = MutableStateFlow(
         UiState(
             mode = prefs.mode,
+            persona = prefs.persona,
+            girlfriendMode = prefs.girlfriendMode,
             voice = prefs.voice,
             liveModel = prefs.liveModel,
             chatModel = prefs.chatModel,
+            sttModel = prefs.sttModel,
             ttsModel = prefs.ttsModel,
-            hasKey = prefs.apiKey.isNotBlank()
+            hasKey = prefs.apiKey.isNotBlank(),
+            memoryCount = prefs.getMemories().size
         )
     )
     val ui: StateFlow<UiState> = _ui.asStateFlow()
-
     private val _level = MutableStateFlow(0f)
     val level: StateFlow<Float> = _level.asStateFlow()
 
@@ -50,15 +55,19 @@ class VoiceViewModel(app: Application) : AndroidViewModel(app) {
     @Volatile private var active = false
     val isActive: Boolean get() = active
 
+    private val requestInFlight = AtomicBoolean(false)
+
     private var mic: MicRecorder? = null
     @Volatile private var player: PcmPlayer? = null
     @Volatile private var live: GeminiLive? = null
     private var pipeline: Job? = null
 
-    private val detector = TurnDetector { prefs.silenceMs }
+    private val detector = TurnDetector(silero) { prefs.silenceMs }
     private val preRoll = ArrayDeque<ShortArray>()
     private val utter = ArrayList<ShortArray>()
     @Volatile private var collecting = false
+    @Volatile private var liveStreamingSpeech = false
+    private var liveTailFrames = 0
     private var bargeFrames = 0
     private var quietMs = 0
     @Volatile private var speechEndAt = 0L
@@ -66,17 +75,53 @@ class VoiceViewModel(app: Application) : AndroidViewModel(app) {
     @Volatile private var dropAudio = false
     @Volatile private var liveTurnOpen = false
     @Volatile private var newUserTurn = true
-
     private val userBuf = StringBuilder()
     private val aiBuf = StringBuilder()
     private val history = ArrayList<Pair<String, String>>()
 
-    // ---- सेटिंग्स ----
+    fun getMemoriesList(): List<String> = prefs.getMemories()
+
+    fun addManualMemory(fact: String) {
+        prefs.addMemory(fact)
+        _ui.update { it.copy(memoryCount = prefs.getMemories().size) }
+    }
+
+    fun clearAllMemories() {
+        prefs.clearMemories()
+        _ui.update { it.copy(memoryCount = 0) }
+    }
+
+    private fun autoLearnFromUser(text: String) {
+        if (text.length < 6) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val fact = rest.extractMemoryFact(text, prefs.getMemories())
+            if (!fact.isNullOrBlank()) {
+                prefs.addMemory(fact)
+                _ui.update { it.copy(memoryCount = prefs.getMemories().size) }
+            }
+        }
+    }
+
     fun setMode(m: Mode) {
         if (m == prefs.mode) return
         stop()
         prefs.mode = m
         _ui.update { it.copy(mode = m, error = null) }
+    }
+
+    fun setPersona(p: String) {
+        if (p == prefs.persona) return
+        stop()
+        prefs.persona = p
+        val defaultVoice = Cfg.PERSONAS.find { it.first == p }?.third ?: prefs.voice
+        prefs.voice = defaultVoice
+        _ui.update { it.copy(persona = p, voice = defaultVoice, error = null) }
+    }
+
+    fun setGirlfriendMode(enabled: Boolean) {
+        stop()
+        prefs.girlfriendMode = enabled
+        _ui.update { it.copy(girlfriendMode = enabled, error = null) }
     }
 
     fun setVoice(v: String) {
@@ -100,6 +145,13 @@ class VoiceViewModel(app: Application) : AndroidViewModel(app) {
         _ui.update { it.copy(chatModel = m, error = null) }
     }
 
+    fun setSttModel(m: String) {
+        if (m == prefs.sttModel) return
+        stop()
+        prefs.sttModel = m
+        _ui.update { it.copy(sttModel = m, error = null) }
+    }
+
     fun setTtsModel(m: String) {
         if (m == prefs.ttsModel) return
         stop()
@@ -119,7 +171,6 @@ class VoiceViewModel(app: Application) : AndroidViewModel(app) {
         _ui.update { it.copy(state = VState.ERROR, error = m) }
     }
 
-    // ---- सेशन ----
     @Suppress("DEPRECATION")
     fun start() {
         if (active) return
@@ -128,20 +179,21 @@ class VoiceViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         active = true
+        requestInFlight.set(false)
         history.clear(); userBuf.clear(); aiBuf.clear()
         newUserTurn = true; dropAudio = false; liveTurnOpen = false
+        liveStreamingSpeech = false; liveTailFrames = 0
         detector.reset(); preRoll.clear(); utter.clear(); collecting = false; bargeFrames = 0; quietMs = 0
-        _ui.update { it.copy(user = "", ai = "", error = null, latencyMs = null) }
+        _ui.update { it.copy(user = "", ai = "", error = null, latencyMs = null, memoryCount = prefs.getMemories().size) }
         setState(VState.CONNECTING)
-
         am.mode = AudioManager.MODE_IN_COMMUNICATION
         am.isSpeakerphoneOn = true
-
+        val sysPrompt = SystemPrompt.build(prefs.persona, prefs.girlfriendMode, prefs.getMemories())
         try {
             player = PcmPlayer()
             if (prefs.mode == Mode.LIVE) {
                 live = GeminiLive(wsHttp, liveEvents).also {
-                    it.connect(prefs.apiKey, prefs.liveModel, prefs.voice, SystemPrompt.build(), prefs.silenceMs)
+                    it.connect(prefs.apiKey, prefs.liveModel, prefs.voice, sysPrompt, prefs.silenceMs)
                 }
             } else {
                 startMic()
@@ -155,6 +207,8 @@ class VoiceViewModel(app: Application) : AndroidViewModel(app) {
     fun stop() {
         if (!active && st == VState.IDLE) return
         active = false
+        requestInFlight.set(false)
+        liveStreamingSpeech = false
         pipeline?.cancel(); pipeline = null
         live?.close(); live = null
         mic?.stop(); mic = null
@@ -183,76 +237,124 @@ class VoiceViewModel(app: Application) : AndroidViewModel(app) {
     private fun turnOpen(): Boolean =
         (prefs.mode == Mode.MODULAR && pipeline?.isActive == true) || liveTurnOpen
 
-    // ---- हर 40ms का माइक फ्रेम ----
+    // ---------------- हर 40ms का माइक फ़्रेम (Maya Silero VAD + Echo Guard के साथ) ----------------
     private fun onFrame(frame: ShortArray) {
         if (!active) return
         val rms = rmsOf(frame)
         val p = player
-        val assistant = st == VState.ASSISTANT_SPEAKING || p?.busy == true
-        _level.value = if (assistant) (p?.level ?: 0f) else (rms * 6f).coerceIn(0f, 1f)
+        val assistantActive = st == VState.ASSISTANT_SPEAKING || p?.busy == true
+        val echoGuardActive = assistantActive || p?.inEchoCooldown == true
 
-        if (assistant) {
-            if (rms > Cfg.BARGE_RMS) {
-                bargeFrames++
-                if (bargeFrames > Cfg.BARGE_FRAMES) { bargeFrames = 0; bargeIn() }
+        _level.value = if (assistantActive) (p?.level ?: 0f) else if (detector.isUserSpeaking) (rms * 6f).coerceIn(0f, 1f) else (rms * 2f).coerceIn(0f, 0.25f)
+
+        // Barge-in: केवल तभी जब असली इंसानी आवाज़ (Silero + Formant) ज़ोर से लगातार 240ms तक आए
+        if (assistantActive) {
+            if (rms > Cfg.BARGE_RMS && isHumanVocalFrame(frame, rms)) {
+                val prob = if (silero.isAvailable) silero.speechProbability(frame) else 1f
+                if (prob < 0f || prob >= Cfg.SILERO_SPEECH_PROB) {
+                    bargeFrames++
+                    if (bargeFrames >= Cfg.BARGE_FRAMES) { bargeFrames = 0; bargeIn() }
+                } else bargeFrames = 0
             } else bargeFrames = 0
         } else bargeFrames = 0
 
         if (st == VState.ASSISTANT_SPEAKING) {
             if (p?.busy != true && !turnOpen()) {
                 quietMs += Cfg.FRAME_MS
-                if (quietMs > Cfg.ASSISTANT_QUIET_MS) {
+                if (quietMs >= Cfg.ASSISTANT_QUIET_MS) {
                     quietMs = 0
                     detector.reset()
+                    preRoll.clear()
                     setState(VState.LISTENING)
                 }
             } else quietMs = 0
         }
 
-        val busy = st == VState.ASSISTANT_SPEAKING || player?.busy == true
-        if (prefs.mode == Mode.LIVE) liveFrame(frame, rms, busy) else modularFrame(frame, rms, busy)
+        if (prefs.mode == Mode.LIVE) liveFrame(frame, rms, echoGuardActive) else modularFrame(frame, rms, echoGuardActive)
     }
 
     private fun bargeIn() {
         player?.flush()
         if (prefs.mode == Mode.MODULAR) {
             pipeline?.cancel()
+            requestInFlight.set(false)
             utter.clear(); utter.addAll(preRoll); collecting = true
         } else {
             dropAudio = true
             liveTurnOpen = false
+            liveStreamingSpeech = true
         }
         detector.forceSpeaking()
         quietMs = 0
         setState(VState.USER_SPEAKING)
     }
 
-    // ---- LIVE ----
-    private fun liveFrame(frame: ShortArray, rms: Float, busy: Boolean) {
+    // ---------------- LIVE (Local Silero VAD Gated — खांसी/शोर सर्वर पर कभी नहीं जाएगा) ----------------
+    private fun liveFrame(frame: ShortArray, rms: Float, echoGuard: Boolean) {
         val l = live ?: return
         if (!l.ready) return
-        val send = if (busy && rms < Cfg.BARGE_RMS) ShortArray(frame.size) else frame
-        l.sendAudio(send.toLeBytes())
-        if (busy) return
-        when (detector.process(rms)) {
-            TurnDetector.Ev.SPEECH_START -> if (st == VState.LISTENING || st == VState.PROCESSING) setState(VState.USER_SPEAKING)
+
+        if (echoGuard) {
+            // जब मीरा बोल रही हो या 600ms इको-गार्ड में हो, तो सर्वर को पूर्ण सन्नाटा भेजें
+            l.sendAudio(ShortArray(frame.size).toLeBytes())
+            return
+        }
+
+        if (!liveStreamingSpeech) {
+            preRoll.addLast(frame)
+            while (preRoll.size > Cfg.PREROLL_FRAMES) preRoll.removeFirst()
+        }
+
+        when (detector.process(frame, rms)) {
+            TurnDetector.Ev.SPEECH_START -> {
+                liveStreamingSpeech = true
+                liveTailFrames = 0
+                if (st == VState.LISTENING || st == VState.PROCESSING) setState(VState.USER_SPEAKING)
+                // Maya PI0.java ट्रिक: बोलना कन्फर्म होते ही पहले के 560ms प्री-रोल फ्रेम्स भेजें ताकि पहला शब्द न कटे
+                while (preRoll.isNotEmpty()) {
+                    l.sendAudio(preRoll.removeFirst().toLeBytes())
+                }
+                l.sendAudio(frame.toLeBytes())
+            }
             TurnDetector.Ev.SPEECH_END -> {
-                speechEndAt = System.currentTimeMillis(); firstAudioPending = true
+                liveStreamingSpeech = false
+                liveTailFrames = 12 // 480ms का साइलेंस टेल ताकि सर्वर तुरंत जवाब दे
+                speechEndAt = System.currentTimeMillis()
+                firstAudioPending = true
+                l.sendAudio(frame.toLeBytes())
                 if (st == VState.USER_SPEAKING) setState(VState.PROCESSING)
             }
-            TurnDetector.Ev.NOISE -> if (st == VState.USER_SPEAKING) setState(VState.LISTENING)
-            TurnDetector.Ev.NONE -> {}
+            TurnDetector.Ev.NOISE -> {
+                liveStreamingSpeech = false
+                liveTailFrames = 0
+                preRoll.clear()
+                l.sendAudio(ShortArray(frame.size).toLeBytes())
+                if (st == VState.USER_SPEAKING) setState(VState.LISTENING)
+            }
+            TurnDetector.Ev.NONE -> {
+                if (liveStreamingSpeech) {
+                    l.sendAudio(frame.toLeBytes())
+                } else if (liveTailFrames > 0) {
+                    liveTailFrames--
+                    l.sendAudio(ShortArray(frame.size).toLeBytes())
+                } else {
+                    // यूज़र चुप है (या सिर्फ खांसी/आहट हुई है जो 240ms पार नहीं कर पाई) -> सर्वर को ज़ीरो बाइट्स भेजें!
+                    l.sendAudio(ShortArray(frame.size).toLeBytes())
+                }
+            }
         }
-        if (st == VState.PROCESSING && System.currentTimeMillis() - speechEndAt > 8000) setState(VState.LISTENING)
+        if (st == VState.PROCESSING && System.currentTimeMillis() - speechEndAt > 15000) setState(VState.LISTENING)
     }
 
     private val liveEvents = object : GeminiLive.Events {
         override fun onReady() {
             try { startMic() } catch (e: Exception) { fail(e.message ?: "माइक शुरू नहीं हुआ") }
         }
+
         override fun onAudio(pcm: ByteArray) {
             if (dropAudio || !active) return
             liveTurnOpen = true
+            liveStreamingSpeech = false
             if (st != VState.ASSISTANT_SPEAKING) {
                 if (firstAudioPending) {
                     firstAudioPending = false
@@ -263,42 +365,50 @@ class VoiceViewModel(app: Application) : AndroidViewModel(app) {
             }
             player?.enqueue(pcm)
         }
+
         override fun onInputText(t: String) {
             dropAudio = false
             if (newUserTurn) { userBuf.clear(); aiBuf.clear(); newUserTurn = false }
             userBuf.append(t)
             _ui.update { it.copy(user = userBuf.toString().trim(), ai = "") }
         }
+
         override fun onOutputText(t: String) {
             if (dropAudio) return
             aiBuf.append(t)
             _ui.update { it.copy(ai = aiBuf.toString().trim()) }
         }
+
         override fun onInterrupted() {
             player?.flush()
             dropAudio = false; liveTurnOpen = false; newUserTurn = true
             if (st == VState.ASSISTANT_SPEAKING || st == VState.PROCESSING) {
                 detector.forceSpeaking()
+                liveStreamingSpeech = true
                 setState(VState.USER_SPEAKING)
             }
         }
+
         override fun onTurnComplete() {
+            val finishedUserText = userBuf.toString().trim()
+            if (finishedUserText.isNotBlank()) autoLearnFromUser(finishedUserText)
             liveTurnOpen = false; newUserTurn = true; dropAudio = false
         }
+
         override fun onError(msg: String) {
             if (active) fail(msg)
         }
     }
 
-    // ---- MODULAR (Parallel Pre-Fetched TTS + 40ms Chunk Enqueue) ----
-    private fun modularFrame(frame: ShortArray, rms: Float, busy: Boolean) {
+    // ---------------- MODULAR (Silero VAD -> Fast STT -> LLM -> Parallel TTS) ----------------
+    private fun modularFrame(frame: ShortArray, rms: Float, echoGuard: Boolean) {
         if (!collecting) {
             preRoll.addLast(frame)
             while (preRoll.size > Cfg.PREROLL_FRAMES) preRoll.removeFirst()
         }
-        if (busy || st == VState.PROCESSING || st == VState.CONNECTING) return
+        if (echoGuard || st == VState.PROCESSING || st == VState.CONNECTING || requestInFlight.get()) return
         if (collecting) utter.add(frame)
-        when (detector.process(rms)) {
+        when (detector.process(frame, rms)) {
             TurnDetector.Ev.SPEECH_START -> {
                 utter.clear(); utter.addAll(preRoll); collecting = true
                 setState(VState.USER_SPEAKING)
@@ -318,59 +428,58 @@ class VoiceViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** बड़े PCM ऑडियो को Live मोड की तरह 40ms (1920 bytes) के स्मूथ चंक्स में प्लेयर में भेजना */
-    private fun enqueueSmoothly(pcm: ByteArray) {
-        val chunkBytes = 1920 // 40ms at 24kHz 16-bit mono
-        var off = 0
-        while (off < pcm.size && active) {
-            val end = minOf(off + chunkBytes, pcm.size)
-            player?.enqueue(pcm.copyOfRange(off, end))
-            off = end
-        }
-    }
-
     private fun runPipeline(wav: ByteArray, endAt: Long) {
+        if (!requestInFlight.compareAndSet(false, true)) return
         pipeline?.cancel()
         setState(VState.PROCESSING)
         pipeline = viewModelScope.launch(Dispatchers.IO) {
             val full = StringBuilder()
             var userAdded = false
             try {
-                val text = rest.transcribe(wav)
-                if (text.isBlank()) { setState(VState.LISTENING); return@launch }
+                val text = rest.transcribe(wav, prefs.sttModel)
+                if (text.isBlank()) {
+                    requestInFlight.set(false)
+                    setState(VState.LISTENING)
+                    return@launch
+                }
                 _ui.update { it.copy(user = text, ai = "", latencyMs = null) }
                 history.add("user" to text); userAdded = true
+                autoLearnFromUser(text)
 
-                // Parallel TTS Jobs Channel: दूसरा वाक्य पहले वाक्य के बजते समय ही बैकग्राउंड में तैयार हो जाएगा
-                val ttsQueue = Channel<Deferred<ByteArray>>(Channel.UNLIMITED)
+                val sysPrompt = SystemPrompt.build(prefs.persona, prefs.girlfriendMode, prefs.getMemories())
+                val ttsJobs = Channel<Deferred<ByteArray>>(capacity = 3)
                 val voice = prefs.voice
+                val selectedTts = prefs.ttsModel
+                val curPersona = prefs.persona
+                val curGf = prefs.girlfriendMode
                 var first = true
 
                 val speaker = launch {
-                    for (deferredPcm in ttsQueue) {
-                        val pcm = deferredPcm.await()
+                    for (job in ttsJobs) {
+                        val pcm = job.await()
                         if (first) {
                             first = false
                             val ms = System.currentTimeMillis() - endAt
                             _ui.update { it.copy(latencyMs = ms) }
                             setState(VState.ASSISTANT_SPEAKING)
                         }
-                        enqueueSmoothly(pcm)
+                        player?.enqueue(pcm)
                     }
                 }
-
                 try {
-                    rest.streamChat(history.takeLast(10), SystemPrompt.build(), prefs.chatModel) { s ->
+                    rest.streamChat(history.takeLast(12), sysPrompt, prefs.chatModel) { s ->
                         full.append(s).append(' ')
                         _ui.update { it.copy(ai = full.toString().trim()) }
-                        val cleanText = s.replace(Regex("[*#_~`]"), "").trim()
-                        if (cleanText.isNotBlank()) {
-                            val job = async(Dispatchers.IO) { rest.tts(cleanText, voice) }
-                            ttsQueue.send(job)
+                        val cleanText = s.replace(Regex("[*#_`~]"), "").trim()
+                        if (cleanText.isNotEmpty()) {
+                            val job = async(Dispatchers.IO) {
+                                rest.tts(cleanText, voice, selectedTts, curPersona, curGf)
+                            }
+                            ttsJobs.send(job)
                         }
                     }
                 } finally {
-                    ttsQueue.close()
+                    ttsJobs.close()
                 }
                 speaker.join()
             } catch (e: CancellationException) {
@@ -378,6 +487,7 @@ class VoiceViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) {
                 if (active) fail(friendly(e))
             } finally {
+                requestInFlight.set(false)
                 if (userAdded) {
                     if (full.isNotBlank()) history.add("model" to full.toString().trim())
                     else history.removeLastOrNull()
@@ -389,7 +499,7 @@ class VoiceViewModel(app: Application) : AndroidViewModel(app) {
     private fun friendly(e: Throwable): String {
         val m = e.message ?: e.javaClass.simpleName
         return when {
-            e is UnknownHostException -> "इंटरनेट नहीं है"
+            e is UnknownHostException -> "इंटरनेट कमज़ोर या बंद है"
             m.contains("API key", true) || m.contains("HTTP 401") || m.contains("HTTP 403") -> "API Key सही नहीं है या इजाज़त नहीं: ${m.take(120)}"
             m.contains("HTTP 429") -> "कोटा/लिमिट पूरी हो गई (429)"
             else -> m.take(160)
@@ -398,6 +508,7 @@ class VoiceViewModel(app: Application) : AndroidViewModel(app) {
 
     override fun onCleared() {
         stop()
+        silero.close()
         super.onCleared()
     }
 }
