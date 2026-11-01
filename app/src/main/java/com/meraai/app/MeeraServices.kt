@@ -1,5 +1,15 @@
 package com.meraai.app
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.os.Build
+import android.os.IBinder
+
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
@@ -198,4 +208,46 @@ class MeeraAccessibilityService : AccessibilityService() {
         }
         return null
     }
+}
+
+
+class MeeraKeepAliveService : Service() {
+    companion object {
+        private const val CH_ID = "meera_live_channel"
+        fun start(ctx: Context) {
+            try {
+                val i = Intent(ctx, MeeraKeepAliveService::class.java)
+                if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i)
+            } catch (_: Exception) {}
+        }
+        fun stop(ctx: Context) {
+            try { ctx.stopService(Intent(ctx, MeeraKeepAliveService::class.java)) } catch (_: Exception) {}
+        }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        try {
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (Build.VERSION.SDK_INT >= 26) {
+                nm.createNotificationChannel(NotificationChannel(CH_ID, "Meera Active Voice", NotificationManager.IMPORTANCE_LOW))
+            }
+            val notif = if (Build.VERSION.SDK_INT >= 26) {
+                Notification.Builder(this, CH_ID)
+                    .setContentTitle("Meera AI चालू है")
+                    .setContentText("आप किसी भी ऐप में बोलकर कमांड दे सकते हैं")
+                    .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+                    .setOngoing(true)
+                    .build()
+            } else Notification()
+
+            if (Build.VERSION.SDK_INT >= 34) {
+                startForeground(101, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+            } else {
+                startForeground(101, notif)
+            }
+        } catch (_: Exception) {}
+        return START_STICKY
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
 }

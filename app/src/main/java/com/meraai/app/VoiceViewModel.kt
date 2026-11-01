@@ -265,6 +265,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
         newUserTurn = true; dropAudio = false; liveTurnOpen = false
         detector.reset(); preRoll.clear(); utter.clear(); collecting = false; bargeFrames = 0; quietMs = 0
         _ui.update { it.copy(user = "", ai = "", error = null, latencyMs = null, memoryCount = prefs.getMemories().size) }
+        MeeraKeepAliveService.start(getApplication())
         setState(VState.CONNECTING)
         am.mode = AudioManager.MODE_IN_COMMUNICATION
         am.isSpeakerphoneOn = true
@@ -295,6 +296,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
         try { am.isSpeakerphoneOn = false; am.mode = AudioManager.MODE_NORMAL } catch (_: Exception) {}
         collecting = false
         _level.value = 0f
+        MeeraKeepAliveService.stop(getApplication())
         setState(VState.IDLE)
     }
 

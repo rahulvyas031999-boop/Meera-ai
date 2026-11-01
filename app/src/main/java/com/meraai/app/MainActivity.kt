@@ -29,8 +29,8 @@ class MainActivity : ComponentActivity() {
         if (granted) vm.start() else permLauncher.launch(Manifest.permission.RECORD_AUDIO)
     }
 
-    override fun onStop() {
-        super.onStop()
-        vm.stop()
+    override fun onDestroy() {
+        if (isFinishing) vm.stop()
+        super.onDestroy()
     }
 }

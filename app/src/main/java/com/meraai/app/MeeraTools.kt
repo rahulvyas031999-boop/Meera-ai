@@ -145,7 +145,7 @@ object MeeraTools {
             "open_app" -> {
                 val appName = args.optString("app_name", "").trim()
                 val ok = openAppByName(ctx, appName)
-                if (ok) ToolExecutionResult(true, name, "$appName खोल दिया है।", "SUCCESS: Opened app $appName")
+                if (ok) ToolExecutionResult(true, name, "$appName खोल दिया है! बताओ इसमें आगे क्या करना है?", "SUCCESS: Opened app $appName")
                 else ToolExecutionResult(true, name, "फोन में $appName नाम का ऐप नहीं मिला।", "ERROR: App $appName not found on device")
             }
             "read_screen" -> {
@@ -203,6 +203,18 @@ object MeeraTools {
         val low = raw.lowercase()
 
         // 1. स्क्रीन पढ़ने या नोटिफिकेशन पढ़ने की कमांड
+        if (low.contains("स्क्रॉल डाउन") || low.contains("नीचे स्क्रॉल") || low.contains("नीचे करो") || low.contains("scroll down")) {
+            val ok = MeeraAccessibilityService.instance?.performSystemAction("scroll_down") == true
+            return ToolExecutionResult(true, "screen_action", if (ok) "नीचे स्क्रॉल कर दिया है। और नीचे करूँ या कुछ खोलना है?" else "स्क्रॉल करने के लिए Accessibility ऑन करें।", "SUCCESS: Scrolled Down")
+        }
+        if (low.contains("स्क्रॉल अप") || low.contains("ऊपर स्क्रॉल") || low.contains("ऊपर करो") || low.contains("scroll up")) {
+            val ok = MeeraAccessibilityService.instance?.performSystemAction("scroll_up") == true
+            return ToolExecutionResult(true, "screen_action", if (ok) "ऊपर स्क्रॉल कर दिया है। आगे बताओ क्या करना है?" else "Accessibility ऑन करें।", "SUCCESS: Scrolled Up")
+        }
+        if (low == "बैक करो" || low == "पीछे जाओ" || low == "वापस आओ" || low == "go back" || low == "back") {
+            val ok = MeeraAccessibilityService.instance?.performSystemAction("back") == true
+            return ToolExecutionResult(true, "screen_action", if (ok) "पीछे आ गई। अब बताओ क्या करें?" else "Accessibility ऑन करें।", "SUCCESS: Back")
+        }
         if (low.contains("स्क्रीन पढ़") || low.contains("screen padh") || low.contains("स्क्रीन पर क्या") ||
             low.contains("screen par kya") || low.contains("read screen")
         ) {
@@ -418,7 +430,7 @@ object MeeraTools {
             }
             val i = Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             ctx.startActivity(i)
-            ToolExecutionResult(true, "play_or_search", "YouTube पर '$query' चला रही हूँ।", "SUCCESS: Opened $platform for $query")
+            ToolExecutionResult(true, "play_or_search", "YouTube पर '$query' लगा दिया है! सुनिए, और कुछ काम हो तो बताइए?", "SUCCESS: Opened $platform for $query")
         } catch (_: Exception) {
             ToolExecutionResult(false)
         }
