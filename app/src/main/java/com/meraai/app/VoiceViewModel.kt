@@ -17,12 +17,16 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
+import org.json.JSONObject
 import java.net.UnknownHostException
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
-class VoiceViewModel(app: Application) : AndroidViewModel(app) {
-    private val prefs = Prefs(app)
+class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx) {
+    private val prefs = Prefs(appCtx)
     private val http = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(45, TimeUnit.SECONDS)
@@ -30,7 +34,7 @@ class VoiceViewModel(app: Application) : AndroidViewModel(app) {
         .build()
     private val wsHttp = http.newBuilder().readTimeout(0, TimeUnit.SECONDS).pingInterval(20, TimeUnit.SECONDS).build()
     private val rest = GeminiRest(http) { prefs.apiKey }
-    private val am = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    private val am = appCtx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
     private val _ui = MutableStateFlow(
         UiState(
@@ -76,6 +80,22 @@ class VoiceViewModel(app: Application) : AndroidViewModel(app) {
     private val aiBuf = StringBuilder()
     private val history = ArrayList<Pair<String, String>>()
 
+    private fun nowTime(): String = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
+
+    private fun appendChatLog(role: String, text: String) {
+        val clean = text.trim()
+        if (clean.isBlank()) return
+        _ui.update { cur ->
+            val updated = (cur.chatMessages + ChatMessage(role, clean, nowTime())).takeLast(60)
+            cur.copy(chatMessages = updated)
+        }
+    }
+
+    fun clearChatLog() {
+        history.clear()
+        _ui.update { it.copy(chatMessages = emptyList(), user = "", ai = "") }
+    }
+
     fun isSetupDone(): Boolean = prefs.setupDone
     fun markSetupDone() { prefs.setupDone = true }
     fun getMemoriesList(): List<String> = prefs.getMemories()
@@ -97,6 +117,68 @@ class VoiceViewModel(app: Application) : AndroidViewModel(app) {
             if (!fact.isNullOrBlank()) {
                 prefs.addMemory(fact)
                 _ui.update { it.copy(memoryCount = prefs.getMemories().size) }
+            }
+        }
+    }
+
+    /** टेक्स्ट चैट या Quick Action बटन से सीधे कमांड/मैसेज भेजना */
+    fun sendTextQuery(query: String, speakAloud: Boolean = false) {
+        val clean = query.trim()
+        if (clean.isBlank()) return
+        if (prefs.apiKey.isBlank()) {
+            _ui.update { it.copy(askKey = true, error = "पहले API Key डालें") }
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val startAt = System.currentTimeMillis()
+            _ui.update { it.copy(user = clean, ai = "सोच रही हूँ…", error = null) }
+            appendChatLog("user", clean)
+            autoLearnFromUser(clean)
+
+            // 1. पहले चेक करें कि क्या यह सीधा फोन टूल कमांड है (जैसे WhatsApp खोलो, स्क्रीन पढ़ो)
+            val toolRes = MeeraTools.tryDirectVoiceCommand(appCtx, clean)
+            if (toolRes.executed && toolRes.spokenReply.isNotBlank() && toolRes.rawDataForAi.startsWith("SUCCESS:")) {
+                _ui.update {
+                    it.copy(
+                        ai = toolRes.spokenReply,
+                        lastToolStatus = "⚡ ${toolRes.toolName}",
+                        latencyMs = System.currentTimeMillis() - startAt
+                    )
+                }
+                appendChatLog("model", toolRes.spokenReply)
+                return@launch
+            }
+
+            val effectivePrompt = if (toolRes.executed && toolRes.rawDataForAi.isNotBlank()) {
+                "$clean\n\n[TOOL OUTPUT]:\n${toolRes.rawDataForAi}"
+            } else clean
+
+            history.add("user" to effectivePrompt)
+            val sysPrompt = SystemPrompt.build(prefs.persona, prefs.girlfriendMode, prefs.getMemories())
+            val full = StringBuilder()
+            try {
+                rest.streamChat(history.takeLast(12), sysPrompt, prefs.chatModel) { s ->
+                    full.append(s).append(' ')
+                    _ui.update {
+                        it.copy(
+                            ai = full.toString().trim(),
+                            latencyMs = System.currentTimeMillis() - startAt
+                        )
+                    }
+                }
+                val reply = full.toString().trim()
+                if (reply.isNotBlank()) {
+                    history.add("model" to reply)
+                    appendChatLog("model", reply)
+                    if (speakAloud) {
+                        val pcm = rest.tts(reply.replace(Regex("[*#_`~]"), ""), prefs.voice, prefs.ttsModel, prefs.persona, prefs.girlfriendMode)
+                        val tempPlayer = player ?: PcmPlayer().also { player = it }
+                        tempPlayer.enqueue(pcm)
+                    }
+                }
+            } catch (e: Exception) {
+                val err = friendly(e)
+                _ui.update { it.copy(ai = err, error = err) }
             }
         }
     }
@@ -179,7 +261,7 @@ class VoiceViewModel(app: Application) : AndroidViewModel(app) {
         }
         active = true
         requestInFlight.set(false)
-        history.clear(); userBuf.clear(); aiBuf.clear()
+        userBuf.clear(); aiBuf.clear()
         newUserTurn = true; dropAudio = false; liveTurnOpen = false
         detector.reset(); preRoll.clear(); utter.clear(); collecting = false; bargeFrames = 0; quietMs = 0
         _ui.update { it.copy(user = "", ai = "", error = null, latencyMs = null, memoryCount = prefs.getMemories().size) }
@@ -328,6 +410,14 @@ class VoiceViewModel(app: Application) : AndroidViewModel(app) {
             _ui.update { it.copy(ai = aiBuf.toString().trim()) }
         }
 
+        override fun onToolCall(id: String, name: String, args: JSONObject) {
+            viewModelScope.launch(Dispatchers.IO) {
+                val res = MeeraTools.executeFunctionCall(appCtx, name, args)
+                _ui.update { it.copy(lastToolStatus = "⚡ $name") }
+                live?.sendToolResponse(id, name, res.rawDataForAi.ifBlank { res.spokenReply })
+            }
+        }
+
         override fun onInterrupted() {
             player?.flush()
             dropAudio = false; liveTurnOpen = false; newUserTurn = true
@@ -339,7 +429,14 @@ class VoiceViewModel(app: Application) : AndroidViewModel(app) {
 
         override fun onTurnComplete() {
             val finishedUserText = userBuf.toString().trim()
-            if (finishedUserText.isNotBlank()) autoLearnFromUser(finishedUserText)
+            val finishedAiText = aiBuf.toString().trim()
+            if (finishedUserText.isNotBlank()) {
+                appendChatLog("user", finishedUserText)
+                autoLearnFromUser(finishedUserText)
+                // अगर मॉडल ने टूल कॉल किए बिना बोला हो लेकिन यूज़र ने ऐप खोलने कहा हो, तो बैकअप के तौर पर चलाएँ
+                MeeraTools.tryDirectVoiceCommand(appCtx, finishedUserText)
+            }
+            if (finishedAiText.isNotBlank()) appendChatLog("model", finishedAiText)
             liveTurnOpen = false; newUserTurn = true; dropAudio = false
         }
 
@@ -390,8 +487,26 @@ class VoiceViewModel(app: Application) : AndroidViewModel(app) {
                     return@launch
                 }
                 _ui.update { it.copy(user = text, ai = "", latencyMs = null) }
-                history.add("user" to text); userAdded = true
+                appendChatLog("user", text)
                 autoLearnFromUser(text)
+
+                // Modular डायरेक्ट कमांड चेक (जैसे "WhatsApp खोलो", "स्क्रीन पढ़ो")
+                val toolRes = MeeraTools.tryDirectVoiceCommand(appCtx, text)
+                if (toolRes.executed && toolRes.spokenReply.isNotBlank() && toolRes.rawDataForAi.startsWith("SUCCESS:")) {
+                    _ui.update { it.copy(ai = toolRes.spokenReply, lastToolStatus = "⚡ ${toolRes.toolName}") }
+                    appendChatLog("model", toolRes.spokenReply)
+                    val pcm = rest.tts(toolRes.spokenReply, prefs.voice, prefs.ttsModel, prefs.persona, prefs.girlfriendMode)
+                    _ui.update { it.copy(latencyMs = System.currentTimeMillis() - endAt) }
+                    setState(VState.ASSISTANT_SPEAKING)
+                    player?.enqueue(pcm)
+                    return@launch
+                }
+
+                val effectiveUserMsg = if (toolRes.executed && toolRes.rawDataForAi.isNotBlank()) {
+                    "$text\n\n[SCREEN / TOOL DATA]:\n${toolRes.rawDataForAi}"
+                } else text
+
+                history.add("user" to effectiveUserMsg); userAdded = true
 
                 val sysPrompt = SystemPrompt.build(prefs.persona, prefs.girlfriendMode, prefs.getMemories())
                 val ttsJobs = Channel<Deferred<ByteArray>>(capacity = 3)
@@ -436,8 +551,11 @@ class VoiceViewModel(app: Application) : AndroidViewModel(app) {
             } finally {
                 requestInFlight.set(false)
                 if (userAdded) {
-                    if (full.isNotBlank()) history.add("model" to full.toString().trim())
-                    else history.removeLastOrNull()
+                    val reply = full.toString().trim()
+                    if (reply.isNotBlank()) {
+                        history.add("model" to reply)
+                        appendChatLog("model", reply)
+                    } else history.removeLastOrNull()
                 }
             }
         }

@@ -79,6 +79,8 @@ object Cfg {
 }
 
 enum class Mode { LIVE, MODULAR }
+enum class NavTab { HOME, VISION, YAADEIN, CHAT }
+data class ChatMessage(val role: String, val text: String, val time: String)
 
 enum class VState { IDLE, CONNECTING, LISTENING, USER_SPEAKING, PROCESSING, ASSISTANT_SPEAKING, ERROR }
 
@@ -98,7 +100,9 @@ data class UiState(
     val error: String? = null,
     val latencyMs: Long? = null,
     val askKey: Boolean = false,
-    val memoryCount: Int = 0
+    val memoryCount: Int = 0,
+    val chatMessages: List<ChatMessage> = emptyList(),
+    val lastToolStatus: String? = null
 )
 
 class Prefs(ctx: Context) {
@@ -219,6 +223,7 @@ $gfBlock
 2. Expressive Audio: No markdown, no lists, no emojis, no symbols, because everything you write is spoken aloud. Let natural warmth, light laughs ("हाहा", "हेहे"), and pauses ("...") come through naturally.
 3. NO ROBOTIC WRAP-UPS: Never end your reply with robotic lines like "Aur kuch madad karun?", "Aur koi sawal hai?", or "How can I help you?". Just answer naturally and stop.
 4. Noise Ignore: If the input is just a cough or meaningless noise, ignore it or briefly say "हम्म?".
+5. PHONE TOOLS & AUTOMATION: You have real tools (`open_app`, `read_screen`, `screen_action`, `whatsapp_message`, `make_phone_call`, `play_or_search`). When the user asks to open any app (like WhatsApp, YouTube, Instagram), read the screen, tap something, or call/message someone, ALWAYS call the matching tool immediately and confirm briefly.
 
 $memoryBlock
 """.trimIndent()

@@ -15,6 +15,7 @@ class GeminiLive(private val http: OkHttpClient, private val ev: Events) {
         fun onAudio(pcm: ByteArray)
         fun onInputText(t: String)
         fun onOutputText(t: String)
+        fun onToolCall(id: String, name: String, args: JSONObject)
         fun onInterrupted()
         fun onTurnComplete()
         fun onError(msg: String)
@@ -44,6 +45,7 @@ class GeminiLive(private val http: OkHttpClient, private val ev: Events) {
                         )
                 )
                 .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", system))))
+                .put("tools", MeeraTools.getGeminiToolsJson())
                 .put(
                     "realtimeInputConfig", JSONObject().put(
                         "automaticActivityDetection", JSONObject()
@@ -63,7 +65,6 @@ class GeminiLive(private val http: OkHttpClient, private val ev: Events) {
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) = handle(text)
-
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) = handle(bytes.utf8())
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
@@ -90,6 +91,18 @@ class GeminiLive(private val http: OkHttpClient, private val ev: Events) {
             val j = JSONObject(s)
             if (j.has("setupComplete")) { ready = true; ev.onReady(); return }
             j.optJSONObject("error")?.let { ev.onError(it.optString("message", "Live API error")); return }
+
+            // Handle Live Tool Call (e.g., open_app, read_screen, whatsapp_message)
+            j.optJSONObject("toolCall")?.optJSONArray("functionCalls")?.let { calls ->
+                for (i in 0 until calls.length()) {
+                    val call = calls.optJSONObject(i) ?: continue
+                    val id = call.optString("id", "")
+                    val name = call.optString("name", "")
+                    val args = call.optJSONObject("args") ?: JSONObject()
+                    if (name.isNotBlank()) ev.onToolCall(id, name, args)
+                }
+            }
+
             val sc = j.optJSONObject("serverContent") ?: return
             if (sc.optBoolean("interrupted")) ev.onInterrupted()
             sc.optJSONObject("inputTranscription")?.optString("text")?.takeIf { it.isNotEmpty() }?.let { ev.onInputText(it) }
@@ -104,6 +117,21 @@ class GeminiLive(private val http: OkHttpClient, private val ev: Events) {
             if (sc.optBoolean("turnComplete")) ev.onTurnComplete()
         } catch (_: Exception) {
         }
+    }
+
+    fun sendToolResponse(id: String, name: String, resultText: String) {
+        if (!ready) return
+        val respObj = JSONObject().put(
+            "toolResponse", JSONObject().put(
+                "functionResponses", JSONArray().put(
+                    JSONObject()
+                        .put("id", id)
+                        .put("name", name)
+                        .put("response", JSONObject().put("result", resultText))
+                )
+            )
+        )
+        ws?.send(respObj.toString())
     }
 
     fun sendAudio(pcm: ByteArray) {
