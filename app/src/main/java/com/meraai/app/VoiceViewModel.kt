@@ -76,6 +76,8 @@ class VoiceViewModel(app: Application) : AndroidViewModel(app) {
     private val aiBuf = StringBuilder()
     private val history = ArrayList<Pair<String, String>>()
 
+    fun isSetupDone(): Boolean = prefs.setupDone
+    fun markSetupDone() { prefs.setupDone = true }
     fun getMemoriesList(): List<String> = prefs.getMemories()
 
     fun addManualMemory(fact: String) {

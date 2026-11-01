@@ -97,9 +97,17 @@ fun MeraTheme(content: @Composable () -> Unit) {
 @Composable
 fun MeraApp(vm: VoiceViewModel, onMic: () -> Unit) {
     var splash by remember { mutableStateOf(true) }
+    var showSetup by remember { mutableStateOf(!vm.isSetupDone()) }
     LaunchedEffect(Unit) { delay(1800); splash = false }
-    Crossfade(targetState = splash, animationSpec = tween(500), label = "splash") { s ->
-        if (s) SplashScreen() else Dashboard(vm, onMic)
+    Crossfade(targetState = Triple(splash, showSetup, Unit), animationSpec = tween(450), label = "root") { (isSplash, isSetup, _) ->
+        when {
+            isSplash -> SplashScreen()
+            isSetup -> PermissionsSetupScreen(onFinish = {
+                vm.markSetupDone()
+                showSetup = false
+            })
+            else -> Dashboard(vm, onMic, onOpenSetup = { showSetup = true })
+        }
     }
 }
 
@@ -132,7 +140,7 @@ private fun statusText(s: UiState): String = when (s.state) {
 }
 
 @Composable
-fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit) {
+fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {}) {
     val ui by vm.ui.collectAsStateWithLifecycle()
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -178,6 +186,15 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit) {
                         badge = { Text("${ui.memoryCount} सेव", color = Color(0xFF2EE6A8)) },
                         selected = false,
                         onClick = { scope.launch { drawer.close() }; showMemory = true },
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    )
+
+                    NavigationDrawerItem(
+                        label = { Text("Permissions & Setup (परमिशंस)") },
+                        icon = { Text("🛡️") },
+                        badge = { Text("Mint UI", color = Color(0xFF2EE6A8)) },
+                        selected = false,
+                        onClick = { scope.launch { drawer.close() }; onOpenSetup() },
                         modifier = Modifier.padding(horizontal = 12.dp)
                     )
 

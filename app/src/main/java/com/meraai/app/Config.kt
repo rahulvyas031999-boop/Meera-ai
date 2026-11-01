@@ -164,6 +164,10 @@ class Prefs(ctx: Context) {
         sp.edit().putString("memories_json", arr.toString()).apply()
     }
 
+    var setupDone: Boolean
+        get() = sp.getBoolean("setup_done", false)
+        set(v) { sp.edit().putBoolean("setup_done", v).apply() }
+
     fun clearMemories() {
         sp.edit().putString("memories_json", "[]").apply()
     }
