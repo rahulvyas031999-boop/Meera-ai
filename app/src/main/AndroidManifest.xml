@@ -116,5 +116,8 @@
             android:name=".MeeraKeepAliveService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+            <service
+            android:name=".MeeraOverlayService"
+            android:exported="false" />
     </application>
 </manifest>
