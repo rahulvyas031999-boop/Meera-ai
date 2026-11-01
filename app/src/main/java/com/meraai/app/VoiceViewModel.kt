@@ -76,6 +76,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
     @Volatile private var dropAudio = false
     @Volatile private var liveTurnOpen = false
     @Volatile private var newUserTurn = true
+    @Volatile private var toolCalledThisTurn = false
     private val userBuf = StringBuilder()
     private val aiBuf = StringBuilder()
     private val history = ArrayList<Pair<String, String>>()
@@ -247,6 +248,12 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
 
     fun consumeAskKey() = _ui.update { it.copy(askKey = false) }
 
+    fun sendCameraFrame(jpeg: ByteArray) {
+        if (!active || prefs.mode != Mode.LIVE) return
+        val l = live ?: return
+        if (l.ready) l.sendVideoFrame(jpeg)
+    }
+
     fun showError(m: String) {
         st = VState.ERROR
         _ui.update { it.copy(state = VState.ERROR, error = m) }
@@ -415,6 +422,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
         }
 
         override fun onToolCall(id: String, name: String, args: JSONObject) {
+            toolCalledThisTurn = true
             viewModelScope.launch(Dispatchers.IO) {
                 val res = MeeraTools.executeFunctionCall(appCtx, name, args)
                 _ui.update { it.copy(lastToolStatus = "⚡ $name") }
@@ -438,9 +446,10 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
                 appendChatLog("user", finishedUserText)
                 autoLearnFromUser(finishedUserText)
                 // अगर मॉडल ने टूल कॉल किए बिना बोला हो लेकिन यूज़र ने ऐप खोलने कहा हो, तो बैकअप के तौर पर चलाएँ
-                MeeraTools.tryDirectVoiceCommand(appCtx, finishedUserText)
+                if (!toolCalledThisTurn) MeeraTools.tryDirectVoiceCommand(appCtx, finishedUserText)
             }
             if (finishedAiText.isNotBlank()) appendChatLog("model", finishedAiText)
+            toolCalledThisTurn = false
             liveTurnOpen = false; newUserTurn = true; dropAudio = false
         }
 

@@ -144,6 +144,16 @@ class GeminiLive(private val http: OkHttpClient, private val ev: Events) {
         ws?.send(m.toString())
     }
 
+    fun sendVideoFrame(jpeg: ByteArray) {
+        if (!ready) return
+        val m = JSONObject().put(
+            "realtimeInput", JSONObject().put(
+                "video", JSONObject().put("data", b64(jpeg)).put("mimeType", "image/jpeg")
+            )
+        )
+        ws?.send(m.toString())
+    }
+
     fun close() {
         closedByUs = true
         ready = false

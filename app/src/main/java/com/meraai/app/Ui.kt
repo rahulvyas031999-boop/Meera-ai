@@ -344,7 +344,7 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     when (currentTab) {
                         NavTab.HOME -> HomeTabContent(ui, vm, active)
-                        NavTab.VISION -> VisionTabContent(vm)
+                        NavTab.VISION -> VisionCameraTab(vm)
                         NavTab.YAADEIN -> YaadeinTabContent(vm)
                         NavTab.CHAT -> ChatTabContent(ui, vm)
                     }
@@ -516,7 +516,7 @@ private fun QuickChip(label: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun VisionTabContent(vm: VoiceViewModel) {
+fun VisionTabContent(vm: VoiceViewModel) {
     var screenDump by remember { mutableStateOf("") }
     val a11yOn = MeeraAccessibilityService.instance != null
 
