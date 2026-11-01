@@ -195,6 +195,33 @@ class GeminiRest(private val http: OkHttpClient, private val key: () -> String) 
         throw (last ?: IOException("Chat मॉडल जवाब नहीं दे पाया"))
     }
 
+    // ---------- Modular मोड: बोले वाक्य से फोन-टूल पहचानना (Live के function-calling जैसा) ----------
+    suspend fun routeCommand(userText: String): Pair<String, JSONObject>? {
+        val sys = """You are a phone-command router for an Android voice assistant. The user text is a speech transcript (Hindi, Hinglish or English) and may contain punctuation or small recognition mistakes. Decide whether the user wants the phone to DO something. Reply with ONLY compact JSON like {"tool":"open_app","args":{"app_name":"WhatsApp"}}. Tools: open_app {app_name}; read_screen {}; screen_action {action_type: click|type|home|back|scroll_down|scroll_up|notifications, target_or_text}; whatsapp_message {contact_name, message}; make_phone_call {contact_name}; play_or_search {query, platform: youtube|google}. If the text is normal conversation, a question, or not a phone action, reply {"tool":"none"}. Never explain."""
+        val body = JSONObject()
+            .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", sys))))
+            .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", JSONArray().put(JSONObject().put("text", userText)))))
+            .put("generationConfig", JSONObject().put("responseMimeType", "application/json").put("temperature", 0))
+        return kotlinx.coroutines.withTimeoutOrNull(6000L) {
+            var found: Pair<String, JSONObject>? = null
+            for (m in Cfg.CHAT_MODELS.take(2)) {
+                try {
+                    val resp = http.newCall(request(m, "generateContent", body)).await().okOrThrow()
+                    val j = resp.use { JSONObject(it.body!!.string()) }
+                    val txt = textOf(j).trim().removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
+                    val o = JSONObject(txt)
+                    val tool = o.optString("tool", "none")
+                    found = if (tool.isBlank() || tool == "none") null else Pair(tool, o.optJSONObject("args") ?: JSONObject())
+                    break
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                }
+            }
+            found
+        }
+    }
+
     // ---------- 3. Expressive TTS (Persona Style Directing + Glitch-Free WAV Parser) ----------
     suspend fun tts(
         text: String,

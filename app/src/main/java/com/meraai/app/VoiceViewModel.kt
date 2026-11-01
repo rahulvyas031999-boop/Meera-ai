@@ -137,7 +137,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
             autoLearnFromUser(clean)
 
             // 1. पहले चेक करें कि क्या यह सीधा फोन टूल कमांड है (जैसे WhatsApp खोलो, स्क्रीन पढ़ो)
-            val toolRes = MeeraTools.tryDirectVoiceCommand(appCtx, clean)
+            val toolRes = MeeraTools.tryDirectVoiceCommand(appCtx, clean).let { if (it.executed) it else routeViaLlm(clean) }
             if (toolRes.executed && toolRes.spokenReply.isNotBlank() && toolRes.rawDataForAi.startsWith("SUCCESS:")) {
                 _ui.update {
                     it.copy(
@@ -247,6 +247,13 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
     }
 
     fun consumeAskKey() = _ui.update { it.copy(askKey = false) }
+
+    // Modular मोड में लोकल कमांड न मिले तो LLM-राउटर से फोन-टूल पहचानना
+    private suspend fun routeViaLlm(text: String): ToolExecutionResult {
+        if (!MeeraTools.looksLikeCommand(text)) return ToolExecutionResult(false)
+        val r = rest.routeCommand(text) ?: return ToolExecutionResult(false)
+        return MeeraTools.executeFunctionCall(appCtx, r.first, r.second)
+    }
 
     fun sendCameraFrame(jpeg: ByteArray) {
         if (!active || prefs.mode != Mode.LIVE) return
@@ -504,7 +511,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
                 autoLearnFromUser(text)
 
                 // Modular डायरेक्ट कमांड चेक (जैसे "WhatsApp खोलो", "स्क्रीन पढ़ो")
-                val toolRes = MeeraTools.tryDirectVoiceCommand(appCtx, text)
+                val toolRes = MeeraTools.tryDirectVoiceCommand(appCtx, text).let { if (it.executed) it else routeViaLlm(text) }
                 if (toolRes.executed && toolRes.spokenReply.isNotBlank() && toolRes.rawDataForAi.startsWith("SUCCESS:")) {
                     _ui.update { it.copy(ai = toolRes.spokenReply, lastToolStatus = "⚡ ${toolRes.toolName}") }
                     appendChatLog("model", toolRes.spokenReply)

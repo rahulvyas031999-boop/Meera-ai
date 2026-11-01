@@ -199,7 +199,7 @@ object MeeraTools {
      * लोकल फास्ट कमांड राउटर (Modular/Chat मोड में बिना रुके तुरंत ऐप खोलने या स्क्रीन पढ़ने के लिए)
      */
     fun tryDirectVoiceCommand(ctx: Context, userText: String): ToolExecutionResult {
-        val raw = userText.trim()
+        val raw = userText.trim().trimEnd('।', '.', '!', '?', ',', ' ')
         val low = raw.lowercase()
 
         // 1. स्क्रीन पढ़ने या नोटिफिकेशन पढ़ने की कमांड
@@ -277,6 +277,19 @@ object MeeraTools {
     }
 
     /** फोन में इंस्टॉल किसी भी ऐप को उसके नाम (हिंदी या इंग्लिश) से खोलना */
+    private val CMD_HINTS = listOf(
+        "खोल", "ओपन", "open", "चला", "चालू", "play", "कॉल", "call", "फोन", "मैसेज", "message", "msg",
+        "भेज", "व्हाट्स", "whatsapp", "यूट्यूब", "youtube", "स्क्रॉल", "scroll", "स्क्रीन", "screen",
+        "बैक", "back", "होम", "home", "सर्च", "search", "ढूंढ", "लगा", "नोटिफिकेशन", "notification",
+        "क्लिक", "click", "टैप", "tap"
+    )
+
+    /** Modular मोड में: क्या यह वाक्य फोन-कमांड जैसा लगता है? (सिर्फ़ तभी LLM-राउटर चलेगा, ताकि सामान्य बातचीत तेज़ रहे) */
+    fun looksLikeCommand(text: String): Boolean {
+        val low = text.lowercase()
+        return CMD_HINTS.any { low.contains(it) }
+    }
+
     fun openAppByName(ctx: Context, rawName: String): Boolean {
         val clean = rawName.lowercase().replace("ऐप", "").replace("app", "").trim()
         if (clean.isBlank()) return false
