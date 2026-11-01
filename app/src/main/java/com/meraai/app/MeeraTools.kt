@@ -223,31 +223,31 @@ object MeeraTools {
         }
 
         // 3. YouTube पर गाना/वीडियो चलाने की कमांड
-        val ytMatch = Regex("(?:youtube\s*(?:पर|पे|par|pe|me)|यूट्यूब\s*(?:पर|पे))\s+(.+?)(?:\s+(?:चलाओ|चला दो|प्ले करो|खोलो|लगाओ|play|search))?$", RegexOption.IGNORE_CASE).find(raw)
+        val ytMatch = Regex("(?:youtube\\s*(?:पर|पे|par|pe|me)|यूट्यूब\\s*(?:पर|पे))\\s+(.+?)(?:\\s+(?:चलाओ|चला दो|प्ले करो|खोलो|लगाओ|play|search))?$", RegexOption.IGNORE_CASE).find(raw)
         if (ytMatch != null) {
             val song = ytMatch.groupValues[1].trim()
             if (song.isNotBlank()) return playOrSearchMedia(ctx, song, "youtube")
         }
 
         // 4. WhatsApp मैसेज कमांड (जैसे: "लक्ष्मण को व्हाट्सएप पर मैसेज भेजो कि...")
-        val waMatch = Regex("(.+?)\s+को\s+(?:whatsapp|व्हाट्सएप|व्हाट्सऐप).*?(?:मैसेज|message)\s+(?:भेजो|करो|लिखो)(?:\s+कि|\s+ki)?\s*(.*)", RegexOption.IGNORE_CASE).find(raw)
+        val waMatch = Regex("(.+?)\\s+को\\s+(?:whatsapp|व्हाट्सएप|व्हाट्सऐप).*?(?:मैसेज|message)\\s+(?:भेजो|करो|लिखो)(?:\\s+कि|\\s+ki)?\\s*(.*)", RegexOption.IGNORE_CASE).find(raw)
         if (waMatch != null) {
-            val person = waMatch.groupValues[1].replace(Regex("^(?:मीरा|अरे|सुनो|एक काम करो)\s*"), "").trim()
+            val person = waMatch.groupValues[1].replace(Regex("^(?:मीरा|अरे|सुनो|एक काम करो)\\s*"), "").trim()
             val msg = waMatch.groupValues[2].trim()
             return sendWhatsAppToPerson(ctx, person, msg)
         }
 
         // 5. कॉल लगाने की कमांड (जैसे: "लक्ष्मण को कॉल लगाओ / फोन करो")
-        val callMatch = Regex("(.+?)\s+को\s+(?:कॉल|फोन|call|phone)\s+(?:लगाओ|करो|मिलाओ|लगा दो)", RegexOption.IGNORE_CASE).find(raw)
+        val callMatch = Regex("(.+?)\\s+को\\s+(?:कॉल|फोन|call|phone)\\s+(?:लगाओ|करो|मिलाओ|लगा दो)", RegexOption.IGNORE_CASE).find(raw)
         if (callMatch != null) {
-            val person = callMatch.groupValues[1].replace(Regex("^(?:मीरा|अरे|सुनो)\s*"), "").trim()
+            val person = callMatch.groupValues[1].replace(Regex("^(?:मीरा|अरे|सुनो)\\s*"), "").trim()
             return callPerson(ctx, person)
         }
 
         // 6. कोई भी ऐप खोलने की कमांड (जैसे: "WhatsApp ओपन करो", "यूट्यूब खोलो", "open instagram")
         val openPatterns = listOf(
-            Regex("^(?:मीरा|अरे|सुनो|प्लीज)?\s*(.+?)\s+(?:ओपन करो|ओपन कर दो|खोलो|खोल दो|चालू करो|open karo|open kar do|kholo|khol do)$", RegexOption.IGNORE_CASE),
-            Regex("^(?:open|launch)\s+(.+)$", RegexOption.IGNORE_CASE)
+            Regex("^(?:मीरा|अरे|सुनो|प्लीज)?\\s*(.+?)\\s+(?:ओपन करो|ओपन कर दो|खोलो|खोल दो|चालू करो|open karo|open kar do|kholo|khol do)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:open|launch)\\s+(.+)$", RegexOption.IGNORE_CASE)
         )
         for (pat in openPatterns) {
             val m = pat.find(raw)
