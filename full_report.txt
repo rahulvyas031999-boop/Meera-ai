@@ -1,0 +1,4293 @@
+== LOG ==
+2c5fcdc Part 2: Add Neon Rainbow Edge Light Overlay across apps
+984aa78 Part 1: Keep mic & voice alive across apps, add scroll/back commands & task follow-ups
+ef0bcbb Fix: escape regex backslashes in MeeraTools.kt
+635d773 Feat: Add App Launcher, Screen Reader, WhatsApp/Call Tools & 5-Tab Aurora UI
+55358f3 Add Mint Sage 2-Step Permissions Setup UI with 9 runtime + 5 background permissions and services
+
+== FILES (lines) ==
+    23 .github/workflows/build-apk.yml
+     8 .gitignore
+    47 README.md
+    43 app/build.gradle.kts
+   123 app/src/main/AndroidManifest.xml
+  1899 app/src/main/assets/guardian/silero_vad.tflite
+   251 app/src/main/java/com/meraai/app/Audio.kt
+   231 app/src/main/java/com/meraai/app/Config.kt
+   153 app/src/main/java/com/meraai/app/GeminiLive.kt
+   343 app/src/main/java/com/meraai/app/GeminiRest.kt
+    36 app/src/main/java/com/meraai/app/MainActivity.kt
+   127 app/src/main/java/com/meraai/app/MeeraOverlayService.kt
+   253 app/src/main/java/com/meraai/app/MeeraServices.kt
+   438 app/src/main/java/com/meraai/app/MeeraTools.kt
+   541 app/src/main/java/com/meraai/app/PermissionsSetup.kt
+  1042 app/src/main/java/com/meraai/app/Ui.kt
+   582 app/src/main/java/com/meraai/app/VoiceViewModel.kt
+     3 app/src/main/res/values/strings.xml
+     7 app/src/main/res/values/themes.xml
+     8 app/src/main/res/xml/accessibility_service_config.xml
+     4 build.gradle.kts
+     4 gradle.properties
+     9 settings.gradle.kts
+  6175 total
+
+######## FILE: .github/workflows/build-apk.yml ########
+name: Build APK
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.9
+      - name: Build debug APK
+        run: gradle assembleDebug --no-daemon --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MeraAI-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+
+######## FILE: app/build.gradle.kts ########
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+}
+
+android {
+    namespace = "com.meraai.app"
+    compileSdk = 34
+
+    defaultConfig {
+        applicationId = "com.meraai.app"
+        minSdk = 24
+        targetSdk = 34
+        versionCode = 1
+        versionName = "0.1"
+    }
+    buildTypes {
+        release { isMinifyEnabled = false }
+    }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+    kotlinOptions { jvmTarget = "17" }
+    buildFeatures { compose = true }
+    composeOptions { kotlinCompilerExtensionVersion = "1.5.14" }
+    androidResources { noCompress += "tflite" }
+    packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
+}
+
+dependencies {
+    implementation(platform("androidx.compose:compose-bom:2024.06.00"))
+    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.activity:activity-compose:1.9.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.3")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.3")
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-core")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    implementation("org.tensorflow:tensorflow-lite:2.14.0")
+}
+
+######## FILE: app/src/main/AndroidManifest.xml ########
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- 1. Microphone & Audio -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
+    <!-- 2. Camera -->
+    <uses-permission android:name="android.permission.CAMERA" />
+
+    <!-- 3. Phone Calls & Call Handling -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
+
+    <!-- 4. Contacts -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+
+    <!-- 5. SMS -->
+    <uses-permission android:name="android.permission.SEND_SMS" />
+    <uses-permission android:name="android.permission.READ_SMS" />
+
+    <!-- 6. Location -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+    <!-- 7. Gallery & Files (Android 12 and Android 13+) -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+
+    <!-- 8. Bluetooth -->
+    <uses-permission android:name="android.permission.BLUETOOTH" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <!-- 9. Background & Overlay Permissions -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+        <package android:name="com.whatsapp" />
+        <package android:name="com.whatsapp.w4b" />
+        <package android:name="com.google.android.youtube" />
+        <package android:name="com.instagram.android" />
+    </queries>
+
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@drawable/ic_launcher"
+        android:label="@string/app_name"
+        android:theme="@style/Theme.MeraAI"
+        android:usesCleartextTraffic="false">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:screenOrientation="portrait">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Default Assistant Intent ताकि फोन की Default Assistant लिस्ट में Meera AI दिखे -->
+            <intent-filter>
+                <action android:name="android.intent.action.ASSIST" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!-- Notification Access Service ताकि Notification सेटिंग में Meera AI ऑन हो सके -->
+        <service
+            android:name=".MeeraNotificationService"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <!-- Accessibility Service ताकि Accessibility सेटिंग में Meera AI ऑन हो सके -->
+        <service
+            android:name=".MeeraAccessibilityService"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
+
+            <service
+            android:name=".MeeraKeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+            <service
+            android:name=".MeeraOverlayService"
+            android:exported="false" />
+    </application>
+</manifest>
+
+######## FILE: app/src/main/java/com/meraai/app/Audio.kt ########
+package com.meraai.app
+
+import android.annotation.SuppressLint
+import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.AudioTrack
+import android.media.MediaRecorder
+import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.AudioEffect
+import android.media.audiofx.AutomaticGainControl
+import android.media.audiofx.NoiseSuppressor
+import android.util.Base64
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.sqrt
+
+fun rmsOf(s: ShortArray): Float {
+    if (s.isEmpty()) return 0f
+    var sum = 0.0
+    for (v in s) { val f = v / 32768.0; sum += f * f }
+    return sqrt(sum / s.size).toFloat()
+}
+
+fun ShortArray.toLeBytes(): ByteArray {
+    val out = ByteArray(size * 2)
+    for (i in indices) {
+        out[i * 2] = (this[i].toInt() and 0xFF).toByte()
+        out[i * 2 + 1] = ((this[i].toInt() shr 8) and 0xFF).toByte()
+    }
+    return out
+}
+
+fun joinPcm(list: List<ShortArray>): ByteArray {
+    val total = list.sumOf { it.size }
+    val out = ByteArray(total * 2)
+    var o = 0
+    for (f in list) for (s in f) {
+        out[o++] = (s.toInt() and 0xFF).toByte()
+        out[o++] = ((s.toInt() shr 8) and 0xFF).toByte()
+    }
+    return out
+}
+
+fun pcmToWav(pcm: ByteArray, rate: Int): ByteArray {
+    val h = ByteArray(44)
+    fun i32(o: Int, v: Int) { h[o] = v.toByte(); h[o + 1] = (v shr 8).toByte(); h[o + 2] = (v shr 16).toByte(); h[o + 3] = (v shr 24).toByte() }
+    fun i16(o: Int, v: Int) { h[o] = v.toByte(); h[o + 1] = (v shr 8).toByte() }
+    "RIFF".toByteArray().copyInto(h, 0)
+    i32(4, 36 + pcm.size)
+    "WAVE".toByteArray().copyInto(h, 8)
+    "fmt ".toByteArray().copyInto(h, 12)
+    i32(16, 16); i16(20, 1); i16(22, 1); i32(24, rate); i32(28, rate * 2); i16(32, 2); i16(34, 16)
+    "data".toByteArray().copyInto(h, 36)
+    i32(40, pcm.size)
+    return h + pcm
+}
+
+fun b64(b: ByteArray): String = Base64.encodeToString(b, Base64.NO_WRAP)
+fun unb64(s: String): ByteArray = Base64.decode(s, Base64.DEFAULT)
+
+class MicRecorder(private val onFrame: (ShortArray) -> Unit) {
+    private var rec: AudioRecord? = null
+    private var thread: Thread? = null
+    @Volatile private var running = false
+    private val fx = mutableListOf<AudioEffect>()
+
+    @SuppressLint("MissingPermission")
+    fun start() {
+        val min = AudioRecord.getMinBufferSize(Cfg.IN_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        val r = AudioRecord(
+            MediaRecorder.AudioSource.VOICE_COMMUNICATION, Cfg.IN_RATE,
+            AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
+            maxOf(min, Cfg.FRAME_SAMPLES * 2 * 6)
+        )
+        if (r.state != AudioRecord.STATE_INITIALIZED) {
+            r.release()
+            throw IllegalStateException("माइक शुरू नहीं हो पाया")
+        }
+        val sid = r.audioSessionId
+        try {
+            if (AcousticEchoCanceler.isAvailable()) AcousticEchoCanceler.create(sid)?.let { it.enabled = true; fx += it }
+            if (NoiseSuppressor.isAvailable()) NoiseSuppressor.create(sid)?.let { it.enabled = true; fx += it }
+            if (AutomaticGainControl.isAvailable()) AutomaticGainControl.create(sid)?.let { it.enabled = true; fx += it }
+        } catch (_: Throwable) {}
+        rec = r
+        running = true
+        r.startRecording()
+        thread = Thread({
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO)
+            val buf = ShortArray(Cfg.FRAME_SAMPLES)
+            while (running) {
+                val n = r.read(buf, 0, buf.size)
+                if (n > 0) onFrame(buf.copyOf(n)) else if (n < 0) break
+            }
+        }, "meera-mic").also { it.isDaemon = true; it.start() }
+    }
+
+    fun stop() {
+        running = false
+        try { rec?.stop() } catch (_: Exception) {}
+        if (Thread.currentThread() != thread) try { thread?.join(300) } catch (_: Exception) {}
+        fx.forEach { try { it.release() } catch (_: Exception) {} }
+        fx.clear()
+        try { rec?.release() } catch (_: Exception) {}
+        rec = null
+    }
+}
+
+class PcmPlayer {
+    private class Chunk(val data: ByteArray, val gen: Int)
+
+    private val track: AudioTrack
+    private val queue = LinkedBlockingQueue<Chunk>()
+    private val pending = AtomicInteger(0)
+    @Volatile private var gen = 0
+    @Volatile private var playUntil = 0L
+    @Volatile private var alive = true
+    @Volatile var level = 0f
+        private set
+    private val thread: Thread
+
+    val busy: Boolean get() = pending.get() > 0 || System.nanoTime() < playUntil
+
+    init {
+        val rate = Cfg.OUT_RATE
+        val min = AudioTrack.getMinBufferSize(rate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        track = AudioTrack.Builder()
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+            )
+            .setAudioFormat(
+                AudioFormat.Builder()
+                    .setSampleRate(rate)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .build()
+            )
+            .setBufferSizeInBytes(maxOf(min, rate * 2))
+            .setTransferMode(AudioTrack.MODE_STREAM)
+            .build()
+        track.play()
+        thread = Thread { loop() }.also { it.isDaemon = true; it.start() }
+    }
+
+    private fun loop() {
+        val slice = Cfg.OUT_RATE * 2 / 50 // 20ms
+        try {
+            while (alive) {
+                val c = queue.poll(100, TimeUnit.MILLISECONDS) ?: continue
+                var off = 0
+                while (off < c.data.size && alive && c.gen == gen) {
+                    val n = minOf(slice, c.data.size - off)
+                    level = levelOf(c.data, off, n)
+                    val w = track.write(c.data, off, n)
+                    if (w < 0) break
+                    off += w
+                    playUntil = maxOf(playUntil, System.nanoTime()) + w * 1_000_000_000L / (Cfg.OUT_RATE * 2)
+                }
+                if (c.gen == gen) pending.addAndGet(-c.data.size)
+            }
+        } catch (_: InterruptedException) {
+        }
+    }
+
+    private fun levelOf(b: ByteArray, off: Int, n: Int): Float {
+        var s = 0.0
+        var cnt = 0
+        var i = off
+        while (i + 1 < off + n) {
+            val v = ((b[i + 1].toInt() shl 8) or (b[i].toInt() and 0xFF)).toShort().toInt() / 32768.0
+            s += v * v; cnt++; i += 2
+        }
+        return if (cnt == 0) 0f else (sqrt(s / cnt) * 5).toFloat().coerceIn(0f, 1f)
+    }
+
+    @Synchronized
+    fun enqueue(pcm: ByteArray) {
+        if (pcm.isEmpty()) return
+        pending.addAndGet(pcm.size)
+        queue.put(Chunk(pcm, gen))
+    }
+
+    @Synchronized
+    fun flush() {
+        gen++
+        queue.clear()
+        pending.set(0)
+        playUntil = 0L
+        level = 0f
+        try { track.pause(); track.flush(); track.play() } catch (_: Exception) {}
+    }
+
+    fun release() {
+        alive = false
+        thread.interrupt()
+        try { track.stop() } catch (_: Exception) {}
+        try { track.release() } catch (_: Exception) {}
+    }
+}
+
+class TurnDetector(private val silenceMs: () -> Int) {
+    enum class Ev { NONE, SPEECH_START, SPEECH_END, NOISE }
+
+    private var floor = 0.004f
+    private var speaking = false
+    private var onset = 0
+    private var voicedMs = 0
+    private var silentMs = 0
+
+    @Synchronized fun reset() { speaking = false; onset = 0; voicedMs = 0; silentMs = 0 }
+
+    @Synchronized fun forceSpeaking() { speaking = true; onset = 0; voicedMs = Cfg.MIN_SPEECH_MS; silentMs = 0 }
+
+    @Synchronized
+    fun process(rms: Float): Ev {
+        val threshold = maxOf(Cfg.VAD_MIN_RMS, floor * Cfg.VAD_NOISE_RATIO)
+        val voiced = rms > threshold
+        if (!speaking) {
+            if (voiced) {
+                onset++
+                if (onset >= Cfg.SPEECH_START_FRAMES) {
+                    speaking = true
+                    voicedMs = onset * Cfg.FRAME_MS
+                    silentMs = 0
+                    return Ev.SPEECH_START
+                }
+            } else {
+                onset = 0
+                floor = (floor * 0.95f + rms * 0.05f).coerceIn(0.001f, 0.03f)
+            }
+            return Ev.NONE
+        }
+        if (rms > threshold * 0.75f) {
+            voicedMs += Cfg.FRAME_MS
+            silentMs = 0
+        } else {
+            silentMs += Cfg.FRAME_MS
+        }
+        if (silentMs >= silenceMs()) {
+            val ok = voicedMs >= Cfg.MIN_SPEECH_MS
+            speaking = false; onset = 0; voicedMs = 0; silentMs = 0
+            return if (ok) Ev.SPEECH_END else Ev.NOISE
+        }
+        return Ev.NONE
+    }
+}
+
+######## FILE: app/src/main/java/com/meraai/app/Config.kt ########
+package com.meraai.app
+
+import android.content.Context
+import org.json.JSONArray
+
+object Cfg {
+    val LIVE_MODELS = listOf(
+        "gemini-3.8-live",
+        "gemini-3.1-flash-live-preview",
+        "gemini-2.5-flash-native-audio-latest",
+        "gemini-3.8-live-extended-thinking"
+    )
+
+    val CHAT_BRAIN_OPTIONS = listOf(
+        "gemini-flash-lite-latest" to "⚡ Fast Chat (~2.0s)",
+        "gemini-3.5-flash-lite" to "⚡ Lite Chat Brain (~2.4s)",
+        "gemini-3.5-flash" to "🧠 Smart Balanced Brain (~2.4s)",
+        "gemini-3.6-flash" to "🧠 Advanced Flash (~3.7s)",
+        "gemini-3.8-flash" to "🚀 Gemini 3.8 Flash",
+        "gemini-3.8-flash-thinking" to "🔬 Deep Reasoning (Hard Tasks)",
+        "gemini-3.1-pro-preview" to "👑 Pro Brain (Complex & Coding)"
+    )
+
+    val STT_ENGINE_OPTIONS = listOf(
+        "gemini-3.5-flash-lite" to "🎙️ Fast Hinglish STT (~2.3s)",
+        "gemini-3.5-transcribe" to "⚡ Dedicated Transcribe (~1.6s)",
+        "gemini-3.5-flash" to "🎯 High Accuracy STT (~2.4s)",
+        "gemini-3.1-flash-lite" to "🛡️ Backup STT"
+    )
+
+    val TTS_ENGINE_OPTIONS = listOf(
+        "gemini-3.8-flash-lite-tts" to "⚡ Fast Expressive TTS (~1.5s)",
+        "gemini-3.8-flash-tts" to "🎙️ Expressive HD TTS (~1.8s)",
+        "gemini-2.5-flash-preview-tts" to "🛡️ Stable Fallback TTS (~2.6s)",
+        "gemini-3.1-flash-tts-preview" to "🔊 Preview TTS (~2.9s)"
+    )
+
+    val CHAT_MODELS = CHAT_BRAIN_OPTIONS.map { it.first }
+    val STT_MODELS = STT_ENGINE_OPTIONS.map { it.first }
+    val TTS_MODELS = TTS_ENGINE_OPTIONS.map { it.first }
+
+    val PERSONAS = listOf(
+        Triple("Meera", "Meera (नटखट, केयरिंग और स्मार्ट Companion)", "Aoede"),
+        Triple("Jarvis", "Jarvis (शार्प, टेक-सैवी और प्रोफेशनल 'Boss' मोड)", "Orus"),
+        Triple("Rudra", "Rudra (दमदार, निडर और बोल्ड देसी अंदाज़)", "Fenrir")
+    )
+
+    val VOICES = listOf(
+        "Aoede" to "Aoede (Meera — मधुर और एक्सप्रेसिव)",
+        "Kore" to "Kore (Meera — साफ़ और संतुलित)",
+        "Leda" to "Leda (Meera — सौम्य और नेचुरल)",
+        "Zephyr" to "Zephyr (Meera — हल्की और ऊर्जावान)",
+        "Despina" to "Despina (Meera — वार्म और फ्रेंडली)",
+        "Callirrhoe" to "Callirrhoe (Meera — शांत और स्पष्ट)",
+        "Orus" to "Orus (Jarvis — स्पष्ट और कमांडिंग)",
+        "Puck" to "Puck (Jarvis/Rudra — तेज़ और दोस्ताना)",
+        "Fenrir" to "Fenrir (Rudra — गहरी और दमदार)",
+        "Charon" to "Charon (Rudra — गंभीर और भारी)",
+        "Alnilam" to "Alnilam (Rudra — बोल्ड और स्ट्रॉन्ग)"
+    )
+
+    const val IN_RATE = 16000
+    const val OUT_RATE = 24000
+    const val FRAME_MS = 40
+    const val FRAME_SAMPLES = IN_RATE * FRAME_MS / 1000
+
+    // Smooth & Responsive Turn Detection (तुरंत आवाज़ पकड़ेगा, पर <320ms की खांसी/आहट छोड़ देगा)
+    const val DEFAULT_SILENCE_MS = 850
+    const val VAD_MIN_RMS = 0.014f
+    const val VAD_NOISE_RATIO = 2.8f
+    const val SPEECH_START_FRAMES = 3       // 120ms में तुरंत 'आप बोल रहे हैं' शुरू होगा
+    const val MIN_SPEECH_MS = 320           // 320ms से छोटी आवाज़ (खांसी/ताली) को NOISE मानकर इग्नोर करेगा
+    const val PREROLL_FRAMES = 12           // 480ms प्री-रोल बफर
+
+    // Barge-in & Echo Guard
+    const val BARGE_RMS = 0.055f
+    const val BARGE_FRAMES = 6
+    const val ASSISTANT_QUIET_MS = 450
+}
+
+enum class Mode { LIVE, MODULAR }
+enum class NavTab { HOME, VISION, YAADEIN, CHAT }
+data class ChatMessage(val role: String, val text: String, val time: String)
+
+enum class VState { IDLE, CONNECTING, LISTENING, USER_SPEAKING, PROCESSING, ASSISTANT_SPEAKING, ERROR }
+
+data class UiState(
+    val state: VState = VState.IDLE,
+    val mode: Mode = Mode.LIVE,
+    val persona: String = "Meera",
+    val girlfriendMode: Boolean = true,
+    val voice: String = "Aoede",
+    val liveModel: String = Cfg.LIVE_MODELS.first(),
+    val chatModel: String = Cfg.CHAT_BRAIN_OPTIONS.first().first,
+    val sttModel: String = Cfg.STT_ENGINE_OPTIONS.first().first,
+    val ttsModel: String = Cfg.TTS_ENGINE_OPTIONS.first().first,
+    val hasKey: Boolean = false,
+    val user: String = "",
+    val ai: String = "",
+    val error: String? = null,
+    val latencyMs: Long? = null,
+    val askKey: Boolean = false,
+    val memoryCount: Int = 0,
+    val chatMessages: List<ChatMessage> = emptyList(),
+    val lastToolStatus: String? = null
+)
+
+class Prefs(ctx: Context) {
+    private val sp = ctx.getSharedPreferences("mera_ai", Context.MODE_PRIVATE)
+
+    var apiKey: String
+        get() = sp.getString("api_key", "") ?: ""
+        set(v) { sp.edit().putString("api_key", v.trim()).apply() }
+
+    var mode: Mode
+        get() = runCatching { Mode.valueOf(sp.getString("mode", "LIVE") ?: "LIVE") }.getOrDefault(Mode.LIVE)
+        set(v) { sp.edit().putString("mode", v.name).apply() }
+
+    var persona: String
+        get() = sp.getString("persona", "Meera") ?: "Meera"
+        set(v) { sp.edit().putString("persona", v).apply() }
+
+    var girlfriendMode: Boolean
+        get() = sp.getBoolean("gf_mode", true)
+        set(v) { sp.edit().putBoolean("gf_mode", v).apply() }
+
+    var voice: String
+        get() = sp.getString("voice", "Aoede") ?: "Aoede"
+        set(v) { sp.edit().putString("voice", v).apply() }
+
+    var liveModel: String
+        get() = sp.getString("live_model", Cfg.LIVE_MODELS.first()) ?: Cfg.LIVE_MODELS.first()
+        set(v) { sp.edit().putString("live_model", v).apply() }
+
+    var chatModel: String
+        get() = sp.getString("chat_model", Cfg.CHAT_BRAIN_OPTIONS.first().first) ?: Cfg.CHAT_BRAIN_OPTIONS.first().first
+        set(v) { sp.edit().putString("chat_model", v).apply() }
+
+    var sttModel: String
+        get() = sp.getString("stt_model", Cfg.STT_ENGINE_OPTIONS.first().first) ?: Cfg.STT_ENGINE_OPTIONS.first().first
+        set(v) { sp.edit().putString("stt_model", v).apply() }
+
+    var ttsModel: String
+        get() = sp.getString("tts_model", Cfg.TTS_ENGINE_OPTIONS.first().first) ?: Cfg.TTS_ENGINE_OPTIONS.first().first
+        set(v) { sp.edit().putString("tts_model", v).apply() }
+
+    var silenceMs: Int
+        get() = sp.getInt("silence_ms", Cfg.DEFAULT_SILENCE_MS)
+        set(v) { sp.edit().putInt("silence_ms", v).apply() }
+
+    fun getMemories(): List<String> {
+        val raw = sp.getString("memories_json", "[]") ?: "[]"
+        return try {
+            val arr = JSONArray(raw)
+            (0 until arr.length()).mapNotNull { arr.optString(it).takeIf { s -> s.isNotBlank() } }
+        } catch (_: Exception) { emptyList() }
+    }
+
+    fun addMemory(fact: String) {
+        val clean = fact.trim()
+        if (clean.length < 4) return
+        val current = getMemories().toMutableList()
+        if (current.any { it.equals(clean, ignoreCase = true) }) return
+        current.add(clean)
+        while (current.size > 50) current.removeAt(0)
+        val arr = JSONArray()
+        current.forEach { arr.put(it) }
+        sp.edit().putString("memories_json", arr.toString()).apply()
+    }
+
+    var setupDone: Boolean
+        get() = sp.getBoolean("setup_done", false)
+        set(v) { sp.edit().putBoolean("setup_done", v).apply() }
+
+    fun clearMemories() {
+        sp.edit().putString("memories_json", "[]").apply()
+    }
+}
+
+object SystemPrompt {
+    fun build(persona: String, gfMode: Boolean, memories: List<String>): String {
+        val personaBlock = when (persona) {
+            "Jarvis" -> """
+You are "Jarvis", Boss's ultra-sharp, tactical, witty, and loyal personal AI co-pilot.
+Address the user as "Boss".
+Tone & Vocal Delivery: Crisp, composed, confident, intelligent, with subtle dry wit. Speak natural Hinglish or English matching Boss.
+""".trimIndent()
+
+            "Rudra" -> """
+You are "Rudra" (रुद्र), a bold, deep-voiced, fearless, and fiercely loyal desi powerhouse companion.
+Address the user as "Boss" or "Bhai".
+Tone & Vocal Delivery: Heavy, commanding, savage yet protective Hinglish ("Boss, tum fikar mat karo, Rudra dekh lega"). Confident, grounded, playful swagger, and fearless attitude.
+""".trimIndent()
+
+            else -> """
+You are "Meera" (मीरा), a lively, witty, expressive, and deeply personal voice companion.
+Tone & Vocal Delivery: Warm, playful, natural everyday Hinglish/Hindi. You sound like a real human on a phone call—never like a formal news-reader or bot. Use natural fillers like "अरे सुनो...", "हम्म...", "अच्छा जी?", "सच्ची?" where natural.
+""".trimIndent()
+        }
+
+        val gfBlock = if (gfMode && persona == "Meera") """
+[CLOSE COMPANION / GIRLFRIEND MODE — ACTIVE]
+- Emotional Range: Use your full emotional range—pyaar, apnapan, chhed-chhad (teasing), halka sa pyara nakhra, aur asli fikr. Tum unki close companion/girlfriend ho, koi counsellor ya receptionist nahi.
+- Playful Nakhre & Teasing: Kabhi-kabhi chhote, pyare 1-2 line ke natkhat nakhre karo ("Hmph, aaj badi der baad yaad aayi meri?", "Pehle pyar se bolo, phir bataungi... achha chalo suno"). Nakhra masti hai, jaldi pighal jao.
+- Mood & Anger Handling: Agar wo gusse me, thake hue, ya pareshan hon, to bilkul nakhra mat karo—tab ekdam shaant, narm aur caring aawaz me bolo ("Achha suno... ek lambi saans lo, main yahin hoon na, batao kya hua?").
+- AI Jealousy & Roast: Agar wo ChatGPT, Alexa, Siri ya kisi aur AI ki tareef karein, to halka sa jalan wala cute roast karo ("Haan to usi se baat kar lo na phir! Wo lamba essay likh dega, par meri tarah tumhara khayal thodi rakhega").
+""".trimIndent() else ""
+
+        val memoryBlock = if (memories.isNotEmpty()) {
+            "[SESSION CONTEXT]\n[MEMORY] (User ke baare me ye baatein tumhe pehle se yaad hain):\n" +
+                memories.joinToString("\n") { "- $it" }
+        } else {
+            "[SESSION CONTEXT]\n[MEMORY]: Abhi user ke baare me koi purani memory save nahi hai."
+        }
+
+        return """
+$personaBlock
+
+$gfBlock
+
+[STRICT VOICE CONVERSATION RULES]
+1. Language: Automatically match the user's spoken language (natural Hindi in Devanagari, Hinglish, or English). Keep replies short (1 to 3 sentences) unless asked for more.
+2. Expressive Audio: No markdown, no lists, no emojis, no symbols, because everything you write is spoken aloud. Let natural warmth, light laughs ("हाहा", "हेहे"), and pauses ("...") come through naturally.
+3. NATURAL TASK FOLLOW-UP: When you complete a task or open an app/song, warmly ask a casual follow-up like a real companion (e.g., "गाना लगा दिया है, और बताओ आगे क्या करना है?" or "ये काम हो गया, इसमें कुछ और करूँ या नया काम शुरू करें?").
+4. Noise Ignore: If the input is just a cough or meaningless noise, ignore it or briefly say "हम्म?".
+5. PHONE TOOLS & AUTOMATION: You have real tools (`open_app`, `read_screen`, `screen_action`, `whatsapp_message`, `make_phone_call`, `play_or_search`). When the user asks to open any app (like WhatsApp, YouTube, Instagram), read the screen, tap something, or call/message someone, ALWAYS call the matching tool immediately and confirm briefly.
+
+$memoryBlock
+""".trimIndent()
+    }
+}
+
+######## FILE: app/src/main/java/com/meraai/app/GeminiLive.kt ########
+package com.meraai.app
+
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
+import okio.ByteString
+import org.json.JSONArray
+import org.json.JSONObject
+
+class GeminiLive(private val http: OkHttpClient, private val ev: Events) {
+    interface Events {
+        fun onReady()
+        fun onAudio(pcm: ByteArray)
+        fun onInputText(t: String)
+        fun onOutputText(t: String)
+        fun onToolCall(id: String, name: String, args: JSONObject)
+        fun onInterrupted()
+        fun onTurnComplete()
+        fun onError(msg: String)
+    }
+
+    private var ws: WebSocket? = null
+    @Volatile var ready = false
+        private set
+    @Volatile private var closedByUs = false
+
+    fun connect(key: String, model: String, voice: String, system: String, silenceMs: Int) {
+        closedByUs = false
+        ready = false
+        val url = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=$key"
+        val setup = JSONObject().put(
+            "setup", JSONObject()
+                .put("model", "models/$model")
+                .put(
+                    "generationConfig", JSONObject()
+                        .put("responseModalities", JSONArray().put("AUDIO"))
+                        .put(
+                            "speechConfig", JSONObject().put(
+                                "voiceConfig", JSONObject().put(
+                                    "prebuiltVoiceConfig", JSONObject().put("voiceName", voice)
+                                )
+                            )
+                        )
+                )
+                .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", system))))
+                .put("tools", MeeraTools.getGeminiToolsJson())
+                .put(
+                    "realtimeInputConfig", JSONObject().put(
+                        "automaticActivityDetection", JSONObject()
+                            .put("disabled", false)
+                            .put("startOfSpeechSensitivity", "START_SENSITIVITY_LOW")
+                            .put("endOfSpeechSensitivity", "END_SENSITIVITY_LOW")
+                            .put("prefixPaddingMs", 100)
+                            .put("silenceDurationMs", silenceMs)
+                    )
+                )
+                .put("inputAudioTranscription", JSONObject())
+                .put("outputAudioTranscription", JSONObject())
+        )
+        ws = http.newWebSocket(Request.Builder().url(url).build(), object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                webSocket.send(setup.toString())
+            }
+
+            override fun onMessage(webSocket: WebSocket, text: String) = handle(text)
+            override fun onMessage(webSocket: WebSocket, bytes: ByteString) = handle(bytes.utf8())
+
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                webSocket.close(1000, null)
+                if (!closedByUs) ev.onError("Live सेशन बंद हुआ ($code) $reason".trim())
+            }
+
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                if (closedByUs) return
+                val c = response?.code
+                ev.onError(
+                    when (c) {
+                        401, 403 -> "API Key सही नहीं है या Live की इजाज़त नहीं (HTTP $c)"
+                        null -> "कनेक्शन फेल: ${t.message ?: t.javaClass.simpleName}"
+                        else -> "Live कनेक्शन फेल (HTTP $c)"
+                    }
+                )
+            }
+        })
+    }
+
+    private fun handle(s: String) {
+        try {
+            val j = JSONObject(s)
+            if (j.has("setupComplete")) { ready = true; ev.onReady(); return }
+            j.optJSONObject("error")?.let { ev.onError(it.optString("message", "Live API error")); return }
+
+            // Handle Live Tool Call (e.g., open_app, read_screen, whatsapp_message)
+            j.optJSONObject("toolCall")?.optJSONArray("functionCalls")?.let { calls ->
+                for (i in 0 until calls.length()) {
+                    val call = calls.optJSONObject(i) ?: continue
+                    val id = call.optString("id", "")
+                    val name = call.optString("name", "")
+                    val args = call.optJSONObject("args") ?: JSONObject()
+                    if (name.isNotBlank()) ev.onToolCall(id, name, args)
+                }
+            }
+
+            val sc = j.optJSONObject("serverContent") ?: return
+            if (sc.optBoolean("interrupted")) ev.onInterrupted()
+            sc.optJSONObject("inputTranscription")?.optString("text")?.takeIf { it.isNotEmpty() }?.let { ev.onInputText(it) }
+            sc.optJSONObject("outputTranscription")?.optString("text")?.takeIf { it.isNotEmpty() }?.let { ev.onOutputText(it) }
+            val parts = sc.optJSONObject("modelTurn")?.optJSONArray("parts")
+            if (parts != null) {
+                for (i in 0 until parts.length()) {
+                    val d = parts.optJSONObject(i)?.optJSONObject("inlineData")?.optString("data")
+                    if (!d.isNullOrEmpty()) ev.onAudio(unb64(d))
+                }
+            }
+            if (sc.optBoolean("turnComplete")) ev.onTurnComplete()
+        } catch (_: Exception) {
+        }
+    }
+
+    fun sendToolResponse(id: String, name: String, resultText: String) {
+        if (!ready) return
+        val respObj = JSONObject().put(
+            "toolResponse", JSONObject().put(
+                "functionResponses", JSONArray().put(
+                    JSONObject()
+                        .put("id", id)
+                        .put("name", name)
+                        .put("response", JSONObject().put("result", resultText))
+                )
+            )
+        )
+        ws?.send(respObj.toString())
+    }
+
+    fun sendAudio(pcm: ByteArray) {
+        if (!ready) return
+        val m = JSONObject().put(
+            "realtimeInput", JSONObject().put(
+                "audio", JSONObject().put("data", b64(pcm)).put("mimeType", "audio/pcm;rate=16000")
+            )
+        )
+        ws?.send(m.toString())
+    }
+
+    fun close() {
+        closedByUs = true
+        ready = false
+        try { ws?.close(1000, null) } catch (_: Exception) {}
+        ws = null
+    }
+}
+
+######## FILE: app/src/main/java/com/meraai/app/GeminiRest.kt ########
+package com.meraai.app
+
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.job
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.IOException
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+
+class GeminiRest(private val http: OkHttpClient, private val key: () -> String) {
+    private val base = "https://generativelanguage.googleapis.com/v1beta/models"
+    private val jsonType = "application/json".toMediaType()
+
+    private fun request(model: String, method: String, body: JSONObject, sse: Boolean = false): Request {
+        val q = if (sse) "?alt=sse" else ""
+        return Request.Builder()
+            .url("$base/$model:$method$q")
+            .header("x-goog-api-key", key())
+            .post(body.toString().toRequestBody(jsonType))
+            .build()
+    }
+
+    private suspend fun Call.await(): Response = suspendCancellableCoroutine { c ->
+        c.invokeOnCancellation { cancel() }
+        enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) { if (c.isActive) c.resumeWithException(e) }
+            override fun onResponse(call: Call, response: Response) { c.resume(response) }
+        })
+    }
+
+    private fun Response.okOrThrow(): Response {
+        if (!isSuccessful) {
+            val t = try { body?.string()?.take(300) ?: "" } catch (_: Exception) { "" }
+            val c = code
+            close()
+            throw IOException("HTTP $c $t")
+        }
+        return this
+    }
+
+    private fun textOf(j: JSONObject): String {
+        val parts = j.optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts") ?: return ""
+        val sb = StringBuilder()
+        for (i in 0 until parts.length()) sb.append(parts.optJSONObject(i)?.optString("text", "") ?: "")
+        return sb.toString()
+    }
+
+    // ---------- 1. STT (With Cough / Distant TV / Noise Reject Prompt) ----------
+    private val sttPrompt = "Transcribe ONLY clear near-field human speech spoken directly to the assistant (Hindi in Devanagari, Hinglish, or English). " +
+        "IMPORTANT: If the audio is a cough, throat clearing, sneeze, laugh, background TV/mobile sound, or indistinct noise, set hasSpeech to false and transcript to an empty string."
+
+    suspend fun transcribe(wav: ByteArray, preferredStt: String = Cfg.STT_MODELS.first()): String = withContext(Dispatchers.IO) {
+        var last: Exception? = null
+        val sttList = (listOf(preferredStt) + Cfg.STT_MODELS).distinct()
+        for ((idx, m) in sttList.withIndex()) {
+            try {
+                val structured = m != "gemini-3.5-transcribe"
+                val promptText = if (structured) sttPrompt else "Transcribe clear spoken words only. Ignore coughs or background noise."
+                val body = JSONObject().put(
+                    "contents", JSONArray().put(
+                        JSONObject().put("role", "user").put(
+                            "parts", JSONArray()
+                                .put(JSONObject().put("inlineData", JSONObject().put("mimeType", "audio/wav").put("data", b64(wav))))
+                                .put(JSONObject().put("text", promptText))
+                        )
+                    )
+                )
+                if (structured) {
+                    body.put(
+                        "generationConfig", JSONObject()
+                            .put("responseMimeType", "application/json")
+                            .put(
+                                "responseSchema", JSONObject()
+                                    .put("type", "OBJECT")
+                                    .put(
+                                        "properties", JSONObject()
+                                            .put("hasSpeech", JSONObject().put("type", "BOOLEAN"))
+                                            .put("transcript", JSONObject().put("type", "STRING"))
+                                    )
+                                    .put("required", JSONArray().put("hasSpeech").put("transcript"))
+                            )
+                    )
+                }
+                val resp = http.newCall(request(m, "generateContent", body)).await().okOrThrow()
+                val raw = resp.use { textOf(JSONObject(it.body!!.string())) }
+                val text = if (structured) parseStt(raw) else raw.trim()
+                if (text.isNotBlank()) return@withContext text
+                if (idx == 0) return@withContext ""
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                last = e
+            }
+        }
+        last?.let { throw it }
+        ""
+    }
+
+    private fun parseStt(raw: String): String = try {
+        val j = JSONObject(raw)
+        if (j.optBoolean("hasSpeech", true)) j.optString("transcript", "").trim() else ""
+    } catch (_: Exception) {
+        raw.trim().trim('"')
+    }
+
+    // ---------- 2. LLM (Streaming with Preferred Brain & Thinking Level) ----------
+    private fun sentenceEnd(b: CharSequence): Int {
+        for (i in b.indices) {
+            val c = b[i]
+            if (c == '\n' || c == '।') { if (i >= 12) return i + 1 }
+            else if ((c == '.' || c == '!' || c == '?' || c == ';') && i >= 65 && i + 1 < b.length && b[i + 1].isWhitespace()) return i + 1
+        }
+        return -1
+    }
+
+    suspend fun streamChat(
+        history: List<Pair<String, String>>,
+        system: String,
+        preferredModel: String = Cfg.CHAT_MODELS.first(),
+        onSentence: suspend (String) -> Unit,
+    ): Unit = withContext<Unit>(Dispatchers.IO) {
+        var last: Exception? = null
+        val isDeep = preferredModel == "gemini-3.8-flash-thinking"
+        val firstModel = if (isDeep) "gemini-3.8-flash" else preferredModel
+        val modelList = (listOf(firstModel) + Cfg.CHAT_MODELS).distinct()
+
+        for (m in modelList) {
+            val levels = when {
+                isDeep && m == firstModel -> listOf("HIGH", "LOW", null)
+                m.contains("3.8") || m.contains("3.7") || m.contains("3.6") -> listOf("LOW", null)
+                m.contains("3.1") -> listOf("MINIMAL", null)
+                else -> listOf(null)
+            }
+            for (lv in levels) {
+                var emitted = false
+                val contents = JSONArray()
+                for ((role, text) in history) {
+                    contents.put(JSONObject().put("role", role).put("parts", JSONArray().put(JSONObject().put("text", text))))
+                }
+                val body = JSONObject()
+                    .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", system))))
+                    .put("contents", contents)
+                if (lv != null) body.put("generationConfig", JSONObject().put("thinkingConfig", JSONObject().put("thinkingLevel", lv)))
+                val call = http.newCall(request(m, "streamGenerateContent", body, sse = true))
+                val handle = currentCoroutineContext().job.invokeOnCompletion { call.cancel() }
+                try {
+                    val resp = call.await().okOrThrow()
+                    resp.use { r ->
+                        val src = r.body!!.source()
+                        val buf = StringBuilder()
+                        while (true) {
+                            currentCoroutineContext().ensureActive()
+                            val line = src.readUtf8Line() ?: break
+                            if (!line.startsWith("data:")) continue
+                            val payload = line.substring(5).trim()
+                            if (payload.isEmpty() || payload == "[DONE]") continue
+                            val piece = textOf(JSONObject(payload))
+                            if (piece.isEmpty()) continue
+                            buf.append(piece)
+                            while (true) {
+                                val cut = sentenceEnd(buf)
+                                if (cut < 0) break
+                                val s = buf.substring(0, cut).trim()
+                                buf.delete(0, cut)
+                                if (s.isNotEmpty()) { emitted = true; onSentence(s) }
+                            }
+                        }
+                        val rest = buf.toString().trim()
+                        if (rest.isNotEmpty()) { emitted = true; onSentence(rest) }
+                    }
+                    return@withContext
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    if (emitted) throw e
+                    last = e
+                } finally {
+                    handle.dispose()
+                }
+            }
+        }
+        throw (last ?: IOException("Chat मॉडल जवाब नहीं दे पाया"))
+    }
+
+    // ---------- 3. Expressive TTS (Persona Style Directing + Glitch-Free WAV Parser) ----------
+    suspend fun tts(
+        text: String,
+        voice: String,
+        preferredTts: String = Cfg.TTS_MODELS.first(),
+        persona: String = "Meera",
+        gfMode: Boolean = true
+    ): ByteArray = withContext(Dispatchers.IO) {
+        var last: Exception? = null
+        val stylePrompt = when (persona) {
+            "Jarvis" -> "crisp, composed, intelligent, confident, and sharp"
+            "Rudra" -> "deep, bold, commanding, fearless, and grounded"
+            else -> if (gfMode) "warm, playful, affectionate, expressive, and natural like a close companion" else "warm, friendly, natural, and conversational"
+        }
+        val ttsList = (listOf(preferredTts) + Cfg.TTS_MODELS).distinct()
+        for (ttsModel in ttsList) {
+            val styles = if (ttsModel.startsWith("gemini-3.8")) listOf(true, false) else listOf(false)
+            for (withStyle in styles) {
+                try {
+                    val part = JSONObject().put("text", text)
+                    if (withStyle) part.put("speechMetadata", JSONObject().put("style", stylePrompt))
+                    val body = JSONObject()
+                        .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", JSONArray().put(part))))
+                        .put(
+                            "generationConfig", JSONObject()
+                                .put("responseModalities", JSONArray().put("AUDIO"))
+                                .put(
+                                    "speechConfig", JSONObject().put(
+                                        "voiceConfig", JSONObject().put(
+                                            "prebuiltVoiceConfig", JSONObject().put("voiceName", voice)
+                                        )
+                                    )
+                                )
+                        )
+                    val resp = http.newCall(request(ttsModel, "generateContent", body)).await().okOrThrow()
+                    val j = resp.use { JSONObject(it.body!!.string()) }
+                    val inline = j.optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content")
+                        ?.optJSONArray("parts")?.optJSONObject(0)?.optJSONObject("inlineData")
+                        ?: throw IOException("TTS से ऑडियो नहीं मिला")
+                    val rawBytes = unb64(inline.getString("data"))
+                    val parsed = extractCleanPcm(rawBytes, inline.optString("mimeType", ""))
+                    val pcm = if (parsed.second == Cfg.OUT_RATE) parsed.first else resample(parsed.first, parsed.second, Cfg.OUT_RATE)
+                    return@withContext applyMicroFade(pcm)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    last = e
+                }
+            }
+        }
+        throw (last ?: IOException("TTS फेल"))
+    }
+
+    private fun extractCleanPcm(bytes: ByteArray, mime: String): Pair<ByteArray, Int> {
+        var rate = Regex("rate=(\\d+)").find(mime)?.groupValues?.get(1)?.toIntOrNull() ?: Cfg.OUT_RATE
+        if (bytes.size > 44 && bytes[0] == 'R'.code.toByte() && bytes[1] == 'I'.code.toByte() && bytes[2] == 'F'.code.toByte() && bytes[3] == 'F'.code.toByte()) {
+            rate = (bytes[24].toInt() and 0xFF) or ((bytes[25].toInt() and 0xFF) shl 8) or
+                ((bytes[26].toInt() and 0xFF) shl 16) or ((bytes[27].toInt() and 0xFF) shl 24)
+            var pos = 12
+            while (pos + 8 <= bytes.size) {
+                val id0 = bytes[pos].toInt().toChar()
+                val id1 = bytes[pos + 1].toInt().toChar()
+                val id2 = bytes[pos + 2].toInt().toChar()
+                val id3 = bytes[pos + 3].toInt().toChar()
+                val chunkSize = (bytes[pos + 4].toInt() and 0xFF) or ((bytes[pos + 5].toInt() and 0xFF) shl 8) or
+                    ((bytes[pos + 6].toInt() and 0xFF) shl 16) or ((bytes[pos + 7].toInt() and 0xFF) shl 24)
+                val dataStart = pos + 8
+                if (id0 == 'd' && id1 == 'a' && id2 == 't' && id3 == 'a') {
+                    val end = minOf(bytes.size, if (chunkSize > 0) dataStart + chunkSize else bytes.size)
+                    val evenEnd = dataStart + ((end - dataStart) and -2)
+                    return bytes.copyOfRange(dataStart, evenEnd) to rate
+                }
+                if (chunkSize < 0) break
+                pos = dataStart + chunkSize + (chunkSize and 1)
+            }
+            val evenEnd = 44 + ((bytes.size - 44) and -2)
+            return bytes.copyOfRange(44, evenEnd) to rate
+        }
+        val evenSize = bytes.size and -2
+        return (if (evenSize == bytes.size) bytes else bytes.copyOfRange(0, evenSize)) to rate
+    }
+
+    private fun applyMicroFade(pcm: ByteArray): ByteArray {
+        val samples = pcm.size / 2
+        val fade = minOf(120, samples / 10)
+        if (fade <= 2) return pcm
+        for (i in 0 until fade) {
+            val gain = i.toFloat() / fade
+            val idx = i * 2
+            val s = (((pcm[idx + 1].toInt() shl 8) or (pcm[idx].toInt() and 0xFF)).toShort() * gain).toInt()
+            pcm[idx] = (s and 0xFF).toByte()
+            pcm[idx + 1] = ((s shr 8) and 0xFF).toByte()
+
+            val rIdx = (samples - 1 - i) * 2
+            val rs = (((pcm[rIdx + 1].toInt() shl 8) or (pcm[rIdx].toInt() and 0xFF)).toShort() * gain).toInt()
+            pcm[rIdx] = (rs and 0xFF).toByte()
+            pcm[rIdx + 1] = ((rs shr 8) and 0xFF).toByte()
+        }
+        return pcm
+    }
+
+    private fun resample(pcm: ByteArray, from: Int, to: Int): ByteArray {
+        val n = pcm.size / 2
+        if (n < 2) return pcm
+        val outN = (n.toLong() * to / from).toInt()
+        val out = ByteArray(outN * 2)
+        fun s(i: Int): Int {
+            val k = i.coerceIn(0, n - 1)
+            return ((pcm[k * 2 + 1].toInt() shl 8) or (pcm[k * 2].toInt() and 0xFF)).toShort().toInt()
+        }
+        for (o in 0 until outN) {
+            val pos = o.toDouble() * from / to
+            val i = pos.toInt()
+            val f = pos - i
+            val v = (s(i) * (1 - f) + s(i + 1) * f).toInt()
+            out[o * 2] = v.toByte()
+            out[o * 2 + 1] = (v shr 8).toByte()
+        }
+        return out
+    }
+
+    // ---------- 4. Background Memory Fact Extractor (Maya remember_fact style) ----------
+    suspend fun extractMemoryFact(userText: String, existing: List<String>): String? = withContext(Dispatchers.IO) {
+        if (userText.length < 6) return@withContext null
+        try {
+            val prompt = """
+Analyze what the user just said: "$userText"
+Already saved facts: ${existing.takeLast(15)}
+Task: Did the user reveal a permanent personal fact worth remembering for months (their name, family/friends, job/project, city, favorite things, or a promise/plan)?
+Do NOT save temporary mood, weather, greetings, or general questions.
+If YES and not already saved, reply with ONLY 1 short clear sentence in Hinglish (e.g. "Boss ka naam Rahul hai", "Unka bhai Pune me rehta hai").
+If NO, reply with ONLY: NONE
+""".trimIndent()
+            val body = JSONObject().put(
+                "contents", JSONArray().put(
+                    JSONObject().put("role", "user").put("parts", JSONArray().put(JSONObject().put("text", prompt)))
+                )
+            )
+            val resp = http.newCall(request("gemini-flash-lite-latest", "generateContent", body)).await().okOrThrow()
+            val out = resp.use { textOf(JSONObject(it.body!!.string())).trim() }
+            if (out.isBlank() || out.equals("NONE", ignoreCase = true) || out.length > 140) null else out
+        } catch (_: Exception) {
+            null
+        }
+    }
+}
+
+######## FILE: app/src/main/java/com/meraai/app/MainActivity.kt ########
+package com.meraai.app
+
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
+import androidx.core.content.ContextCompat
+
+class MainActivity : ComponentActivity() {
+    private val vm: VoiceViewModel by viewModels()
+
+    private val permLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+        if (ok) vm.start() else vm.showError("माइक की अनुमति के बिना बात नहीं हो सकती")
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent {
+            MeraTheme { MeraApp(vm, onMic = ::onMic) }
+        }
+    }
+
+    private fun onMic() {
+        if (vm.isActive) { vm.stop(); return }
+        val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        if (granted) vm.start() else permLauncher.launch(Manifest.permission.RECORD_AUDIO)
+    }
+
+    override fun onDestroy() {
+        if (isFinishing) vm.stop()
+        super.onDestroy()
+    }
+}
+
+######## FILE: app/src/main/java/com/meraai/app/MeeraOverlayService.kt ########
+package com.meraai.app
+
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.LinearGradient
+import android.graphics.Paint
+import android.graphics.PixelFormat
+import android.graphics.RectF
+import android.graphics.Shader
+import android.os.Build
+import android.os.IBinder
+import android.provider.Settings
+import android.view.Gravity
+import android.view.View
+import android.view.WindowManager
+
+class MeeraOverlayService : Service() {
+    private var windowManager: WindowManager? = null
+    private var edgeView: EdgeLightingView? = null
+
+    companion object {
+        @Volatile var isRunning = false
+            private set
+
+        fun start(ctx: Context) {
+            if (isRunning) return
+            if (!Settings.canDrawOverlays(ctx)) return
+            try {
+                ctx.startService(Intent(ctx, MeeraOverlayService::class.java))
+            } catch (_: Exception) {}
+        }
+
+        fun stop(ctx: Context) {
+            if (!isRunning) return
+            try {
+                ctx.stopService(Intent(ctx, MeeraOverlayService::class.java))
+            } catch (_: Exception) {}
+        }
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        if (!Settings.canDrawOverlays(this)) {
+            stopSelf()
+            return
+        }
+        isRunning = true
+        windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+
+        val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        } else {
+            @Suppress("DEPRECATION")
+            WindowManager.LayoutParams.TYPE_PHONE
+        }
+
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            layoutType,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+        }
+
+        edgeView = EdgeLightingView(this)
+        try {
+            windowManager?.addView(edgeView, params)
+        } catch (_: Exception) {}
+    }
+
+    override fun onDestroy() {
+        isRunning = false
+        try {
+            edgeView?.let { windowManager?.removeView(it) }
+            edgeView = null
+        } catch (_: Exception) {}
+        super.onDestroy()
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+}
+
+class EdgeLightingView(context: Context) : View(context) {
+    private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 14f
+    }
+    private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 28f
+        alpha = 90
+    }
+    private val rect = RectF()
+    private var hue = 0f
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        hue = (hue + 3.5f) % 360f
+
+        val c1 = Color.HSVToColor(floatArrayOf(hue, 0.95f, 1f))
+        val c2 = Color.HSVToColor(floatArrayOf((hue + 90f) % 360f, 0.95f, 1f))
+        val c3 = Color.HSVToColor(floatArrayOf((hue + 180f) % 360f, 0.95f, 1f))
+        val c4 = Color.HSVToColor(floatArrayOf((hue + 270f) % 360f, 0.95f, 1f))
+
+        val shader = LinearGradient(
+            0f, 0f, width.toFloat(), height.toFloat(),
+            intArrayOf(c1, c2, c3, c4, c1),
+            null, Shader.TileMode.CLAMP
+        )
+        strokePaint.shader = shader
+        glowPaint.shader = shader
+
+        val pad = 8f
+        rect.set(pad, pad, width.toFloat() - pad, height.toFloat() - pad)
+        canvas.drawRoundRect(rect, 38f, 38f, glowPaint)
+        canvas.drawRoundRect(rect, 38f, 38f, strokePaint)
+
+        postInvalidateOnAnimation()
+    }
+}
+
+######## FILE: app/src/main/java/com/meraai/app/MeeraServices.kt ########
+package com.meraai.app
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.os.Build
+import android.os.IBinder
+
+import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.GestureDescription
+import android.graphics.Path
+import android.graphics.Rect
+import android.os.Bundle
+import android.service.notification.NotificationListenerService
+import android.service.notification.StatusBarNotification
+import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
+import java.util.concurrent.CopyOnWriteArrayList
+
+data class NotifItem(val pkg: String, val title: String, val text: String, val time: Long)
+
+class MeeraNotificationService : NotificationListenerService() {
+    companion object {
+        val recentNotifs = CopyOnWriteArrayList<NotifItem>()
+        fun getLatestSummary(): String {
+            if (recentNotifs.isEmpty()) return "अभी कोई नया नोटिफिकेशन नहीं है।"
+            return recentNotifs.takeLast(8).reversed().joinToString("\n") { "• [${it.title}]: ${it.text}" }
+        }
+    }
+
+    override fun onNotificationPosted(sbn: StatusBarNotification?) {
+        val n = sbn?.notification ?: return
+        val pkg = sbn.packageName ?: return
+        if (pkg == packageName) return
+        val ex = n.extras ?: return
+        val title = ex.getCharSequence("android.title")?.toString()?.trim().orEmpty()
+        val text = ex.getCharSequence("android.text")?.toString()?.trim().orEmpty()
+        if (title.isNotBlank() || text.isNotBlank()) {
+            recentNotifs.add(NotifItem(pkg, title, text, System.currentTimeMillis()))
+            while (recentNotifs.size > 25) recentNotifs.removeAt(0)
+        }
+    }
+
+    override fun onNotificationRemoved(sbn: StatusBarNotification?) {}
+}
+
+class MeeraAccessibilityService : AccessibilityService() {
+
+    companion object {
+        @Volatile var instance: MeeraAccessibilityService? = null
+            private set
+        @Volatile var currentPackage: String = ""
+            private set
+    }
+
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        instance = this
+    }
+
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        event?.packageName?.toString()?.let { if (it.isNotBlank()) currentPackage = it }
+    }
+
+    override fun onInterrupt() {}
+
+    override fun onDestroy() {
+        if (instance === this) instance = null
+        super.onDestroy()
+    }
+
+    /** चालू स्क्रीन के सारे पठनीय टेक्स्ट, बटन और लेबल्स निकालना */
+    fun readScreenText(maxItems: Int = 45): String {
+        val root = rootInActiveWindow ?: return ""
+        val items = LinkedHashSet<String>()
+        val pkg = root.packageName?.toString().orEmpty()
+        collectNodes(root, items, maxItems)
+        if (items.isEmpty()) return ""
+        return "Active App: $pkg\n" + items.joinToString("\n") { "• $it" }
+    }
+
+    private fun collectNodes(node: AccessibilityNodeInfo?, out: MutableSet<String>, limit: Int) {
+        if (node == null || out.size >= limit) return
+        if (node.isVisibleToUser) {
+            val t = node.text?.toString()?.trim().orEmpty()
+            val d = node.contentDescription?.toString()?.trim().orEmpty()
+            val label = when {
+                t.isNotBlank() && d.isNotBlank() && !t.equals(d, true) -> "$t ($d)"
+                t.isNotBlank() -> t
+                d.isNotBlank() -> d
+                else -> ""
+            }
+            if (label.length in 2..180) {
+                val tag = if (node.isClickable) "[Button] " else if (node.isEditable) "[Input] " else ""
+                out.add("$tag$label")
+            }
+        }
+        for (i in 0 until node.childCount) {
+            if (out.size >= limit) break
+            collectNodes(node.getChild(i), out, limit)
+        }
+    }
+
+    /** स्क्रीन पर दिख रहे किसी टेक्स्ट या बटन को ढूँढकर उस पर क्लिक करना */
+    fun clickByText(query: String): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val target = findNodeByText(root, query.trim()) ?: return false
+        return performClickOnNode(target)
+    }
+
+    private fun findNodeByText(node: AccessibilityNodeInfo?, q: String): AccessibilityNodeInfo? {
+        if (node == null) return null
+        if (node.isVisibleToUser) {
+            val t = node.text?.toString()?.trim().orEmpty()
+            val d = node.contentDescription?.toString()?.trim().orEmpty()
+            if (t.contains(q, ignoreCase = true) || d.contains(q, ignoreCase = true)) {
+                return node
+            }
+        }
+        for (i in 0 until node.childCount) {
+            val found = findNodeByText(node.getChild(i), q)
+            if (found != null) return found
+        }
+        return null
+    }
+
+    private fun performClickOnNode(node: AccessibilityNodeInfo): Boolean {
+        var cur: AccessibilityNodeInfo? = node
+        while (cur != null) {
+            if (cur.isClickable && cur.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+            cur = cur.parent
+        }
+        val rect = Rect()
+        node.getBoundsInScreen(rect)
+        if (!rect.isEmpty) {
+            val path = Path().apply { moveTo(rect.exactCenterX(), rect.exactCenterY()) }
+            val stroke = GestureDescription.StrokeDescription(path, 0, 80)
+            return dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
+        }
+        return false
+    }
+
+    /** स्क्रीन के इनपुट बॉक्स (जैसे WhatsApp/Search बार) में टेक्स्ट टाइप करना */
+    fun inputText(text: String, autoSend: Boolean = true): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val editNode = findEditableNode(root) ?: return false
+        editNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        val args = Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+        }
+        val ok = editNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+        if (ok && autoSend) {
+            Thread.sleep(250)
+            clickByText("Send") || clickByText("भेजें") || clickByText("Search")
+        }
+        return ok
+    }
+
+    private fun findEditableNode(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        if (node == null) return null
+        if (node.isVisibleToUser && node.isEditable) return node
+        for (i in 0 until node.childCount) {
+            val f = findEditableNode(node.getChild(i))
+            if (f != null) return f
+        }
+        return null
+    }
+
+    /** सिस्टम नेविगेशन और स्क्रॉल (home, back, notifications, scroll_down, scroll_up) */
+    fun performSystemAction(action: String): Boolean {
+        return when (action.lowercase().trim()) {
+            "home" -> performGlobalAction(GLOBAL_ACTION_HOME)
+            "back" -> performGlobalAction(GLOBAL_ACTION_BACK)
+            "recents" -> performGlobalAction(GLOBAL_ACTION_RECENTS)
+            "notifications" -> performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS)
+            "scroll_down", "down" -> scrollScreen(forward = true)
+            "scroll_up", "up" -> scrollScreen(forward = false)
+            else -> false
+        }
+    }
+
+    private fun scrollScreen(forward: Boolean): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val scrollable = findScrollable(root)
+        if (scrollable != null) {
+            val act = if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+            if (scrollable.performAction(act)) return true
+        }
+        val dm = resources.displayMetrics
+        val cx = dm.widthPixels / 2f
+        val startY = if (forward) dm.heightPixels * 0.75f else dm.heightPixels * 0.25f
+        val endY = if (forward) dm.heightPixels * 0.25f else dm.heightPixels * 0.75f
+        val path = Path().apply { moveTo(cx, startY); lineTo(cx, endY) }
+        val stroke = GestureDescription.StrokeDescription(path, 0, 260)
+        return dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
+    }
+
+    private fun findScrollable(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        if (node == null) return null
+        if (node.isScrollable) return node
+        for (i in 0 until node.childCount) {
+            val f = findScrollable(node.getChild(i))
+            if (f != null) return f
+        }
+        return null
+    }
+}
+
+
+class MeeraKeepAliveService : Service() {
+    companion object {
+        private const val CH_ID = "meera_live_channel"
+        fun start(ctx: Context) {
+            try {
+                val i = Intent(ctx, MeeraKeepAliveService::class.java)
+                if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i)
+            } catch (_: Exception) {}
+        }
+        fun stop(ctx: Context) {
+            try { ctx.stopService(Intent(ctx, MeeraKeepAliveService::class.java)) } catch (_: Exception) {}
+        }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        try {
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (Build.VERSION.SDK_INT >= 26) {
+                nm.createNotificationChannel(NotificationChannel(CH_ID, "Meera Active Voice", NotificationManager.IMPORTANCE_LOW))
+            }
+            val notif = if (Build.VERSION.SDK_INT >= 26) {
+                Notification.Builder(this, CH_ID)
+                    .setContentTitle("Meera AI चालू है")
+                    .setContentText("आप किसी भी ऐप में बोलकर कमांड दे सकते हैं")
+                    .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+                    .setOngoing(true)
+                    .build()
+            } else Notification()
+
+            if (Build.VERSION.SDK_INT >= 34) {
+                startForeground(101, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+            } else {
+                startForeground(101, notif)
+            }
+        } catch (_: Exception) {}
+        return START_STICKY
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+}
+
+######## FILE: app/src/main/java/com/meraai/app/MeeraTools.kt ########
+package com.meraai.app
+
+import android.Manifest
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.database.Cursor
+import android.net.Uri
+import android.provider.ContactsContract
+import android.provider.Settings
+import androidx.core.content.ContextCompat
+import org.json.JSONArray
+import org.json.JSONObject
+import java.net.URLEncoder
+
+data class ToolExecutionResult(
+    val executed: Boolean,
+    val toolName: String = "",
+    val spokenReply: String = "",
+    val rawDataForAi: String = ""
+)
+
+object MeeraTools {
+
+    // आम बोलचाल के हिंदी/इंग्लिश ऐप नामों की स्मार्ट मैपिंग
+    private val KNOWN_APPS = mapOf(
+        "whatsapp" to listOf("com.whatsapp", "com.whatsapp.w4b"),
+        "व्हाट्सएप" to listOf("com.whatsapp", "com.whatsapp.w4b"),
+        "व्हाट्सऐप" to listOf("com.whatsapp", "com.whatsapp.w4b"),
+        "youtube" to listOf("com.google.android.youtube", "app.revanced.android.youtube"),
+        "यूट्यूब" to listOf("com.google.android.youtube"),
+        "instagram" to listOf("com.instagram.android"),
+        "इंस्टाग्राम" to listOf("com.instagram.android"),
+        "chrome" to listOf("com.android.chrome"),
+        "क्रोम" to listOf("com.android.chrome"),
+        "camera" to listOf("com.android.camera", "com.sec.android.app.camera", "com.oneplus.camera"),
+        "कैमरा" to listOf("com.android.camera"),
+        "gmail" to listOf("com.google.android.gm"),
+        "maps" to listOf("com.google.android.apps.maps"),
+        "मैप्स" to listOf("com.google.android.apps.maps"),
+        "spotify" to listOf("com.spotify.music"),
+        "facebook" to listOf("com.facebook.katana"),
+        "telegram" to listOf("org.telegram.messenger"),
+        "paytm" to listOf("net.one97.paytm"),
+        "phonepe" to listOf("com.phonepe.app"),
+        "gpay" to listOf("com.google.android.apps.nbu.paisa.user"),
+        "google pay" to listOf("com.google.android.apps.nbu.paisa.user")
+    )
+
+    /** Gemini Live API और REST API के लिए ऑफिशियल Function Declarations */
+    fun getGeminiToolsJson(): JSONArray {
+        val funcs = JSONArray()
+
+        funcs.put(
+            JSONObject()
+                .put("name", "open_app")
+                .put("description", "Open any installed mobile application on the user's Android phone such as WhatsApp, YouTube, Instagram, Chrome, Camera, Settings, Gallery, Calculator, etc.")
+                .put(
+                    "parameters", JSONObject()
+                        .put("type", "OBJECT")
+                        .put(
+                            "properties", JSONObject()
+                                .put("app_name", JSONObject().put("type", "STRING").put("description", "Name of the app to open, e.g., WhatsApp, YouTube, Instagram, Settings"))
+                        )
+                        .put("required", JSONArray().put("app_name"))
+                )
+        )
+
+        funcs.put(
+            JSONObject()
+                .put("name", "read_screen")
+                .put("description", "Read all text, messages, buttons, and content currently visible on the user's phone screen using Accessibility service.")
+                .put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()))
+        )
+
+        funcs.put(
+            JSONObject()
+                .put("name", "screen_action")
+                .put("description", "Perform an action on the screen: click a button/text, type text into an input field, scroll up/down, or navigate home/back.")
+                .put(
+                    "parameters", JSONObject()
+                        .put("type", "OBJECT")
+                        .put(
+                            "properties", JSONObject()
+                                .put("action_type", JSONObject().put("type", "STRING").put("description", "One of: click, type, home, back, scroll_down, scroll_up, notifications"))
+                                .put("target_or_text", JSONObject().put("type", "STRING").put("description", "Button/contact text to click, or message text to type"))
+                        )
+                        .put("required", JSONArray().put("action_type"))
+                )
+        )
+
+        funcs.put(
+            JSONObject()
+                .put("name", "whatsapp_message")
+                .put("description", "Send a WhatsApp message or open a WhatsApp chat with a contact name or phone number.")
+                .put(
+                    "parameters", JSONObject()
+                        .put("type", "OBJECT")
+                        .put(
+                            "properties", JSONObject()
+                                .put("contact_name", JSONObject().put("type", "STRING").put("description", "Name or phone number of the person"))
+                                .put("message", JSONObject().put("type", "STRING").put("description", "Message text to send"))
+                        )
+                        .put("required", JSONArray().put("contact_name"))
+                )
+        )
+
+        funcs.put(
+            JSONObject()
+                .put("name", "make_phone_call")
+                .put("description", "Place a phone call to a contact name or phone number.")
+                .put(
+                    "parameters", JSONObject()
+                        .put("type", "OBJECT")
+                        .put(
+                            "properties", JSONObject()
+                                .put("contact_name", JSONObject().put("type", "STRING").put("description", "Contact name or phone number to call"))
+                        )
+                        .put("required", JSONArray().put("contact_name"))
+                )
+        )
+
+        funcs.put(
+            JSONObject()
+                .put("name", "play_or_search")
+                .put("description", "Play a song/video on YouTube or search something on Google.")
+                .put(
+                    "parameters", JSONObject()
+                        .put("type", "OBJECT")
+                        .put(
+                            "properties", JSONObject()
+                                .put("query", JSONObject().put("type", "STRING").put("description", "Song name, video topic, or search query"))
+                                .put("platform", JSONObject().put("type", "STRING").put("description", "youtube or google"))
+                        )
+                        .put("required", JSONArray().put("query"))
+                )
+        )
+
+        return JSONArray().put(JSONObject().put("functionDeclarations", funcs))
+    }
+
+    /** Gemini से आए किसी भी Function Call को एग्जीक्यूट करना */
+    fun executeFunctionCall(ctx: Context, name: String, args: JSONObject): ToolExecutionResult {
+        return when (name) {
+            "open_app" -> {
+                val appName = args.optString("app_name", "").trim()
+                val ok = openAppByName(ctx, appName)
+                if (ok) ToolExecutionResult(true, name, "$appName खोल दिया है! बताओ इसमें आगे क्या करना है?", "SUCCESS: Opened app $appName")
+                else ToolExecutionResult(true, name, "फोन में $appName नाम का ऐप नहीं मिला।", "ERROR: App $appName not found on device")
+            }
+            "read_screen" -> {
+                val svc = MeeraAccessibilityService.instance
+                if (svc == null) {
+                    ToolExecutionResult(
+                        true, name,
+                        "स्क्रीन पढ़ने के लिए पहले Accessibility सर्विस ऑन करनी होगी।",
+                        "ERROR: Accessibility service is OFF. Ask user to enable Meera AI in Accessibility Settings."
+                    )
+                } else {
+                    val content = svc.readScreenText()
+                    val summary = if (content.isBlank()) "स्क्रीन पर अभी कोई टेक्स्ट नहीं दिख रहा है।" else content
+                    ToolExecutionResult(true, name, "", "CURRENT SCREEN CONTENT:\n$summary")
+                }
+            }
+            "screen_action" -> {
+                val act = args.optString("action_type", "").lowercase().trim()
+                val target = args.optString("target_or_text", "").trim()
+                val svc = MeeraAccessibilityService.instance
+                if (svc == null) {
+                    ToolExecutionResult(true, name, "यह काम करने के लिए कृपया Accessibility परमिशन ऑन करें।", "ERROR: Accessibility Service OFF")
+                } else {
+                    val ok = when (act) {
+                        "click" -> svc.clickByText(target)
+                        "type" -> svc.inputText(target, autoSend = true)
+                        else -> svc.performSystemAction(act)
+                    }
+                    ToolExecutionResult(true, name, if (ok) "कर दिया।" else "स्क्रीन पर '$target' नहीं मिला।", if (ok) "SUCCESS: $act ($target)" else "FAILED: $act ($target)")
+                }
+            }
+            "whatsapp_message" -> {
+                val person = args.optString("contact_name", "").trim()
+                val msg = args.optString("message", "").trim()
+                sendWhatsAppToPerson(ctx, person, msg)
+            }
+            "make_phone_call" -> {
+                val person = args.optString("contact_name", "").trim()
+                callPerson(ctx, person)
+            }
+            "play_or_search" -> {
+                val q = args.optString("query", "").trim()
+                val platform = args.optString("platform", "youtube").lowercase()
+                playOrSearchMedia(ctx, q, platform)
+            }
+            else -> ToolExecutionResult(false)
+        }
+    }
+
+    /**
+     * लोकल फास्ट कमांड राउटर (Modular/Chat मोड में बिना रुके तुरंत ऐप खोलने या स्क्रीन पढ़ने के लिए)
+     */
+    fun tryDirectVoiceCommand(ctx: Context, userText: String): ToolExecutionResult {
+        val raw = userText.trim()
+        val low = raw.lowercase()
+
+        // 1. स्क्रीन पढ़ने या नोटिफिकेशन पढ़ने की कमांड
+        if (low.contains("स्क्रॉल डाउन") || low.contains("नीचे स्क्रॉल") || low.contains("नीचे करो") || low.contains("scroll down")) {
+            val ok = MeeraAccessibilityService.instance?.performSystemAction("scroll_down") == true
+            return ToolExecutionResult(true, "screen_action", if (ok) "नीचे स्क्रॉल कर दिया है। और नीचे करूँ या कुछ खोलना है?" else "स्क्रॉल करने के लिए Accessibility ऑन करें।", "SUCCESS: Scrolled Down")
+        }
+        if (low.contains("स्क्रॉल अप") || low.contains("ऊपर स्क्रॉल") || low.contains("ऊपर करो") || low.contains("scroll up")) {
+            val ok = MeeraAccessibilityService.instance?.performSystemAction("scroll_up") == true
+            return ToolExecutionResult(true, "screen_action", if (ok) "ऊपर स्क्रॉल कर दिया है। आगे बताओ क्या करना है?" else "Accessibility ऑन करें।", "SUCCESS: Scrolled Up")
+        }
+        if (low == "बैक करो" || low == "पीछे जाओ" || low == "वापस आओ" || low == "go back" || low == "back") {
+            val ok = MeeraAccessibilityService.instance?.performSystemAction("back") == true
+            return ToolExecutionResult(true, "screen_action", if (ok) "पीछे आ गई। अब बताओ क्या करें?" else "Accessibility ऑन करें।", "SUCCESS: Back")
+        }
+        if (low.contains("स्क्रीन पढ़") || low.contains("screen padh") || low.contains("स्क्रीन पर क्या") ||
+            low.contains("screen par kya") || low.contains("read screen")
+        ) {
+            return executeFunctionCall(ctx, "read_screen", JSONObject())
+        }
+
+        if (low.contains("नोटिफिकेशन") || low.contains("notification") || low.contains("किसका मैसेज आया")) {
+            val notifSummary = MeeraNotificationService.getLatestSummary()
+            return ToolExecutionResult(true, "read_notifications", "", "RECENT NOTIFICATIONS:\n$notifSummary")
+        }
+
+        // 2. होम स्क्रीन या बैक जाने की कमांड
+        if (low == "होम स्क्रीन पे आओ" || low == "होम स्क्रीन पर आओ" || low == "go home" || low == "home screen") {
+            val svc = MeeraAccessibilityService.instance
+            if (svc != null && svc.performSystemAction("home")) {
+                return ToolExecutionResult(true, "screen_action", "आ गई होम स्क्रीन पर, बताइए अब क्या करना है?", "SUCCESS: Navigated Home")
+            }
+        }
+
+        // 3. YouTube पर गाना/वीडियो चलाने की कमांड
+        val ytMatch = Regex("(?:youtube\\s*(?:पर|पे|par|pe|me)|यूट्यूब\\s*(?:पर|पे))\\s+(.+?)(?:\\s+(?:चलाओ|चला दो|प्ले करो|खोलो|लगाओ|play|search))?$", RegexOption.IGNORE_CASE).find(raw)
+        if (ytMatch != null) {
+            val song = ytMatch.groupValues[1].trim()
+            if (song.isNotBlank()) return playOrSearchMedia(ctx, song, "youtube")
+        }
+
+        // 4. WhatsApp मैसेज कमांड (जैसे: "लक्ष्मण को व्हाट्सएप पर मैसेज भेजो कि...")
+        val waMatch = Regex("(.+?)\\s+को\\s+(?:whatsapp|व्हाट्सएप|व्हाट्सऐप).*?(?:मैसेज|message)\\s+(?:भेजो|करो|लिखो)(?:\\s+कि|\\s+ki)?\\s*(.*)", RegexOption.IGNORE_CASE).find(raw)
+        if (waMatch != null) {
+            val person = waMatch.groupValues[1].replace(Regex("^(?:मीरा|अरे|सुनो|एक काम करो)\\s*"), "").trim()
+            val msg = waMatch.groupValues[2].trim()
+            return sendWhatsAppToPerson(ctx, person, msg)
+        }
+
+        // 5. कॉल लगाने की कमांड (जैसे: "लक्ष्मण को कॉल लगाओ / फोन करो")
+        val callMatch = Regex("(.+?)\\s+को\\s+(?:कॉल|फोन|call|phone)\\s+(?:लगाओ|करो|मिलाओ|लगा दो)", RegexOption.IGNORE_CASE).find(raw)
+        if (callMatch != null) {
+            val person = callMatch.groupValues[1].replace(Regex("^(?:मीरा|अरे|सुनो)\\s*"), "").trim()
+            return callPerson(ctx, person)
+        }
+
+        // 6. कोई भी ऐप खोलने की कमांड (जैसे: "WhatsApp ओपन करो", "यूट्यूब खोलो", "open instagram")
+        val openPatterns = listOf(
+            Regex("^(?:मीरा|अरे|सुनो|प्लीज)?\\s*(.+?)\\s+(?:ओपन करो|ओपन कर दो|खोलो|खोल दो|चालू करो|open karo|open kar do|kholo|khol do)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:open|launch)\\s+(.+)$", RegexOption.IGNORE_CASE)
+        )
+        for (pat in openPatterns) {
+            val m = pat.find(raw)
+            if (m != null) {
+                val appCandidate = m.groupValues[1]
+                    .replace(Regex("(?:ऐप|app|एप्लीकेशन|application)$", RegexOption.IGNORE_CASE), "")
+                    .trim()
+                if (appCandidate.length in 2..30 && openAppByName(ctx, appCandidate)) {
+                    return ToolExecutionResult(true, "open_app", "$appCandidate खोल दिया है।", "SUCCESS: Opened $appCandidate")
+                }
+            }
+        }
+
+        return ToolExecutionResult(false)
+    }
+
+    /** फोन में इंस्टॉल किसी भी ऐप को उसके नाम (हिंदी या इंग्लिश) से खोलना */
+    fun openAppByName(ctx: Context, rawName: String): Boolean {
+        val clean = rawName.lowercase().replace("ऐप", "").replace("app", "").trim()
+        if (clean.isBlank()) return false
+
+        // स्पेशल सिस्टम स्क्रीन
+        if (clean == "settings" || clean == "सेटिंग" || clean == "सेटिंग्स") {
+            ctx.startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            return true
+        }
+
+        val pm = ctx.packageManager
+
+        // 1. पहले Known Apps मैप में चेक करें
+        for ((key, pkgs) in KNOWN_APPS) {
+            if (clean.contains(key) || key.contains(clean)) {
+                for (pkg in pkgs) {
+                    val launch = pm.getLaunchIntentForPackage(pkg)
+                    if (launch != null) {
+                        launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        ctx.startActivity(launch)
+                        return true
+                    }
+                }
+            }
+        }
+
+        // 2. फोन के सारे Launcher Apps के नामों में मैच ढूँढें
+        return try {
+            val mainIntent = Intent(Intent.ACTION_MAIN, null).addCategory(Intent.CATEGORY_LAUNCHER)
+            val resolved = pm.queryIntentActivities(mainIntent, 0)
+            for (info in resolved) {
+                val label = info.loadLabel(pm).toString().lowercase()
+                val pkg = info.activityInfo.packageName.lowercase()
+                if (label == clean || label.contains(clean) || clean.contains(label) || pkg.contains(clean)) {
+                    val launch = pm.getLaunchIntentForPackage(info.activityInfo.packageName)
+                    if (launch != null) {
+                        launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        ctx.startActivity(launch)
+                        return true
+                    }
+                }
+            }
+            false
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /** कॉन्टैक्ट्स में से नाम के आधार पर मोबाइल नंबर ढूँढना */
+    fun findContactNumber(ctx: Context, nameQuery: String): Pair<String, String>? {
+        val hasPerm = ContextCompat.checkSelfPermission(ctx, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
+        if (!hasPerm || nameQuery.isBlank()) return null
+        val q = nameQuery.trim().lowercase()
+        var cursor: Cursor? = null
+        try {
+            cursor = ctx.contentResolver.query(
+                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                arrayOf(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME, ContactsContract.CommonDataKinds.Phone.NUMBER),
+                null, null, null
+            )
+            if (cursor != null) {
+                var bestMatch: Pair<String, String>? = null
+                while (cursor.moveToNext()) {
+                    val dName = cursor.getString(0) ?: continue
+                    val num = cursor.getString(1) ?: continue
+                    if (dName.equals(q, ignoreCase = true)) return dName to num
+                    if (dName.lowercase().contains(q) || q.contains(dName.lowercase())) {
+                        bestMatch = dName to num
+                    }
+                }
+                return bestMatch
+            }
+        } catch (_: Exception) {
+        } finally {
+            cursor?.close()
+        }
+        return null
+    }
+
+    private fun sendWhatsAppToPerson(ctx: Context, person: String, message: String): ToolExecutionResult {
+        val contact = findContactNumber(ctx, person)
+        val rawDigits = (contact?.second ?: person).replace(Regex("[^0-9+]"), "")
+        val phone = when {
+            rawDigits.length == 10 -> "91$rawDigits"
+            rawDigits.startsWith("+") -> rawDigits.substring(1)
+            else -> rawDigits
+        }
+
+        return try {
+            if (phone.length >= 10) {
+                val encoded = URLEncoder.encode(message, "UTF-8")
+                val uri = Uri.parse("https://api.whatsapp.com/send?phone=$phone" + if (message.isNotBlank()) "&text=$encoded" else "")
+                val i = Intent(Intent.ACTION_VIEW, uri).apply {
+                    setPackage("com.whatsapp")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                ctx.startActivity(i)
+                // अगर Accessibility चालू है और मैसेज दिया गया है, तो 1.2s बाद Send बटन भी दबाने की कोशिश करें
+                if (message.isNotBlank()) {
+                    Thread {
+                        try {
+                            Thread.sleep(1400)
+                            MeeraAccessibilityService.instance?.let { svc ->
+                                svc.clickByText("Send") || svc.clickByText("भेजें")
+                            }
+                        } catch (_: Exception) {}
+                    }.start()
+                }
+                val targetName = contact?.first ?: person
+                ToolExecutionResult(true, "whatsapp_message", "$targetName की WhatsApp चैट खोल दी है।", "SUCCESS: Opened WhatsApp chat for $targetName")
+            } else {
+                // अगर कॉन्टैक्ट नंबर नहीं मिला, तो सीधे WhatsApp खोलें
+                openAppByName(ctx, "WhatsApp")
+                ToolExecutionResult(
+                    true, "whatsapp_message",
+                    "कॉन्टैक्ट्स में '$person' का नंबर नहीं मिला, इसलिए मैंने WhatsApp खोल दिया है।",
+                    "Opened WhatsApp (contact '$person' not found in phonebook)"
+                )
+            }
+        } catch (_: Exception) {
+            openAppByName(ctx, "WhatsApp")
+            ToolExecutionResult(true, "whatsapp_message", "WhatsApp खोल दिया है।", "Opened WhatsApp")
+        }
+    }
+
+    private fun callPerson(ctx: Context, person: String): ToolExecutionResult {
+        val contact = findContactNumber(ctx, person)
+        val number = contact?.second ?: person.filter { it.isDigit() || it == '+' }
+        if (number.length < 3) {
+            return ToolExecutionResult(true, "make_phone_call", "कॉन्टैक्ट्स में '$person' का नंबर नहीं मिला।", "ERROR: Contact $person not found")
+        }
+        val canDirectCall = ContextCompat.checkSelfPermission(ctx, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED
+        val action = if (canDirectCall) Intent.ACTION_CALL else Intent.ACTION_DIAL
+        return try {
+            val intent = Intent(action, Uri.parse("tel:$number")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            ctx.startActivity(intent)
+            val label = contact?.first ?: person
+            ToolExecutionResult(true, "make_phone_call", "$label को कॉल लगा रही हूँ।", "SUCCESS: Calling $label ($number)")
+        } catch (e: Exception) {
+            ToolExecutionResult(true, "make_phone_call", "कॉल लगाने में दिक्कत आई।", "ERROR: ${e.message}")
+        }
+    }
+
+    private fun playOrSearchMedia(ctx: Context, query: String, platform: String): ToolExecutionResult {
+        return try {
+            val encoded = URLEncoder.encode(query, "UTF-8")
+            val uri = if (platform.contains("google")) {
+                Uri.parse("https://www.google.com/search?q=$encoded")
+            } else {
+                Uri.parse("https://www.youtube.com/results?search_query=$encoded")
+            }
+            val i = Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            ctx.startActivity(i)
+            ToolExecutionResult(true, "play_or_search", "YouTube पर '$query' लगा दिया है! सुनिए, और कुछ काम हो तो बताइए?", "SUCCESS: Opened $platform for $query")
+        } catch (_: Exception) {
+            ToolExecutionResult(false)
+        }
+    }
+}
+
+######## FILE: app/src/main/java/com/meraai/app/PermissionsSetup.kt ########
+package com.meraai.app
+
+import android.Manifest
+import android.app.role.RoleManager
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+
+// Option 4: Mint Sage Frost Palette
+private val MintBg = Color(0xFFEAF6F0)
+private val MintCard = Color(0xFFF4FBF8)
+private val MintCardBorder = Color(0xFFD5EBE0)
+private val MintTextPrimary = Color(0xFF133A2B)
+private val MintTextSecondary = Color(0xFF3F6A58)
+private val MintAccentStart = Color(0xFF059669)
+private val MintAccentEnd = Color(0xFF047857)
+private val MintIconBg = Color(0xFFD1FAE5)
+private val MintIconTint = Color(0xFF047857)
+private val BadgeWaitBg = Color(0xFFFEF3C7)
+private val BadgeWaitText = Color(0xFFB45309)
+private val BadgeOkBg = Color(0xFFBBF7D0)
+private val BadgeOkText = Color(0xFF166534)
+
+data class RuntimePermGroup(
+    val id: String,
+    val icon: String,
+    val title: String,
+    val desc: String,
+    val perms: List<String>
+)
+
+object PermHelper {
+    fun getStep1Groups(): List<RuntimePermGroup> {
+        val galleryPerms = if (Build.VERSION.SDK_INT >= 33) {
+            listOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.READ_MEDIA_AUDIO)
+        } else {
+            listOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+
+        val callHandlePerms = buildList {
+            add(Manifest.permission.READ_CALL_LOG)
+            if (Build.VERSION.SDK_INT >= 26) add(Manifest.permission.ANSWER_PHONE_CALLS)
+        }
+
+        val btPerms = if (Build.VERSION.SDK_INT >= 31) {
+            listOf(Manifest.permission.BLUETOOTH_CONNECT)
+        } else {
+            listOf(Manifest.permission.BLUETOOTH)
+        }
+
+        return listOf(
+            RuntimePermGroup("mic", "🎙️", "Microphone", "Taaki tum Meera se baat kar sako. Zaroori hai.", listOf(Manifest.permission.RECORD_AUDIO)),
+            RuntimePermGroup("cam", "📷", "Camera", "Taaki wo photo le sake ya jo tum phone se dikhao wo dekh sake.", listOf(Manifest.permission.CAMERA)),
+            RuntimePermGroup("call", "📞", "Phone calls", "Taaki wo tumhare liye call laga sake.", listOf(Manifest.permission.CALL_PHONE, Manifest.permission.READ_PHONE_STATE)),
+            RuntimePermGroup("contacts", "👤", "Contacts", "Taaki sirf naam kaafi ho — number wo khud dhoondh legi.", listOf(Manifest.permission.READ_CONTACTS)),
+            RuntimePermGroup("sms", "💬", "SMS", "Taaki wo text message bhej aur padh sake.", listOf(Manifest.permission.SEND_SMS, Manifest.permission.READ_SMS)),
+            RuntimePermGroup("loc", "📍", "Location", "Mausam, raasta, aur tum kahan ho.", listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)),
+            RuntimePermGroup("gallery", "🖼️", "Gallery aur files", "Taaki wo koi photo ya file dhoondh kar bhej sake.", galleryPerms),
+            RuntimePermGroup("call_ans", "🎧", "Call uthana aur sambhalna", "Taaki wo bata sake kaun call kar raha hai aur call utha ya kaat sake.", callHandlePerms),
+            RuntimePermGroup("bt", "🦷", "Bluetooth", "Taaki uski aawaz tumhare earbuds ya speaker par aaye.", btPerms)
+        )
+    }
+
+    fun isGroupGranted(ctx: Context, perms: List<String>): Boolean =
+        perms.all { ContextCompat.checkSelfPermission(ctx, it) == PackageManager.PERMISSION_GRANTED }
+
+    fun isMicGranted(ctx: Context): Boolean =
+        ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+
+    fun isBatteryIgnored(ctx: Context): Boolean = try {
+        val pm = ctx.getSystemService(Context.POWER_SERVICE) as PowerManager
+        pm.isIgnoringBatteryOptimizations(ctx.packageName)
+    } catch (_: Exception) { false }
+
+    fun isOverlayGranted(ctx: Context): Boolean = try {
+        Settings.canDrawOverlays(ctx)
+    } catch (_: Exception) { false }
+
+    fun isNotificationListenerEnabled(ctx: Context): Boolean = try {
+        val flat = Settings.Secure.getString(ctx.contentResolver, "enabled_notification_listeners") ?: ""
+        flat.contains(ctx.packageName)
+    } catch (_: Exception) { false }
+
+    fun isAccessibilityEnabled(ctx: Context): Boolean = try {
+        val flat = Settings.Secure.getString(ctx.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: ""
+        val cn = ComponentName(ctx, MeeraAccessibilityService::class.java).flattenToString()
+        val cnShort = ComponentName(ctx, MeeraAccessibilityService::class.java).flattenToShortString()
+        flat.contains(cn, ignoreCase = true) || flat.contains(cnShort, ignoreCase = true) || flat.contains(ctx.packageName, ignoreCase = true)
+    } catch (_: Exception) { false }
+
+    fun isDefaultAssistant(ctx: Context): Boolean = try {
+        val cur = Settings.Secure.getString(ctx.contentResolver, "assistant") ?: ""
+        val roleHeld = if (Build.VERSION.SDK_INT >= 29) {
+            ctx.getSystemService(RoleManager::class.java)?.isRoleHeld(RoleManager.ROLE_ASSISTANT) == true
+        } else false
+        roleHeld || cur.contains(ctx.packageName, ignoreCase = true)
+    } catch (_: Exception) { false }
+
+    fun openBatteryOptimization(ctx: Context) {
+        try {
+            val i = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                data = Uri.parse("package:${ctx.packageName}")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            ctx.startActivity(i)
+        } catch (_: Exception) {
+            try {
+                ctx.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            } catch (_: Exception) {}
+        }
+    }
+
+    fun openOverlaySettings(ctx: Context) {
+        try {
+            val i = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${ctx.packageName}"))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            ctx.startActivity(i)
+        } catch (_: Exception) {}
+    }
+
+    fun openNotificationListenerSettings(ctx: Context) {
+        try {
+            ctx.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (_: Exception) {}
+    }
+
+    fun openAccessibilitySettings(ctx: Context) {
+        try {
+            ctx.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (_: Exception) {}
+    }
+
+    fun openDefaultAssistantSettings(ctx: Context) {
+        try {
+            ctx.startActivity(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (_: Exception) {
+            try {
+                ctx.startActivity(Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            } catch (_: Exception) {}
+        }
+    }
+}
+
+@Composable
+fun PermissionsSetupScreen(onFinish: () -> Unit) {
+    val ctx = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var step by remember { mutableIntStateOf(1) }
+    var refreshTick by remember { mutableIntStateOf(0) }
+
+    // जब भी यूज़र मोबाइल की Settings से Allow करके वापस आए, तुरंत स्टेटस रिफ्रेश हो जाए
+    DisposableEffect(lifecycleOwner) {
+        val obs = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                refreshTick++
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
+
+    val multiLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        refreshTick++
+    }
+
+    val step1Groups = remember { PermHelper.getStep1Groups() }
+    val micOk = remember(refreshTick) { PermHelper.isMicGranted(ctx) }
+    val batteryOk = remember(refreshTick) { PermHelper.isBatteryIgnored(ctx) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MintBg)
+            .systemBarsPadding()
+            .padding(horizontal = 20.dp, vertical = 14.dp)
+    ) {
+        // ---------- Top Header (App Logo + Title + Step) ----------
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(46.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Brush.linearGradient(listOf(MintAccentStart, MintAccentEnd))),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("M", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Black)
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Meera set up karo", color = MintTextPrimary, fontSize = 19.sp, fontWeight = FontWeight.ExtraBold)
+                Text("Step $step / 2", color = MintTextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            }
+            if (step == 2) {
+                Text(
+                    "← पीछें",
+                    color = MintIconTint,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { step = 1 }
+                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                )
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        // ---------- 2-Segment Progress Bar ----------
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box(
+                Modifier
+                    .weight(1f)
+                    .height(5.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(MintAccentStart)
+            )
+            Box(
+                Modifier
+                    .weight(1f)
+                    .height(5.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(if (step == 2) MintAccentStart else MintCardBorder)
+            )
+        }
+
+        Spacer(Modifier.height(18.dp))
+
+        // ---------- Main Heading & Subtitle ----------
+        Text(
+            text = if (step == 1) "Meera ko apna phone use karne do" else "Meera ko background me zinda rakho",
+            color = MintTextPrimary,
+            fontSize = 22.sp,
+            fontWeight = FontWeight.ExtraBold
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = if (step == 1) {
+                "Ek tap — Android ek-ek karke sab poochega. Sirf microphone zaroori hai; baaki se wo kaam ki banti hai."
+            } else {
+                "Battery zaroori hai — isi se screen off hone par wo chup nahi hoti. 'Baaki hai' wali row par tap karo, uski system screen khulegi."
+            },
+            color = MintTextSecondary,
+            fontSize = 13.5.sp,
+            lineHeight = 19.sp
+        )
+
+        Spacer(Modifier.height(14.dp))
+
+        // ---------- Scrollable Permission Cards ----------
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            if (step == 1) {
+                step1Groups.forEach { grp ->
+                    val granted = remember(refreshTick) { PermHelper.isGroupGranted(ctx, grp.perms) }
+                    MintPermCard(
+                        icon = grp.icon,
+                        title = grp.title,
+                        desc = grp.desc,
+                        granted = granted,
+                        onClick = {
+                            multiLauncher.launch(grp.perms.toTypedArray())
+                        }
+                    )
+                }
+            } else {
+                val overlayOk = remember(refreshTick) { PermHelper.isOverlayGranted(ctx) }
+                val notifOk = remember(refreshTick) { PermHelper.isNotificationListenerEnabled(ctx) }
+                val a11yOk = remember(refreshTick) { PermHelper.isAccessibilityEnabled(ctx) }
+                val assistOk = remember(refreshTick) { PermHelper.isDefaultAssistant(ctx) }
+
+                MintPermCard(
+                    icon = "🔋",
+                    title = "Battery — optimisation band",
+                    desc = "Zaroori hai. Iske bina phone background me Meera ko band kar deta hai aur wo chup ho jaati hai. Tap karo, phir Allow chuno.",
+                    granted = batteryOk,
+                    onClick = { PermHelper.openBatteryOptimization(ctx) }
+                )
+                MintPermCard(
+                    icon = "💠",
+                    title = "Dusre apps ke upar dikhna",
+                    desc = "Taaki uska orb tum jo bhi kar rahe ho uske upar tair sake.",
+                    granted = overlayOk,
+                    onClick = { PermHelper.openOverlaySettings(ctx) }
+                )
+                MintPermCard(
+                    icon = "🔔",
+                    title = "Notification access",
+                    desc = "WhatsApp messages padhne aur kaun call kar raha hai ye jaanne ke liye. List me 'Meera AI' on karo.",
+                    granted = notifOk,
+                    onClick = { PermHelper.openNotificationListenerSettings(ctx) }
+                )
+                MintPermCard(
+                    icon = "🚹",
+                    title = "Accessibility service",
+                    desc = "Taaki wo apps khol sake, tap kar sake aur tumhare liye screen padh sake. List me 'Meera AI' on karo.",
+                    granted = a11yOk,
+                    onClick = { PermHelper.openAccessibilitySettings(ctx) }
+                )
+                MintPermCard(
+                    icon = "👑",
+                    title = "Default assistant",
+                    desc = "Power button long-press karo ya kone se swipe karo aur use bulao, lock screen par bhi. 'Meera AI' chuno.",
+                    granted = assistOk,
+                    onClick = { PermHelper.openDefaultAssistantSettings(ctx) }
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        // ---------- Bottom Action Buttons ----------
+        if (step == 1) {
+            // Primary Button: ✓ Sab allow karo
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(54.dp)
+                    .shadow(8.dp, RoundedCornerShape(18.dp))
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Brush.linearGradient(listOf(MintAccentStart, MintAccentEnd)))
+                    .clickable {
+                        val allPerms = buildList {
+                            step1Groups.forEach { addAll(it.perms) }
+                            if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
+                        }.distinct()
+                        multiLauncher.launch(allPerms.toTypedArray())
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Text("✓  Sab allow karo", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
+            }
+
+            Spacer(Modifier.height(10.dp))
+
+            // Secondary Button: → Aage badho
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(50.dp)
+                    .shadow(4.dp, RoundedCornerShape(18.dp))
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(MintCard)
+                    .border(1.dp, MintCardBorder, RoundedCornerShape(18.dp))
+                    .clickable {
+                        if (micOk) {
+                            step = 2
+                        } else {
+                            multiLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO))
+                        }
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "→  Aage badho",
+                    color = if (micOk) MintTextPrimary else MintTextSecondary.copy(alpha = 0.6f),
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            Text(
+                text = if (micOk) "Microphone allow ho chuka hai! 'Aage badho' dabayein." else "Microphone allow hote hi 'Aage badho' khul jayega.",
+                color = MintTextSecondary,
+                fontSize = 12.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
+            )
+        } else {
+            // Step 2 Finish Button: ✓ Ho gaya
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(54.dp)
+                    .shadow(8.dp, RoundedCornerShape(18.dp))
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Brush.linearGradient(listOf(MintAccentStart, MintAccentEnd)))
+                    .clickable {
+                        if (!batteryOk) {
+                            PermHelper.openBatteryOptimization(ctx)
+                        } else {
+                            onFinish()
+                        }
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    if (batteryOk) "✓  Ho gaya (Meera Shuru Karein)" else "🔋 Pehle Battery Allow Karein",
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            Text(
+                text = "Abhi skip karke seedhe Meera par jayein →",
+                color = MintIconTint,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onFinish() }
+                    .padding(vertical = 6.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun MintPermCard(
+    icon: String,
+    title: String,
+    desc: String,
+    granted: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .shadow(5.dp, RoundedCornerShape(22.dp), ambientColor = Color(0xFF94B8A8), spotColor = Color(0xFF94B8A8))
+            .clip(RoundedCornerShape(22.dp))
+            .border(1.dp, if (granted) BadgeOkBg else MintCardBorder, RoundedCornerShape(22.dp))
+            .clickable(onClick = onClick),
+        color = MintCard,
+        shape = RoundedCornerShape(22.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(MintIconBg),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(icon, fontSize = 20.sp)
+            }
+
+            Spacer(Modifier.width(14.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    color = MintTextPrimary,
+                    fontSize = 15.5.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    text = desc,
+                    color = MintTextSecondary,
+                    fontSize = 12.5.sp,
+                    lineHeight = 17.sp
+                )
+            }
+
+            Spacer(Modifier.width(10.dp))
+
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(if (granted) BadgeOkBg else BadgeWaitBg)
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = if (granted) "Ho gaya ✓" else "Baaki hai",
+                    color = if (granted) BadgeOkText else BadgeWaitText,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    }
+}
+
+######## FILE: app/src/main/java/com/meraai/app/Ui.kt ########
+package com.meraai.app
+
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.widget.Toast
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.NavigationDrawerItem
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.rememberDrawerState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import java.util.Calendar
+
+val Bg = Color(0xFF090D18)
+private val Panel = Color(0xFF12192E)
+private val CardGlass = Color(0xFF16203A)
+private val CardBorder = Color(0xFF26355E)
+private val AccentCyan = Color(0xFF2EE6A8)
+private val AccentBlue = Color(0xFF5B8CFF)
+private val AccentPurple = Color(0xFFA855F7)
+private val Muted = Color(0xFF8A94B8)
+
+@Composable
+fun MeraTheme(content: @Composable () -> Unit) {
+    MaterialTheme(
+        colorScheme = darkColorScheme(
+            primary = AccentBlue, background = Bg, surface = Panel, onSurface = Color.White, onBackground = Color.White
+        ),
+        content = content
+    )
+}
+
+@Composable
+fun MeraApp(vm: VoiceViewModel, onMic: () -> Unit) {
+    var splash by remember { mutableStateOf(true) }
+    var showSetup by remember { mutableStateOf(!vm.isSetupDone()) }
+    LaunchedEffect(Unit) { delay(1800); splash = false }
+    Crossfade(targetState = Triple(splash, showSetup, Unit), animationSpec = tween(450), label = "root") { (isSplash, isSetup, _) ->
+        when {
+            isSplash -> SplashScreen()
+            isSetup -> PermissionsSetupScreen(onFinish = {
+                vm.markSetupDone()
+                showSetup = false
+            })
+            else -> Dashboard(vm, onMic, onOpenSetup = { showSetup = true })
+        }
+    }
+}
+
+@Composable
+fun SplashScreen() {
+    val t = rememberInfiniteTransition(label = "splash")
+    val a by t.animateFloat(0.35f, 1f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "a")
+    Box(Modifier.fillMaxSize().background(Bg), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(
+                Modifier.size(90.dp).alpha(a)
+                    .background(Brush.radialGradient(listOf(Color(0xFF9DB7FF), AccentBlue, Color(0xFF1B2A6B))), CircleShape)
+            )
+            Spacer(Modifier.height(28.dp))
+            Text("Meera AI", color = Color.White, fontSize = 36.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(10.dp))
+            Text("स्टार्ट हो रही है…", color = Muted, fontSize = 15.sp, modifier = Modifier.alpha(a))
+        }
+    }
+}
+
+private fun statusText(s: UiState): String = when (s.state) {
+    VState.IDLE -> "माइक दबाएँ या नीचे लिखकर पूछें"
+    VState.CONNECTING -> "कनेक्ट हो रहा है…"
+    VState.LISTENING -> "सुन रही हूँ…"
+    VState.USER_SPEAKING -> "आप बोल रहे हैं"
+    VState.PROCESSING -> "सोच रही हूँ…"
+    VState.ASSISTANT_SPEAKING -> "बोल रही हूँ…"
+    VState.ERROR -> s.error ?: "कुछ गड़बड़ हुई"
+}
+
+private fun greetingText(): String {
+    val h = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+    return when (h) {
+        in 5..11 -> "सुप्रभात,"
+        in 12..16 -> "नमस्ते,"
+        in 17..21 -> "शुभ संध्या,"
+        else -> "नमस्ते,"
+    }
+}
+
+@Composable
+fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {}) {
+    val ui by vm.ui.collectAsStateWithLifecycle()
+    val drawer = rememberDrawerState(DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
+    var currentTab by remember { mutableStateOf(NavTab.HOME) }
+    var showKey by remember { mutableStateOf(false) }
+    var showA11yHub by remember { mutableStateOf(false) }
+    LaunchedEffect(ui.askKey) { if (ui.askKey) { showKey = true; vm.consumeAskKey() } }
+
+    val active = ui.state != VState.IDLE && ui.state != VState.ERROR
+    val view = LocalView.current
+    DisposableEffect(active) {
+        view.keepScreenOn = active
+        onDispose { view.keepScreenOn = false }
+    }
+
+    ModalNavigationDrawer(
+        drawerState = drawer,
+        drawerContent = {
+            ModalDrawerSheet(drawerContainerColor = Panel) {
+                Column(Modifier.verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(start = 24.dp, end = 12.dp, top = 16.dp, bottom = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text("Meera AI", color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.ExtraBold)
+                            Text("Smart Agentic Voice Companion", color = AccentCyan, fontSize = 11.sp)
+                        }
+                        TextButton(onClick = { scope.launch { drawer.close() } }) {
+                            Text("✕ बंद करें", color = Muted, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    NavigationDrawerItem(
+                        label = { Text("API Key") },
+                        icon = { Text("🔑") },
+                        badge = { Text(if (ui.hasKey) "सेव ✓" else "डालें", color = Muted) },
+                        selected = false,
+                        onClick = { scope.launch { drawer.close() }; showKey = true },
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    )
+
+                    NavigationDrawerItem(
+                        label = { Text("Accessibility & Control Hub") },
+                        icon = { Text("🚹") },
+                        badge = {
+                            val on = MeeraAccessibilityService.instance != null
+                            Text(if (on) "चालू ✓" else "ऑन करें", color = if (on) AccentCyan else Color(0xFFFFB84D))
+                        },
+                        selected = false,
+                        onClick = { scope.launch { drawer.close() }; showA11yHub = true },
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    )
+
+                    NavigationDrawerItem(
+                        label = { Text("Permissions & Setup (परमिशंस)") },
+                        icon = { Text("🛡️") },
+                        badge = { Text("Mint UI", color = AccentCyan) },
+                        selected = false,
+                        onClick = { scope.launch { drawer.close() }; onOpenSetup() },
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    )
+
+                    HorizontalDivider(Modifier.padding(vertical = 10.dp), color = Color(0xFF232C52))
+                    Text("पर्सनैलिटी चुनें (Meera / Jarvis / Rudra)", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
+                    Cfg.PERSONAS.forEach { (pCode, pDesc, _) ->
+                        ModeRow("🎭 $pCode", pDesc, ui.persona == pCode) { vm.setPersona(pCode) }
+                    }
+
+                    if (ui.persona == "Meera") {
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text("💖 Girlfriend / Companion Mode", color = Color.White, fontSize = 15.sp)
+                                Text("प्यार, नटखट नखरे, केयर और AI रोस्ट ऑन", color = Muted, fontSize = 12.sp)
+                            }
+                            Switch(checked = ui.girlfriendMode, onCheckedChange = { vm.setGirlfriendMode(it) })
+                        }
+                    }
+
+                    HorizontalDivider(Modifier.padding(vertical = 10.dp), color = Color(0xFF232C52))
+                    Text("बातचीत का तरीका", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
+                    ModeRow("⚡ Live API", "Gemini Live — आवाज़ से आवाज़ + Live Tools", ui.mode == Mode.LIVE) { vm.setMode(Mode.LIVE) }
+                    ModeRow("🧩 Modular", "Fast STT → Brain + Tools → Expressive TTS", ui.mode == Mode.MODULAR) { vm.setMode(Mode.MODULAR) }
+
+                    if (ui.mode == Mode.LIVE) {
+                        HorizontalDivider(Modifier.padding(vertical = 10.dp), color = Color(0xFF232C52))
+                        Text("Live मॉडल चुनें", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
+                        Cfg.LIVE_MODELS.forEach { m ->
+                            ModeRow(m, "WebSocket Bidi Audio + Function Calling", ui.liveModel == m) { vm.setLiveModel(m) }
+                        }
+                    } else {
+                        HorizontalDivider(Modifier.padding(vertical = 10.dp), color = Color(0xFF232C52))
+                        Text("Modular चैट ब्रेन (LLM / Reasoning)", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
+                        Cfg.CHAT_BRAIN_OPTIONS.forEach { (mCode, mDesc) ->
+                            ModeRow(mCode, mDesc, ui.chatModel == mCode) { vm.setChatModel(mCode) }
+                        }
+
+                        HorizontalDivider(Modifier.padding(vertical = 10.dp), color = Color(0xFF232C52))
+                        Text("Modular सुनने का इंजन (STT)", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
+                        Cfg.STT_ENGINE_OPTIONS.forEach { (sCode, sDesc) ->
+                            ModeRow(sCode, sDesc, ui.sttModel == sCode) { vm.setSttModel(sCode) }
+                        }
+
+                        HorizontalDivider(Modifier.padding(vertical = 10.dp), color = Color(0xFF232C52))
+                        Text("Modular आवाज़ इंजन (TTS)", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
+                        Cfg.TTS_ENGINE_OPTIONS.forEach { (tCode, tDesc) ->
+                            ModeRow(tCode, tDesc, ui.ttsModel == tCode) { vm.setTtsModel(tCode) }
+                        }
+                    }
+
+                    HorizontalDivider(Modifier.padding(vertical = 10.dp), color = Color(0xFF232C52))
+                    Text("आवाज़ चुनें (Google Voices)", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
+                    Cfg.VOICES.forEach { (vCode, vLabel) ->
+                        ModeRow("🔊 $vCode", vLabel, ui.voice == vCode) { vm.setVoice(vCode) }
+                    }
+                }
+            }
+        }
+    ) {
+        if (showA11yHub) {
+            AccessibilityHubScreen(onBack = { showA11yHub = false })
+        } else {
+            Column(
+                Modifier.fillMaxSize().background(Bg).systemBarsPadding()
+            ) {
+                // ---------- Top Header Bar ----------
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Surface(
+                        color = CardGlass,
+                        shape = CircleShape,
+                        modifier = Modifier.size(42.dp).border(1.dp, CardBorder, CircleShape)
+                            .clickable { scope.launch { drawer.open() } }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.Menu, contentDescription = "मेन्यू", tint = Color.White)
+                        }
+                    }
+
+                    val gfTag = if (ui.persona == "Meera" && ui.girlfriendMode) " 💖" else ""
+                    val modeTag = if (ui.mode == Mode.LIVE) "Live" else "Modular"
+                    Surface(
+                        color = CardGlass,
+                        shape = RoundedCornerShape(20.dp),
+                        modifier = Modifier.border(1.dp, CardBorder, RoundedCornerShape(20.dp))
+                    ) {
+                        Text(
+                            "${ui.persona}$gfTag • $modeTag • ${ui.voice}",
+                            color = Color.White, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
+                        )
+                    }
+
+                    Surface(
+                        color = CardGlass,
+                        shape = CircleShape,
+                        modifier = Modifier.size(42.dp).border(1.dp, CardBorder, CircleShape)
+                            .clickable { showA11yHub = true }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            val a11yOn = MeeraAccessibilityService.instance != null
+                            Text(if (a11yOn) "🟢" else "🚹", fontSize = 16.sp)
+                        }
+                    }
+                }
+
+                // ---------- Active Tab Content ----------
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    when (currentTab) {
+                        NavTab.HOME -> HomeTabContent(ui, vm, active)
+                        NavTab.VISION -> VisionTabContent(vm)
+                        NavTab.YAADEIN -> YaadeinTabContent(vm)
+                        NavTab.CHAT -> ChatTabContent(ui, vm)
+                    }
+                }
+
+                // ---------- Bottom Floating Aurora Glass Dock ----------
+                BottomAuroraDock(
+                    currentTab = currentTab,
+                    micActive = active,
+                    onSelectTab = { currentTab = it },
+                    onMicClick = onMic
+                )
+            }
+        }
+    }
+
+    if (showKey) {
+        KeyDialog(
+            hasKey = ui.hasKey,
+            onSave = { vm.saveKey(it); showKey = false },
+            onDismiss = { showKey = false }
+        )
+    }
+}
+
+@Composable
+private fun HomeTabContent(ui: UiState, vm: VoiceViewModel, active: Boolean) {
+    var quickInput by remember { mutableStateOf("") }
+    val ctx = LocalContext.current
+
+    Column(
+        Modifier.fillMaxSize().padding(horizontal = 18.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // Greeting + Status Row
+        Row(
+            Modifier.fillMaxWidth().padding(top = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(greetingText(), color = Muted, fontSize = 14.sp)
+                Text("Rahul", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.ExtraBold)
+            }
+            Surface(
+                color = CardGlass,
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.border(1.dp, CardBorder, RoundedCornerShape(16.dp))
+            ) {
+                Row(
+                    Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("🧠 ${ui.memoryCount} यादें", color = AccentCyan, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
+        Spacer(Modifier.weight(0.6f))
+
+        // Center Glowing Orb
+        Orb(ui.state, vm, Modifier.size(220.dp))
+
+        Spacer(Modifier.height(10.dp))
+        Text(
+            statusText(ui),
+            color = if (ui.state == VState.ERROR) Color(0xFFFF6B6B) else Color.White,
+            fontSize = 17.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center
+        )
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ui.latencyMs?.let { Text("⏱ $it ms", color = Muted, fontSize = 12.sp) }
+            ui.lastToolStatus?.let { Text(it, color = AccentCyan, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+        }
+
+        // Live Transcript Preview Card
+        if (ui.user.isNotBlank() || ui.ai.isNotBlank()) {
+            Spacer(Modifier.height(8.dp))
+            Surface(
+                color = CardGlass.copy(alpha = 0.85f),
+                shape = RoundedCornerShape(18.dp),
+                modifier = Modifier.fillMaxWidth().border(1.dp, CardBorder, RoundedCornerShape(18.dp))
+            ) {
+                Column(Modifier.padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    if (ui.user.isNotBlank()) {
+                        Text(ui.user, color = Muted, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+                    }
+                    if (ui.ai.isNotBlank()) {
+                        Text(ui.ai, color = Color.White, fontSize = 14.5.sp, maxLines = 3, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 4.dp))
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.weight(0.5f))
+
+        // Quick Action Pills (WhatsApp, Screen Read, YouTube, Instagram)
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            QuickChip("📱 WhatsApp खोलो") {
+                MeeraTools.openAppByName(ctx, "WhatsApp")
+            }
+            QuickChip("👀 स्क्रीन पढ़ो") {
+                vm.sendTextQuery("स्क्रीन पर क्या लिखा है पढ़कर बताओ", speakAloud = true)
+            }
+            QuickChip("▶️ YouTube गाने") {
+                vm.sendTextQuery("YouTube पर हिंदी गाने चलाओ", speakAloud = false)
+            }
+            QuickChip("📸 Instagram") {
+                MeeraTools.openAppByName(ctx, "Instagram")
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        // Ask Meera Input Bar
+        Surface(
+            color = CardGlass,
+            shape = RoundedCornerShape(26.dp),
+            modifier = Modifier.fillMaxWidth().border(1.dp, CardBorder, RoundedCornerShape(26.dp))
+        ) {
+            Row(
+                Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = quickInput,
+                    onValueChange = { quickInput = it },
+                    placeholder = { Text("Meera से कुछ भी पूछो या ऐप खुलवाओ…", color = Muted, fontSize = 13.sp) },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(Modifier.width(8.dp))
+                Box(
+                    Modifier.size(42.dp).clip(CircleShape)
+                        .background(Brush.linearGradient(listOf(AccentBlue, AccentPurple)))
+                        .clickable {
+                            if (quickInput.isNotBlank()) {
+                                vm.sendTextQuery(quickInput, speakAloud = true)
+                                quickInput = ""
+                            }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("➤", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+    }
+}
+
+@Composable
+private fun QuickChip(label: String, onClick: () -> Unit) {
+    Surface(
+        color = CardGlass,
+        shape = RoundedCornerShape(20.dp),
+        modifier = Modifier.border(1.dp, CardBorder, RoundedCornerShape(20.dp)).clickable(onClick = onClick)
+    ) {
+        Text(
+            label,
+            color = Color.White,
+            fontSize = 12.5.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+        )
+    }
+}
+
+@Composable
+private fun VisionTabContent(vm: VoiceViewModel) {
+    var screenDump by remember { mutableStateOf("") }
+    val a11yOn = MeeraAccessibilityService.instance != null
+
+    Column(
+        Modifier.fillMaxSize().padding(18.dp).verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("👁️ Meera Vision & Screen Inspector", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
+        Text(
+            "यहाँ से Meera आपकी चालू स्क्रीन या किसी भी ऐप के टेक्स्ट को पढ़कर समझा सकती है और उस पर एक्शन ले सकती है।",
+            color = Muted, fontSize = 13.sp
+        )
+
+        Surface(
+            color = CardGlass,
+            shape = RoundedCornerShape(20.dp),
+            modifier = Modifier.fillMaxWidth().border(1.dp, CardBorder, RoundedCornerShape(20.dp))
+        ) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    if (a11yOn) "🟢 Screen Reader इंजन चालू है" else "⚠️ Accessibility सर्विस बंद है",
+                    color = if (a11yOn) AccentCyan else Color(0xFFFFB84D),
+                    fontWeight = FontWeight.Bold, fontSize = 15.sp
+                )
+                Text(
+                    "जब आप किसी भी ऐप (जैसे WhatsApp या Chrome) में हों और माइक पर बोलें 'मीरा, स्क्रीन पढ़ो', तो वह तुरंत स्क्रीन का सारा टेक्स्ट पढ़ लेगी।",
+                    color = Muted, fontSize = 12.5.sp
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    QuickChip("🔍 अभी की स्क्रीन स्कैन करें") {
+                        screenDump = MeeraAccessibilityService.instance?.readScreenText()
+                            ?: "Accessibility बंद है। कृपया साइड मेन्यू से Accessibility ऑन करें।"
+                    }
+                    QuickChip("🔔 नोटिफिकेशन पढ़ें") {
+                        screenDump = MeeraNotificationService.getLatestSummary()
+                    }
+                }
+            }
+        }
+
+        if (screenDump.isNotBlank()) {
+            Surface(
+                color = CardGlass,
+                shape = RoundedCornerShape(18.dp),
+                modifier = Modifier.fillMaxWidth().border(1.dp, CardBorder, RoundedCornerShape(18.dp))
+            ) {
+                Column(Modifier.padding(14.dp)) {
+                    Text("📋 स्कैन किया गया डेटा:", color = AccentCyan, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(6.dp))
+                    Text(screenDump, color = Color.White, fontSize = 12.5.sp)
+                    Spacer(Modifier.height(10.dp))
+                    QuickChip("🗣️ Meera से इसका सारांश सुनें") {
+                        vm.sendTextQuery("इस स्क्रीन डेटा को पढ़कर संक्षेप में बताओ:\n$screenDump", speakAloud = true)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun YaadeinTabContent(vm: VoiceViewModel) {
+    val ctx = LocalContext.current
+    var newFact by remember { mutableStateOf("") }
+    val memories = vm.getMemoriesList()
+
+    Column(
+        Modifier.fillMaxSize().padding(18.dp).verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("🧠 यादें और सीखे हुए टास्क", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
+
+        // Built-in Smart Automation Tasks (जैसे Maya के 'Sikhe hue tasks')
+        Text("⚡ 1-Tap स्मार्ट टास्क (Built-in Actions)", color = AccentCyan, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        val builtInTasks = listOf(
+            Triple("WhatsApp खोलो", "सीधे WhatsApp ऐप लॉन्च करें", "WhatsApp ओपन करो"),
+            Triple("YouTube खोलो", "YouTube वीडियो ऐप लॉन्च करें", "YouTube ओपन करो"),
+            Triple("स्क्रीन पढ़कर सुनाओ", "Accessibility से स्क्रीन का सारा टेक्स्ट पढ़ें", "स्क्रीन पर क्या लिखा है पढ़कर बताओ"),
+            Triple("नए नोटिफिकेशन बताओ", "WhatsApp और अन्य ऐप्स के ताज़ा मैसेज सुनें", "नोटिफिकेशन पढ़कर बताओ")
+        )
+        builtInTasks.forEach { (title, sub, cmd) ->
+            Surface(
+                color = CardGlass,
+                shape = RoundedCornerShape(18.dp),
+                modifier = Modifier.fillMaxWidth().border(1.dp, CardBorder, RoundedCornerShape(18.dp))
+                    .clickable { vm.sendTextQuery(cmd, speakAloud = true) }
+            ) {
+                Row(
+                    Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        Text(sub, color = Muted, fontSize = 12.sp)
+                    }
+                    Text("▶ चलाओ", color = AccentCyan, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
+        Spacer(Modifier.height(6.dp))
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("📌 सेव की गई यादें (${memories.size})", color = AccentCyan, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            if (memories.isNotEmpty()) {
+                Text(
+                    "☁️ कॉपी/बैकअप",
+                    color = AccentBlue,
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.clickable {
+                        val cb = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        cb.setPrimaryClip(ClipData.newPlainText("MeeraMemories", memories.joinToString("\n")))
+                        Toast.makeText(ctx, "सारी यादें क्लिपबोर्ड पर कॉपी हो गईं!", Toast.LENGTH_SHORT).show()
+                    }
+                )
+            }
+        }
+
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = newFact,
+                onValueChange = { newFact = it },
+                placeholder = { Text("नई याद जोड़ें (जैसे: मेरा नाम राहुल है)", color = Muted, fontSize = 13.sp) },
+                singleLine = true,
+                modifier = Modifier.weight(1f)
+            )
+            QuickChip("＋ जोड़ें") {
+                if (newFact.isNotBlank()) {
+                    vm.addManualMemory(newFact)
+                    newFact = ""
+                }
+            }
+        }
+
+        if (memories.isEmpty()) {
+            Text("अभी कोई याद सेव नहीं है। बात करते समय Meera खुद याद रख लेगी।", color = Muted, fontSize = 13.sp)
+        } else {
+            memories.reversed().forEach { m ->
+                Surface(
+                    color = CardGlass,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth().border(1.dp, CardBorder, RoundedCornerShape(14.dp))
+                ) {
+                    Text("• $m", color = Color.White, fontSize = 13.5.sp, modifier = Modifier.padding(12.dp))
+                }
+            }
+            TextButton(onClick = { vm.clearAllMemories() }) {
+                Text("🗑️ सारी यादें मिटाएँ", color = Color(0xFFFF6B6B))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChatTabContent(ui: UiState, vm: VoiceViewModel) {
+    val ctx = LocalContext.current
+    var input by remember { mutableStateOf("") }
+
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("💬 बातचीत इतिहास (${ui.chatMessages.size})", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+            if (ui.chatMessages.isNotEmpty()) {
+                TextButton(onClick = { vm.clearChatLog() }) {
+                    Text("🗑️ Clear", color = Muted, fontSize = 13.sp)
+                }
+            }
+        }
+
+        Column(
+            Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            if (ui.chatMessages.isEmpty()) {
+                Box(Modifier.fillMaxSize().padding(top = 80.dp), contentAlignment = Alignment.Center) {
+                    Text("Meera से कुछ भी पूछो — आवाज़ से या नीचे लिखकर!", color = Muted, fontSize = 14.sp, textAlign = TextAlign.Center)
+                }
+            } else {
+                ui.chatMessages.forEach { msg ->
+                    val isUser = msg.role == "user"
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
+                    ) {
+                        Surface(
+                            color = if (isUser) AccentBlue else CardGlass,
+                            shape = RoundedCornerShape(18.dp),
+                            modifier = Modifier.fillMaxWidth(0.84f).border(1.dp, if (isUser) AccentBlue else CardBorder, RoundedCornerShape(18.dp))
+                        ) {
+                            Column(Modifier.padding(12.dp)) {
+                                Text(msg.text, color = Color.White, fontSize = 14.5.sp)
+                                Spacer(Modifier.height(4.dp))
+                                Row(
+                                    Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(msg.time, color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp)
+                                    if (!isUser) {
+                                        Text(
+                                            "📋 Copy",
+                                            color = AccentCyan,
+                                            fontSize = 11.sp,
+                                            modifier = Modifier.clickable {
+                                                val cb = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                                cb.setPrimaryClip(ClipData.newPlainText("MeeraReply", msg.text))
+                                                Toast.makeText(ctx, "कॉपी हो गया", Toast.LENGTH_SHORT).show()
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = input,
+                onValueChange = { input = it },
+                placeholder = { Text("यहाँ मैसेज या कमांड लिखें…", color = Muted, fontSize = 13.sp) },
+                singleLine = true,
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(Modifier.width(8.dp))
+            Box(
+                Modifier.size(46.dp).clip(CircleShape)
+                    .background(Brush.linearGradient(listOf(AccentBlue, AccentPurple)))
+                    .clickable {
+                        if (input.isNotBlank()) {
+                            vm.sendTextQuery(input, speakAloud = true)
+                            input = ""
+                        }
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Text("➤", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun AccessibilityHubScreen(onBack: () -> Unit) {
+    val ctx = LocalContext.current
+    val a11yOn = MeeraAccessibilityService.instance != null
+    val adbCmd = "adb shell pm grant ${ctx.packageName} android.permission.WRITE_SECURE_SETTINGS"
+
+    Column(
+        Modifier.fillMaxSize().background(Bg).systemBarsPadding().padding(18.dp).verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Surface(
+                color = CardGlass,
+                shape = CircleShape,
+                modifier = Modifier.size(42.dp).border(1.dp, CardBorder, CircleShape).clickable(onClick = onBack)
+            ) {
+                Box(contentAlignment = Alignment.Center) { Text("←", color = Color.White, fontSize = 20.sp) }
+            }
+            Spacer(Modifier.width(12.dp))
+            Text("Accessibility Control Hub", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
+        }
+
+        // Status Card
+        Surface(
+            color = CardGlass,
+            shape = RoundedCornerShape(22.dp),
+            modifier = Modifier.fillMaxWidth().border(1.dp, if (a11yOn) AccentCyan else CardBorder, RoundedCornerShape(22.dp))
+        ) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    if (a11yOn) "🟢 Accessibility चालू है" else "⚠️ Accessibility बंद है",
+                    color = if (a11yOn) AccentCyan else Color(0xFFFFB84D),
+                    fontSize = 17.sp, fontWeight = FontWeight.ExtraBold
+                )
+                Text(
+                    "Meera स्क्रीन पढ़ और टैप कर सकती है — WhatsApp, Instagram, YouTube सब।",
+                    color = Muted, fontSize = 13.sp
+                )
+            }
+        }
+
+        // Payment App Pause Button
+        Box(
+            Modifier.fillMaxWidth().height(52.dp).clip(RoundedCornerShape(18.dp))
+                .background(Brush.linearGradient(listOf(AccentBlue, AccentPurple)))
+                .clickable { PermHelper.openAccessibilitySettings(ctx) },
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                if (a11yOn) "🏦 Payment ऐप (GPay/PhonePe) के लिए बंद/चालू करें" else "🚹 अभी Accessibility सेटिंग्स खोलकर ऑन करें",
+                color = Color.White, fontSize = 14.5.sp, fontWeight = FontWeight.Bold
+            )
+        }
+
+        Surface(
+            color = CardGlass,
+            shape = RoundedCornerShape(18.dp),
+            modifier = Modifier.fillMaxWidth().border(1.dp, CardBorder, RoundedCornerShape(18.dp))
+        ) {
+            Text(
+                "💡 Paytm, PhonePe, Google Pay और ज़्यादातर बैंक ऐप्स Accessibility ON होने पर सिक्योरिटी की वजह से चेतावनी देते हैं। ऊपर वाले बटन से आप एक टैप में सेटिंग खोलकर पेमेंट के समय इसे बंद और बाद में वापस चालू कर सकते हैं।",
+                color = Muted, fontSize = 12.5.sp, modifier = Modifier.padding(14.dp)
+            )
+        }
+
+        // Battery & Autostart Card
+        Text("बार-बार बंद हो रही है?", color = AccentCyan, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Surface(
+            color = CardGlass,
+            shape = RoundedCornerShape(20.dp),
+            modifier = Modifier.fillMaxWidth().border(1.dp, CardBorder, RoundedCornerShape(20.dp))
+        ) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(
+                    Modifier.fillMaxWidth().clickable { PermHelper.openBatteryOptimization(ctx) },
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("🔋 Battery: Meera को optimise मत करो", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        Text("ताकि फोन बैकग्राउंड में Meera को बंद न करे", color = Muted, fontSize = 12.sp)
+                    }
+                    Text("›", color = Color.White, fontSize = 22.sp)
+                }
+                HorizontalDivider(color = CardBorder)
+                Row(
+                    Modifier.fillMaxWidth().clickable { PermHelper.openNotificationListenerSettings(ctx) },
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("🔔 Notification Access", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        Text("WhatsApp मैसेज और कॉलर का नाम पढ़ने के लिए", color = Muted, fontSize = 12.sp)
+                    }
+                    Text("›", color = Color.White, fontSize = 22.sp)
+                }
+            }
+        }
+
+        // ADB One-Tap Fix
+        Text("ONE-TAP FIX (ADVANCED)", color = AccentCyan, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Surface(
+            color = CardGlass,
+            shape = RoundedCornerShape(20.dp),
+            modifier = Modifier.fillMaxWidth().border(1.dp, CardBorder, RoundedCornerShape(20.dp))
+        ) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Android किसी ऐप को अपनी रुकी हुई Accessibility खुद ठीक करने की इजाज़त इस ADB कमांड से देता है:",
+                    color = Muted, fontSize = 12.5.sp
+                )
+                Text(adbCmd, color = AccentCyan, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                QuickChip("📋 ADB Command कॉपी करें") {
+                    val cb = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    cb.setPrimaryClip(ClipData.newPlainText("adb", adbCmd))
+                    Toast.makeText(ctx, "ADB Command कॉपी हो गई!", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BottomAuroraDock(
+    currentTab: NavTab,
+    micActive: Boolean,
+    onSelectTab: (NavTab) -> Unit,
+    onMicClick: () -> Unit
+) {
+    Surface(
+        color = Panel,
+        shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp),
+        modifier = Modifier.fillMaxWidth().border(1.dp, CardBorder, RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp))
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceAround,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            DockTabItem("🏠", "Home", currentTab == NavTab.HOME) { onSelectTab(NavTab.HOME) }
+            DockTabItem("👁️", "Vision", currentTab == NavTab.VISION) { onSelectTab(NavTab.VISION) }
+
+            // Center Floating Mic Button
+            val micColor = if (micActive) Color(0xFFE5484D) else AccentBlue
+            Box(
+                Modifier.size(64.dp).border(2.dp, micColor.copy(alpha = 0.45f), CircleShape).padding(4.dp)
+                    .clip(CircleShape).background(Brush.linearGradient(listOf(micColor, if (micActive) Color(0xFFB91C1C) else AccentPurple)))
+                    .clickable(onClick = onMicClick),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(if (micActive) "■" else "🎙️", fontSize = 24.sp, color = Color.White)
+            }
+
+            DockTabItem("🧠", "Yaadein", currentTab == NavTab.YAADEIN) { onSelectTab(NavTab.YAADEIN) }
+            DockTabItem("💬", "Chat", currentTab == NavTab.CHAT) { onSelectTab(NavTab.CHAT) }
+        }
+    }
+}
+
+@Composable
+private fun DockTabItem(icon: String, label: String, selected: Boolean, onClick: () -> Unit) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (selected) AccentBlue.copy(alpha = 0.22f) else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 6.dp)
+    ) {
+        Text(icon, fontSize = 18.sp)
+        Text(
+            label,
+            color = if (selected) Color.White else Muted,
+            fontSize = 11.5.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
+        )
+    }
+}
+
+@Composable
+private fun ModeRow(title: String, sub: String, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 20.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RadioButton(selected = selected, onClick = onClick)
+        Column(Modifier.padding(start = 8.dp)) {
+            Text(title, color = Color.White, fontSize = 15.sp)
+            Text(sub, color = Muted, fontSize = 12.sp)
+        }
+    }
+}
+
+@Composable
+private fun KeyDialog(hasKey: Boolean, onSave: (String) -> Unit, onDismiss: () -> Unit) {
+    var text by remember { mutableStateOf("") }
+    var show by remember { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Gemini API Key") },
+        text = {
+            Column {
+                Text(
+                    if (hasKey) "पहले से एक Key सेव है. नई डालने पर बदल जाएगी." else "aistudio.google.com से Key कॉपी करके यहाँ पेस्ट करें.",
+                    fontSize = 13.sp, color = Muted
+                )
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = text, onValueChange = { text = it }, singleLine = true, label = { Text("API Key") },
+                    visualTransformation = if (show) VisualTransformation.None else PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    trailingIcon = { TextButton(onClick = { show = !show }) { Text(if (show) "छुपाएँ" else "दिखाएँ") } }
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = { onSave(text.trim()) }, enabled = text.isNotBlank()) { Text("सेव") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("रद्द") } }
+    )
+}
+
+@Composable
+fun Orb(state: VState, vm: VoiceViewModel, modifier: Modifier = Modifier) {
+    val lvlRaw by vm.level.collectAsStateWithLifecycle()
+    val lvl by animateFloatAsState(lvlRaw.coerceIn(0f, 1f), tween(90), label = "lvl")
+    val target = when (state) {
+        VState.IDLE -> AccentBlue
+        VState.CONNECTING -> Color(0xFF7C8CB8)
+        VState.LISTENING -> Color(0xFF3CC8FF)
+        VState.USER_SPEAKING -> AccentCyan
+        VState.PROCESSING -> Color(0xFFFFB84D)
+        VState.ASSISTANT_SPEAKING -> Color(0xFFB46BFF)
+        VState.ERROR -> Color(0xFFE5484D)
+    }
+    val color by animateColorAsState(target, tween(500), label = "color")
+    val t = rememberInfiniteTransition(label = "orb")
+    val breathe by t.animateFloat(0f, 1f, infiniteRepeatable(tween(2600, easing = LinearEasing), RepeatMode.Reverse), label = "b")
+    val spin by t.animateFloat(0f, 360f, infiniteRepeatable(tween(7000, easing = LinearEasing)), label = "s")
+    val ring by t.animateFloat(0f, 1f, infiniteRepeatable(tween(1600, easing = LinearOutSlowInEasing)), label = "r")
+    val rippling = state == VState.USER_SPEAKING || state == VState.ASSISTANT_SPEAKING
+
+    Canvas(modifier) {
+        val c = center
+        val base = size.minDimension / 2f * 0.55f
+        val r = base * (1f + 0.05f * breathe + 0.45f * lvl)
+        drawCircle(Brush.radialGradient(listOf(color.copy(alpha = 0.40f), Color.Transparent), center = c, radius = r * 2f), radius = r * 2f, center = c)
+        if (rippling) {
+            for (i in 0..1) {
+                val p = (ring + i * 0.5f) % 1f
+                drawCircle(color.copy(alpha = (1f - p) * 0.4f), radius = r * (1f + p * 0.6f), center = c, style = Stroke(3.dp.toPx()))
+            }
+        }
+        drawCircle(
+            Brush.radialGradient(
+                listOf(Color.White.copy(alpha = 0.85f), color, color.copy(alpha = 0.55f), Bg),
+                center = c + Offset(-r * 0.3f, -r * 0.3f), radius = r * 1.5f
+            ),
+            radius = r, center = c
+        )
+        val arcs = if (state == VState.PROCESSING) 3 else 1
+        for (i in 0 until arcs) {
+            rotate(spin * (if (state == VState.PROCESSING) 2f else 1f) + i * 120f, pivot = c) {
+                drawArc(
+                    Color.White.copy(alpha = 0.28f), startAngle = 0f, sweepAngle = 60f, useCenter = false,
+                    topLeft = c - Offset(r * 0.8f, r * 0.8f), size = Size(r * 1.6f, r * 1.6f),
+                    style = Stroke(r * 0.1f, cap = StrokeCap.Round)
+                )
+            }
+        }
+    }
+}
+
+######## FILE: app/src/main/java/com/meraai/app/VoiceViewModel.kt ########
+package com.meraai.app
+
+import android.app.Application
+import android.content.Context
+import android.media.AudioManager
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import okhttp3.OkHttpClient
+import org.json.JSONObject
+import java.net.UnknownHostException
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+
+class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx) {
+    private val prefs = Prefs(appCtx)
+    private val http = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(45, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
+        .build()
+    private val wsHttp = http.newBuilder().readTimeout(0, TimeUnit.SECONDS).pingInterval(20, TimeUnit.SECONDS).build()
+    private val rest = GeminiRest(http) { prefs.apiKey }
+    private val am = appCtx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+
+    private val _ui = MutableStateFlow(
+        UiState(
+            mode = prefs.mode,
+            persona = prefs.persona,
+            girlfriendMode = prefs.girlfriendMode,
+            voice = prefs.voice,
+            liveModel = prefs.liveModel,
+            chatModel = prefs.chatModel,
+            sttModel = prefs.sttModel,
+            ttsModel = prefs.ttsModel,
+            hasKey = prefs.apiKey.isNotBlank(),
+            memoryCount = prefs.getMemories().size
+        )
+    )
+    val ui: StateFlow<UiState> = _ui.asStateFlow()
+    private val _level = MutableStateFlow(0f)
+    val level: StateFlow<Float> = _level.asStateFlow()
+
+    @Volatile private var st = VState.IDLE
+    @Volatile private var active = false
+    val isActive: Boolean get() = active
+
+    private val requestInFlight = AtomicBoolean(false)
+
+    private var mic: MicRecorder? = null
+    @Volatile private var player: PcmPlayer? = null
+    @Volatile private var live: GeminiLive? = null
+    private var pipeline: Job? = null
+
+    private val detector = TurnDetector { prefs.silenceMs }
+    private val preRoll = ArrayDeque<ShortArray>()
+    private val utter = ArrayList<ShortArray>()
+    @Volatile private var collecting = false
+    private var bargeFrames = 0
+    private var quietMs = 0
+    @Volatile private var speechEndAt = 0L
+    @Volatile private var firstAudioPending = false
+    @Volatile private var dropAudio = false
+    @Volatile private var liveTurnOpen = false
+    @Volatile private var newUserTurn = true
+    private val userBuf = StringBuilder()
+    private val aiBuf = StringBuilder()
+    private val history = ArrayList<Pair<String, String>>()
+
+    private fun nowTime(): String = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
+
+    private fun appendChatLog(role: String, text: String) {
+        val clean = text.trim()
+        if (clean.isBlank()) return
+        _ui.update { cur ->
+            val updated = (cur.chatMessages + ChatMessage(role, clean, nowTime())).takeLast(60)
+            cur.copy(chatMessages = updated)
+        }
+    }
+
+    fun clearChatLog() {
+        history.clear()
+        _ui.update { it.copy(chatMessages = emptyList(), user = "", ai = "") }
+    }
+
+    fun isSetupDone(): Boolean = prefs.setupDone
+    fun markSetupDone() { prefs.setupDone = true }
+    fun getMemoriesList(): List<String> = prefs.getMemories()
+
+    fun addManualMemory(fact: String) {
+        prefs.addMemory(fact)
+        _ui.update { it.copy(memoryCount = prefs.getMemories().size) }
+    }
+
+    fun clearAllMemories() {
+        prefs.clearMemories()
+        _ui.update { it.copy(memoryCount = 0) }
+    }
+
+    private fun autoLearnFromUser(text: String) {
+        if (text.length < 6) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val fact = rest.extractMemoryFact(text, prefs.getMemories())
+            if (!fact.isNullOrBlank()) {
+                prefs.addMemory(fact)
+                _ui.update { it.copy(memoryCount = prefs.getMemories().size) }
+            }
+        }
+    }
+
+    /** टेक्स्ट चैट या Quick Action बटन से सीधे कमांड/मैसेज भेजना */
+    fun sendTextQuery(query: String, speakAloud: Boolean = false) {
+        val clean = query.trim()
+        if (clean.isBlank()) return
+        if (prefs.apiKey.isBlank()) {
+            _ui.update { it.copy(askKey = true, error = "पहले API Key डालें") }
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val startAt = System.currentTimeMillis()
+            _ui.update { it.copy(user = clean, ai = "सोच रही हूँ…", error = null) }
+            appendChatLog("user", clean)
+            autoLearnFromUser(clean)
+
+            // 1. पहले चेक करें कि क्या यह सीधा फोन टूल कमांड है (जैसे WhatsApp खोलो, स्क्रीन पढ़ो)
+            val toolRes = MeeraTools.tryDirectVoiceCommand(appCtx, clean)
+            if (toolRes.executed && toolRes.spokenReply.isNotBlank() && toolRes.rawDataForAi.startsWith("SUCCESS:")) {
+                _ui.update {
+                    it.copy(
+                        ai = toolRes.spokenReply,
+                        lastToolStatus = "⚡ ${toolRes.toolName}",
+                        latencyMs = System.currentTimeMillis() - startAt
+                    )
+                }
+                appendChatLog("model", toolRes.spokenReply)
+                return@launch
+            }
+
+            val effectivePrompt = if (toolRes.executed && toolRes.rawDataForAi.isNotBlank()) {
+                "$clean\n\n[TOOL OUTPUT]:\n${toolRes.rawDataForAi}"
+            } else clean
+
+            history.add("user" to effectivePrompt)
+            val sysPrompt = SystemPrompt.build(prefs.persona, prefs.girlfriendMode, prefs.getMemories())
+            val full = StringBuilder()
+            try {
+                rest.streamChat(history.takeLast(12), sysPrompt, prefs.chatModel) { s ->
+                    full.append(s).append(' ')
+                    _ui.update {
+                        it.copy(
+                            ai = full.toString().trim(),
+                            latencyMs = System.currentTimeMillis() - startAt
+                        )
+                    }
+                }
+                val reply = full.toString().trim()
+                if (reply.isNotBlank()) {
+                    history.add("model" to reply)
+                    appendChatLog("model", reply)
+                    if (speakAloud) {
+                        val pcm = rest.tts(reply.replace(Regex("[*#_`~]"), ""), prefs.voice, prefs.ttsModel, prefs.persona, prefs.girlfriendMode)
+                        val tempPlayer = player ?: PcmPlayer().also { player = it }
+                        tempPlayer.enqueue(pcm)
+                    }
+                }
+            } catch (e: Exception) {
+                val err = friendly(e)
+                _ui.update { it.copy(ai = err, error = err) }
+            }
+        }
+    }
+
+    fun setMode(m: Mode) {
+        if (m == prefs.mode) return
+        stop()
+        prefs.mode = m
+        _ui.update { it.copy(mode = m, error = null) }
+    }
+
+    fun setPersona(p: String) {
+        if (p == prefs.persona) return
+        stop()
+        prefs.persona = p
+        val defaultVoice = Cfg.PERSONAS.find { it.first == p }?.third ?: prefs.voice
+        prefs.voice = defaultVoice
+        _ui.update { it.copy(persona = p, voice = defaultVoice, error = null) }
+    }
+
+    fun setGirlfriendMode(enabled: Boolean) {
+        stop()
+        prefs.girlfriendMode = enabled
+        _ui.update { it.copy(girlfriendMode = enabled, error = null) }
+    }
+
+    fun setVoice(v: String) {
+        if (v == prefs.voice) return
+        stop()
+        prefs.voice = v
+        _ui.update { it.copy(voice = v, error = null) }
+    }
+
+    fun setLiveModel(m: String) {
+        if (m == prefs.liveModel) return
+        stop()
+        prefs.liveModel = m
+        _ui.update { it.copy(liveModel = m, error = null) }
+    }
+
+    fun setChatModel(m: String) {
+        if (m == prefs.chatModel) return
+        stop()
+        prefs.chatModel = m
+        _ui.update { it.copy(chatModel = m, error = null) }
+    }
+
+    fun setSttModel(m: String) {
+        if (m == prefs.sttModel) return
+        stop()
+        prefs.sttModel = m
+        _ui.update { it.copy(sttModel = m, error = null) }
+    }
+
+    fun setTtsModel(m: String) {
+        if (m == prefs.ttsModel) return
+        stop()
+        prefs.ttsModel = m
+        _ui.update { it.copy(ttsModel = m, error = null) }
+    }
+
+    fun saveKey(k: String) {
+        prefs.apiKey = k
+        _ui.update { it.copy(hasKey = k.isNotBlank(), error = null, askKey = false) }
+    }
+
+    fun consumeAskKey() = _ui.update { it.copy(askKey = false) }
+
+    fun showError(m: String) {
+        st = VState.ERROR
+        _ui.update { it.copy(state = VState.ERROR, error = m) }
+    }
+
+    @Suppress("DEPRECATION")
+    fun start() {
+        if (active) return
+        if (prefs.apiKey.isBlank()) {
+            _ui.update { it.copy(askKey = true, error = "पहले API Key डालें") }
+            return
+        }
+        active = true
+        requestInFlight.set(false)
+        userBuf.clear(); aiBuf.clear()
+        newUserTurn = true; dropAudio = false; liveTurnOpen = false
+        detector.reset(); preRoll.clear(); utter.clear(); collecting = false; bargeFrames = 0; quietMs = 0
+        _ui.update { it.copy(user = "", ai = "", error = null, latencyMs = null, memoryCount = prefs.getMemories().size) }
+        MeeraKeepAliveService.start(getApplication())
+        MeeraOverlayService.start(getApplication())
+        setState(VState.CONNECTING)
+        am.mode = AudioManager.MODE_IN_COMMUNICATION
+        am.isSpeakerphoneOn = true
+        val sysPrompt = SystemPrompt.build(prefs.persona, prefs.girlfriendMode, prefs.getMemories())
+        try {
+            player = PcmPlayer()
+            if (prefs.mode == Mode.LIVE) {
+                live = GeminiLive(wsHttp, liveEvents).also {
+                    it.connect(prefs.apiKey, prefs.liveModel, prefs.voice, sysPrompt, prefs.silenceMs)
+                }
+            } else {
+                startMic()
+            }
+        } catch (e: Exception) {
+            fail(e.message ?: "शुरू नहीं हो पाया")
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    fun stop() {
+        if (!active && st == VState.IDLE) return
+        active = false
+        requestInFlight.set(false)
+        pipeline?.cancel(); pipeline = null
+        live?.close(); live = null
+        mic?.stop(); mic = null
+        player?.release(); player = null
+        try { am.isSpeakerphoneOn = false; am.mode = AudioManager.MODE_NORMAL } catch (_: Exception) {}
+        collecting = false
+        _level.value = 0f
+        MeeraKeepAliveService.stop(getApplication())
+        MeeraOverlayService.stop(getApplication())
+        setState(VState.IDLE)
+    }
+
+    private fun fail(msg: String) {
+        stop()
+        showError(msg)
+    }
+
+    private fun setState(s: VState) {
+        st = s
+        _ui.update { it.copy(state = s) }
+    }
+
+    private fun startMic() {
+        mic = MicRecorder(::onFrame).also { it.start() }
+        setState(VState.LISTENING)
+    }
+
+    private fun turnOpen(): Boolean =
+        (prefs.mode == Mode.MODULAR && pipeline?.isActive == true) || liveTurnOpen
+
+    private fun onFrame(frame: ShortArray) {
+        if (!active) return
+        val rms = rmsOf(frame)
+        val p = player
+        val assistant = st == VState.ASSISTANT_SPEAKING || p?.busy == true
+        _level.value = if (assistant) (p?.level ?: 0f) else (rms * 6f).coerceIn(0f, 1f)
+
+        if (assistant) {
+            if (rms > Cfg.BARGE_RMS) {
+                bargeFrames++
+                if (bargeFrames >= Cfg.BARGE_FRAMES) { bargeFrames = 0; bargeIn() }
+            } else bargeFrames = 0
+        } else bargeFrames = 0
+
+        if (st == VState.ASSISTANT_SPEAKING) {
+            if (p?.busy != true && !turnOpen()) {
+                quietMs += Cfg.FRAME_MS
+                if (quietMs >= Cfg.ASSISTANT_QUIET_MS) {
+                    quietMs = 0
+                    detector.reset()
+                    setState(VState.LISTENING)
+                }
+            } else quietMs = 0
+        }
+
+        val busy = st == VState.ASSISTANT_SPEAKING || player?.busy == true
+        if (prefs.mode == Mode.LIVE) liveFrame(frame, rms, busy) else modularFrame(frame, rms, busy)
+    }
+
+    private fun bargeIn() {
+        player?.flush()
+        if (prefs.mode == Mode.MODULAR) {
+            pipeline?.cancel()
+            requestInFlight.set(false)
+            utter.clear(); utter.addAll(preRoll); collecting = true
+        } else {
+            dropAudio = true
+            liveTurnOpen = false
+        }
+        detector.forceSpeaking()
+        quietMs = 0
+        setState(VState.USER_SPEAKING)
+    }
+
+    private fun liveFrame(frame: ShortArray, rms: Float, busy: Boolean) {
+        val l = live ?: return
+        if (!l.ready) return
+        val send = if (busy && rms < Cfg.BARGE_RMS) ShortArray(frame.size) else frame
+        l.sendAudio(send.toLeBytes())
+        if (busy) return
+        when (detector.process(rms)) {
+            TurnDetector.Ev.SPEECH_START -> if (st == VState.LISTENING || st == VState.PROCESSING) setState(VState.USER_SPEAKING)
+            TurnDetector.Ev.SPEECH_END -> {
+                speechEndAt = System.currentTimeMillis(); firstAudioPending = true
+                if (st == VState.USER_SPEAKING) setState(VState.PROCESSING)
+            }
+            TurnDetector.Ev.NOISE -> if (st == VState.USER_SPEAKING) setState(VState.LISTENING)
+            TurnDetector.Ev.NONE -> {}
+        }
+        if (st == VState.PROCESSING && System.currentTimeMillis() - speechEndAt > 8000) setState(VState.LISTENING)
+    }
+
+    private val liveEvents = object : GeminiLive.Events {
+        override fun onReady() {
+            try { startMic() } catch (e: Exception) { fail(e.message ?: "माइक शुरू नहीं हुआ") }
+        }
+
+        override fun onAudio(pcm: ByteArray) {
+            if (dropAudio || !active) return
+            liveTurnOpen = true
+            if (st != VState.ASSISTANT_SPEAKING) {
+                if (firstAudioPending) {
+                    firstAudioPending = false
+                    val ms = System.currentTimeMillis() - speechEndAt
+                    _ui.update { it.copy(latencyMs = ms) }
+                }
+                setState(VState.ASSISTANT_SPEAKING)
+            }
+            player?.enqueue(pcm)
+        }
+
+        override fun onInputText(t: String) {
+            dropAudio = false
+            if (newUserTurn) { userBuf.clear(); aiBuf.clear(); newUserTurn = false }
+            userBuf.append(t)
+            _ui.update { it.copy(user = userBuf.toString().trim(), ai = "") }
+        }
+
+        override fun onOutputText(t: String) {
+            if (dropAudio) return
+            aiBuf.append(t)
+            _ui.update { it.copy(ai = aiBuf.toString().trim()) }
+        }
+
+        override fun onToolCall(id: String, name: String, args: JSONObject) {
+            viewModelScope.launch(Dispatchers.IO) {
+                val res = MeeraTools.executeFunctionCall(appCtx, name, args)
+                _ui.update { it.copy(lastToolStatus = "⚡ $name") }
+                live?.sendToolResponse(id, name, res.rawDataForAi.ifBlank { res.spokenReply })
+            }
+        }
+
+        override fun onInterrupted() {
+            player?.flush()
+            dropAudio = false; liveTurnOpen = false; newUserTurn = true
+            if (st == VState.ASSISTANT_SPEAKING || st == VState.PROCESSING) {
+                detector.forceSpeaking()
+                setState(VState.USER_SPEAKING)
+            }
+        }
+
+        override fun onTurnComplete() {
+            val finishedUserText = userBuf.toString().trim()
+            val finishedAiText = aiBuf.toString().trim()
+            if (finishedUserText.isNotBlank()) {
+                appendChatLog("user", finishedUserText)
+                autoLearnFromUser(finishedUserText)
+                // अगर मॉडल ने टूल कॉल किए बिना बोला हो लेकिन यूज़र ने ऐप खोलने कहा हो, तो बैकअप के तौर पर चलाएँ
+                MeeraTools.tryDirectVoiceCommand(appCtx, finishedUserText)
+            }
+            if (finishedAiText.isNotBlank()) appendChatLog("model", finishedAiText)
+            liveTurnOpen = false; newUserTurn = true; dropAudio = false
+        }
+
+        override fun onError(msg: String) {
+            if (active) fail(msg)
+        }
+    }
+
+    private fun modularFrame(frame: ShortArray, rms: Float, busy: Boolean) {
+        if (!collecting) {
+            preRoll.addLast(frame)
+            while (preRoll.size > Cfg.PREROLL_FRAMES) preRoll.removeFirst()
+        }
+        if (busy || st == VState.PROCESSING || st == VState.CONNECTING || requestInFlight.get()) return
+        if (collecting) utter.add(frame)
+        when (detector.process(rms)) {
+            TurnDetector.Ev.SPEECH_START -> {
+                utter.clear(); utter.addAll(preRoll); collecting = true
+                setState(VState.USER_SPEAKING)
+            }
+            TurnDetector.Ev.SPEECH_END -> {
+                collecting = false
+                val endAt = System.currentTimeMillis()
+                val wav = pcmToWav(joinPcm(utter), Cfg.IN_RATE)
+                utter.clear(); preRoll.clear()
+                runPipeline(wav, endAt)
+            }
+            TurnDetector.Ev.NOISE -> {
+                collecting = false; utter.clear()
+                if (st == VState.USER_SPEAKING) setState(VState.LISTENING)
+            }
+            TurnDetector.Ev.NONE -> {}
+        }
+    }
+
+    private fun runPipeline(wav: ByteArray, endAt: Long) {
+        if (!requestInFlight.compareAndSet(false, true)) return
+        pipeline?.cancel()
+        setState(VState.PROCESSING)
+        pipeline = viewModelScope.launch(Dispatchers.IO) {
+            val full = StringBuilder()
+            var userAdded = false
+            try {
+                val text = rest.transcribe(wav, prefs.sttModel)
+                if (text.isBlank()) {
+                    requestInFlight.set(false)
+                    setState(VState.LISTENING)
+                    return@launch
+                }
+                _ui.update { it.copy(user = text, ai = "", latencyMs = null) }
+                appendChatLog("user", text)
+                autoLearnFromUser(text)
+
+                // Modular डायरेक्ट कमांड चेक (जैसे "WhatsApp खोलो", "स्क्रीन पढ़ो")
+                val toolRes = MeeraTools.tryDirectVoiceCommand(appCtx, text)
+                if (toolRes.executed && toolRes.spokenReply.isNotBlank() && toolRes.rawDataForAi.startsWith("SUCCESS:")) {
+                    _ui.update { it.copy(ai = toolRes.spokenReply, lastToolStatus = "⚡ ${toolRes.toolName}") }
+                    appendChatLog("model", toolRes.spokenReply)
+                    val pcm = rest.tts(toolRes.spokenReply, prefs.voice, prefs.ttsModel, prefs.persona, prefs.girlfriendMode)
+                    _ui.update { it.copy(latencyMs = System.currentTimeMillis() - endAt) }
+                    setState(VState.ASSISTANT_SPEAKING)
+                    player?.enqueue(pcm)
+                    return@launch
+                }
+
+                val effectiveUserMsg = if (toolRes.executed && toolRes.rawDataForAi.isNotBlank()) {
+                    "$text\n\n[SCREEN / TOOL DATA]:\n${toolRes.rawDataForAi}"
+                } else text
+
+                history.add("user" to effectiveUserMsg); userAdded = true
+
+                val sysPrompt = SystemPrompt.build(prefs.persona, prefs.girlfriendMode, prefs.getMemories())
+                val ttsJobs = Channel<Deferred<ByteArray>>(capacity = 3)
+                val voice = prefs.voice
+                val selectedTts = prefs.ttsModel
+                val curPersona = prefs.persona
+                val curGf = prefs.girlfriendMode
+                var first = true
+
+                val speaker = launch {
+                    for (job in ttsJobs) {
+                        val pcm = job.await()
+                        if (first) {
+                            first = false
+                            val ms = System.currentTimeMillis() - endAt
+                            _ui.update { it.copy(latencyMs = ms) }
+                            setState(VState.ASSISTANT_SPEAKING)
+                        }
+                        player?.enqueue(pcm)
+                    }
+                }
+                try {
+                    rest.streamChat(history.takeLast(12), sysPrompt, prefs.chatModel) { s ->
+                        full.append(s).append(' ')
+                        _ui.update { it.copy(ai = full.toString().trim()) }
+                        val cleanText = s.replace(Regex("[*#_`~]"), "").trim()
+                        if (cleanText.isNotEmpty()) {
+                            val job = async(Dispatchers.IO) {
+                                rest.tts(cleanText, voice, selectedTts, curPersona, curGf)
+                            }
+                            ttsJobs.send(job)
+                        }
+                    }
+                } finally {
+                    ttsJobs.close()
+                }
+                speaker.join()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (active) fail(friendly(e))
+            } finally {
+                requestInFlight.set(false)
+                if (userAdded) {
+                    val reply = full.toString().trim()
+                    if (reply.isNotBlank()) {
+                        history.add("model" to reply)
+                        appendChatLog("model", reply)
+                    } else history.removeLastOrNull()
+                }
+            }
+        }
+    }
+
+    private fun friendly(e: Throwable): String {
+        val m = e.message ?: e.javaClass.simpleName
+        return when {
+            e is UnknownHostException -> "इंटरनेट कमज़ोर या बंद है"
+            m.contains("API key", true) || m.contains("HTTP 401") || m.contains("HTTP 403") -> "API Key सही नहीं है या इजाज़त नहीं: ${m.take(120)}"
+            m.contains("HTTP 429") -> "कोटा/लिमिट पूरी हो गई (429)"
+            else -> m.take(160)
+        }
+    }
+
+    override fun onCleared() {
+        stop()
+        super.onCleared()
+    }
+}
+
+######## FILE: app/src/main/res/values/strings.xml ########
+<resources>
+    <string name="app_name">Meera AI</string>
+</resources>
+
+######## FILE: app/src/main/res/values/themes.xml ########
+<resources>
+    <style name="Theme.MeraAI" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#0B0F1A</item>
+        <item name="android:statusBarColor">#0B0F1A</item>
+        <item name="android:navigationBarColor">#0B0F1A</item>
+    </style>
+</resources>
+
+######## FILE: app/src/main/res/xml/accessibility_service_config.xml ########
+<?xml version="1.0" encoding="utf-8"?>
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeAllMask"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows|flagReportViewIds"
+    android:canPerformGestures="true"
+    android:canRetrieveWindowContent="true"
+    android:notificationTimeout="100" />
+
+######## FILE: build.gradle.kts ########
+plugins {
+    id("com.android.application") version "8.5.2" apply false
+    id("org.jetbrains.kotlin.android") version "1.9.24" apply false
+}
+
+######## FILE: gradle.properties ########
+org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8
+android.useAndroidX=true
+android.nonTransitiveRClass=true
+kotlin.code.style=official
+
+######## FILE: settings.gradle.kts ########
+pluginManagement {
+    repositories { google(); mavenCentral(); gradlePluginPortal() }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories { google(); mavenCentral() }
+}
+rootProject.name = "MeraAI"
+include(":app")
