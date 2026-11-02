@@ -222,6 +222,28 @@ class GeminiRest(private val http: OkHttpClient, private val key: () -> String) 
         }
     }
 
+    // ---------- 2.8 Task Planner ----------
+    suspend fun generatePlan(task: String, currentScreen: String): List<String> = withContext(Dispatchers.IO) {
+        val prompt = """
+            You are an expert Android phone automation planner.
+            Break the user's task into 2 to 8 ordered, simple steps.
+            Each step must be achievable by ONE simple action.
+            Consider the CURRENT SCREEN: $currentScreen
+            Output ONLY a valid JSON array of strings. No markdown, no explanation.
+            Example: ["Open WhatsApp", "Tap on Search", "Type 'Rahul'", "Tap the contact"]
+            Task: $task
+        """.trimIndent()
+        val body = JSONObject().put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", JSONArray().put(JSONObject().put("text", prompt))))).put("generationConfig", JSONObject().put("responseMimeType", "application/json"))
+        try {
+            val resp = http.newCall(request("gemini-3.8-flash", "generateContent", body)).await().okOrThrow()
+            val raw = resp.use { textOf(JSONObject(it.body!!.string())).trim() }
+            val arr = JSONArray(raw)
+            (0 until arr.length()).map { arr.getString(it) }
+        } catch (e: Exception) {
+            listOf("Execute: $task")
+        }
+    }
+
     // ---------- 3. Expressive TTS (Persona Style Directing + Glitch-Free WAV Parser) ----------
     suspend fun tts(
         text: String,

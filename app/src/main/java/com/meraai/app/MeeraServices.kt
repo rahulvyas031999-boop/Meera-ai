@@ -64,6 +64,25 @@ class MeeraAccessibilityService : AccessibilityService() {
         instance = this
     }
 
+    fun waitForScreenSettle(timeoutMs: Long = 1200L): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        var lastFingerprint = ""
+        var stableCount = 0
+        while (System.currentTimeMillis() < deadline) {
+            val root = rootInActiveWindow
+            val currentFingerprint = root?.let { readScreenText(15) } ?: ""
+            if (currentFingerprint == lastFingerprint) {
+                stableCount++
+                if (stableCount >= 2) return true
+            } else {
+                stableCount = 0
+                lastFingerprint = currentFingerprint
+            }
+            try { Thread.sleep(250) } catch (_: Exception) { break }
+        }
+        return false
+    }
+
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         event?.packageName?.toString()?.let { if (it.isNotBlank()) currentPackage = it }
     }

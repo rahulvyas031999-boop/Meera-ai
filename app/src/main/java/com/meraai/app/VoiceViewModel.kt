@@ -251,8 +251,35 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
     // Modular मोड में लोकल कमांड न मिले तो LLM-राउटर से फोन-टूल पहचानना
     private suspend fun routeViaLlm(text: String): ToolExecutionResult {
         if (!MeeraTools.looksLikeCommand(text)) return ToolExecutionResult(false)
-        val r = rest.routeCommand(text) ?: return ToolExecutionResult(false)
-        return MeeraTools.executeFunctionCall(appCtx, r.first, r.second)
+        val svc = MeeraAccessibilityService.instance
+        val currentScreen = svc?.readScreenText(10) ?: "Unknown"
+        val plan = rest.generatePlan(text, currentScreen)
+        if (plan.isEmpty()) return ToolExecutionResult(false)
+        
+        var stepCount = 0
+        var finalSpokenReply = ""
+        val maxSteps = 8
+        
+        while (stepCount < plan.size && stepCount < maxSteps) {
+            val step = plan[stepCount]
+            stepCount++
+            val r = rest.routeCommand(step) ?: continue
+            if (r.first == "none" || r.first.isBlank()) continue
+            
+            val res = MeeraTools.executeFunctionCall(appCtx, r.first, r.second)
+            finalSpokenReply += res.spokenReply + " "
+            
+            if (res.rawDataForAi.startsWith("FAILED") || res.rawDataForAi.startsWith("NEEDS_USER_HELP") || res.rawDataForAi.startsWith("PARTIAL")) {
+                finalSpokenReply = "Boss, step ${stepCount} par dikkat aayi: ${res.spokenReply}"
+                break
+            }
+            if (r.first == "tap_element" || r.first == "screen_action" || r.first == "tap_text") {
+                svc?.waitForScreenSettle(1200L)
+            } else {
+                kotlinx.coroutines.delay(1000)
+            }
+        }
+        return ToolExecutionResult(true, "AgentLoop", finalSpokenReply.trim(), "VERIFIED_SUCCESS: Completed $stepCount steps.")
     }
 
     fun sendCameraFrame(jpeg: ByteArray) {
