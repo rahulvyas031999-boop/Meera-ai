@@ -38,6 +38,8 @@ data class BuiltinMacro(
 object MeeraTools {
 
     private val KNOWN_APPS = mapOf(
+        "meera" to listOf("com.meraai.app"),
+        "dashboard" to listOf("com.meraai.app"),
         "whatsapp" to listOf("com.whatsapp", "com.whatsapp.w4b"),
         "व्हाट्सएप" to listOf("com.whatsapp", "com.whatsapp.w4b"),
         "व्हाट्सऐप" to listOf("com.whatsapp", "com.whatsapp.w4b"),
@@ -173,6 +175,15 @@ object MeeraTools {
     fun getGeminiToolsJson(): JSONArray {
         val funcs = JSONArray()
 
+        funcs.put(
+            JSONObject().put("name", "open_meera_dashboard").put("description", "Open your OWN app (Meera AI Dashboard). Use when user says 'Come to your dashboard' or after finishing a task.").put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()))
+        )
+        funcs.put(
+            JSONObject().put("name", "look_at_screen_visually").put("description", "Look at the screen image. Use if text parsing fails (e.g., hidden buttons, images).").put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject().put("question", JSONObject().put("type", "STRING"))))
+        )
+        funcs.put(
+            JSONObject().put("name", "tap_coordinates").put("description", "Tap at X, Y coordinates.").put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject().put("x", JSONObject().put("type", "INTEGER")).put("y", JSONObject().put("type", "INTEGER"))).put("required", JSONArray().put("x").put("y")))
+        )
         funcs.put(
             JSONObject()
                 .put("name", "open_app")
@@ -355,6 +366,36 @@ object MeeraTools {
 
     fun executeFunctionCall(ctx: Context, name: String, args: JSONObject): ToolExecutionResult {
         return when (name) {
+            "open_meera_dashboard" -> {
+                val intent = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName)
+                if (intent != null) {
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                    ctx.startActivity(intent)
+                    ToolExecutionResult(true, name, "मैं अपने डैशबोर्ड (Meera AI) पर आ गई हूँ।", "VERIFIED_SUCCESS: Opened Meera Dashboard")
+                } else ToolExecutionResult(true, name, "डैशबोर्ड नहीं मिला।", "ERROR")
+            }
+            "look_at_screen_visually" -> {
+                val svc = MeeraAccessibilityService.instance
+                if (svc == null || android.os.Build.VERSION.SDK_INT < 30) {
+                    ToolExecutionResult(true, name, "Vision ke liye Android 11+ aur Accessibility ON hona chahiye.", "ERROR")
+                } else {
+                    val question = args.optString("question", "What is on the screen? Give coordinates if asked.")
+                    val bitmap = kotlinx.coroutines.runBlocking { kotlinx.coroutines.suspendCancellableCoroutine<android.graphics.Bitmap?> { cont -> svc.captureScreenshot { bmp -> cont.resumeWith(Result.success(bmp)) } } }
+                    if (bitmap != null) {
+                        val rest = GeminiRest(okhttp3.OkHttpClient(), { Prefs(ctx).apiKey })
+                        val ans = kotlinx.coroutines.runBlocking { rest.analyzeScreenVisually(bitmap, question) }
+                        ToolExecutionResult(true, name, ans, "VERIFIED_SUCCESS: Vision Analysis -> $ans")
+                    } else ToolExecutionResult(true, name, "Screenshot nahi le payi.", "ERROR")
+                }
+            }
+            "tap_coordinates" -> {
+                val x = args.optDouble("x", -1.0).toFloat(); val y = args.optDouble("y", -1.0).toFloat()
+                if (x < 0 || y < 0) ToolExecutionResult(true, name, "Sahi coordinates batao.", "ERROR")
+                else {
+                    val ok = MeeraAccessibilityService.instance?.tapCoordinates(x, y) == true
+                    ToolExecutionResult(true, name, if (ok) "($x, $y) par tap kar diya." else "Tap fail hua.", if (ok) "VERIFIED_SUCCESS: Tapped at $x, $y" else "FAILED")
+                }
+            }
             "open_app" -> {
                 val appName = args.optString("app_name", "").trim()
                 val ok = openAppByName(ctx, appName)

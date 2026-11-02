@@ -244,6 +244,19 @@ class GeminiRest(private val http: OkHttpClient, private val key: () -> String) 
         }
     }
 
+    // ---------- 2.9 Vision Analysis ----------
+    suspend fun analyzeScreenVisually(bitmap: android.graphics.Bitmap, prompt: String): String = withContext(Dispatchers.IO) {
+        val bos = java.io.ByteArrayOutputStream()
+        bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, bos)
+        val b64Img = b64(bos.toByteArray())
+        val body = JSONObject().put("contents", JSONArray().put(
+            JSONObject().put("role", "user").put("parts", JSONArray()
+                .put(JSONObject().put("inlineData", JSONObject().put("mimeType", "image/jpeg").put("data", b64Img)))
+                .put(JSONObject().put("text", prompt)))))
+        val resp = http.newCall(request("gemini-3.8-flash", "generateContent", body)).await().okOrThrow()
+        resp.use { textOf(JSONObject(it.body!!.string())).trim() }
+    }
+
     // ---------- 3. Expressive TTS (Persona Style Directing + Glitch-Free WAV Parser) ----------
     suspend fun tts(
         text: String,

@@ -18,6 +18,8 @@ import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityService.ScreenshotResult
+import android.view.accessibility.AccessibilityService.TakeScreenshotCallback
 import java.util.concurrent.CopyOnWriteArrayList
 
 data class NotifItem(val pkg: String, val title: String, val text: String, val time: Long)
@@ -83,6 +85,18 @@ class MeeraAccessibilityService : AccessibilityService() {
         return false
     }
 
+    @androidx.annotation.RequiresApi(android.os.Build.VERSION_CODES.R)
+    fun captureScreenshot(callback: (android.graphics.Bitmap?) -> Unit) {
+        takeScreenshot(android.view.Display.DEFAULT_DISPLAY, java.util.concurrent.Executors.newSingleThreadExecutor(), object : TakeScreenshotCallback {
+            override fun onSuccess(screenshot: ScreenshotResult) {
+                val bitmap = android.graphics.Bitmap.wrapHardwareBuffer(screenshot.hardwareBuffer, screenshot.colorSpace)
+                screenshot.hardwareBuffer.close()
+                callback(bitmap)
+            }
+            override fun onFailure(errorCode: Int) { callback(null) }
+        })
+    }
+
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         event?.packageName?.toString()?.let { if (it.isNotBlank()) currentPackage = it }
     }
@@ -126,6 +140,7 @@ class MeeraAccessibilityService : AccessibilityService() {
                 d.isNotBlank() -> d
                 hint.isNotBlank() -> hint
                 node.isClickable && resId.isNotBlank() -> "icon:$resId"
+                node.isClickable -> "clickable_area"
                 else -> ""
             }
             if (label.length in 1..180) {
