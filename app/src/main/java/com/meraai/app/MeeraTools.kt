@@ -12,6 +12,8 @@ import androidx.core.content.ContextCompat
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLEncoder
+import java.util.Locale
+import kotlin.math.max
 
 data class ToolExecutionResult(
     val executed: Boolean,
@@ -20,17 +22,35 @@ data class ToolExecutionResult(
     val rawDataForAi: String = ""
 )
 
+data class MacroStep(
+    val tool: String,
+    val args: Map<String, String>,
+    val optional: Boolean = false
+)
+
+data class BuiltinMacro(
+    val name: String,
+    val intent: String,
+    val paramName: String,
+    val steps: List<MacroStep>
+)
+
 object MeeraTools {
 
-    // आम बोलचाल के हिंदी/इंग्लिश ऐप नामों की स्मार्ट मैपिंग
     private val KNOWN_APPS = mapOf(
         "whatsapp" to listOf("com.whatsapp", "com.whatsapp.w4b"),
         "व्हाट्सएप" to listOf("com.whatsapp", "com.whatsapp.w4b"),
         "व्हाट्सऐप" to listOf("com.whatsapp", "com.whatsapp.w4b"),
+        "vhatsep" to listOf("com.whatsapp", "com.whatsapp.w4b"),
+        "votsap" to listOf("com.whatsapp", "com.whatsapp.w4b"),
         "youtube" to listOf("com.google.android.youtube", "app.revanced.android.youtube"),
         "यूट्यूब" to listOf("com.google.android.youtube"),
         "instagram" to listOf("com.instagram.android"),
         "इंस्टाग्राम" to listOf("com.instagram.android"),
+        "chatgpt" to listOf("com.openai.chatgpt"),
+        "चैटजीपीटी" to listOf("com.openai.chatgpt"),
+        "gemini" to listOf("com.google.android.apps.bard"),
+        "जेमिनी" to listOf("com.google.android.apps.bard"),
         "chrome" to listOf("com.android.chrome"),
         "क्रोम" to listOf("com.android.chrome"),
         "camera" to listOf("com.android.camera", "com.sec.android.app.camera", "com.oneplus.camera"),
@@ -41,27 +61,126 @@ object MeeraTools {
         "spotify" to listOf("com.spotify.music"),
         "facebook" to listOf("com.facebook.katana"),
         "telegram" to listOf("org.telegram.messenger"),
+        "termux" to listOf("com.termux"),
         "paytm" to listOf("net.one97.paytm"),
         "phonepe" to listOf("com.phonepe.app"),
         "gpay" to listOf("com.google.android.apps.nbu.paisa.user"),
         "google pay" to listOf("com.google.android.apps.nbu.paisa.user")
     )
 
-    /** Gemini Live API और REST API के लिए ऑफिशियल Function Declarations */
+    /** Maya's Exact 5 Built-in Macros from builtin_macros.json */
+    val BUILTIN_MACROS: List<BuiltinMacro> = listOf(
+        BuiltinMacro(
+            name = "chatgpt image",
+            intent = "ChatGPT app me image generate karo aur gallery me save karo",
+            paramName = "image prompt",
+            steps = listOf(
+                MacroStep("open_app", mapOf("name" to "ChatGPT")),
+                MacroStep("wait", mapOf("seconds" to "4")),
+                MacroStep("tap_text", mapOf("text" to "New chat"), optional = true),
+                MacroStep("wait", mapOf("seconds" to "4")),
+                MacroStep("type_text", mapOf("text" to "Create an image: {param}")),
+                MacroStep("tap_text", mapOf("text" to "Send Message")),
+                MacroStep("wait", mapOf("seconds" to "6")),
+                MacroStep("wait_for_screen_text", mapOf("text" to "Creating image", "mode" to "disappear", "timeout_seconds" to "300")),
+                MacroStep("wait", mapOf("seconds" to "3")),
+                MacroStep("tap_text", mapOf("text" to "Share")),
+                MacroStep("wait", mapOf("seconds" to "2")),
+                MacroStep("tap_text", mapOf("text" to "Download")),
+                MacroStep("wait", mapOf("seconds" to "3")),
+                MacroStep("go_back", emptyMap())
+            )
+        ),
+        BuiltinMacro(
+            name = "gemini image",
+            intent = "Gemini app me Images tool se image banao aur gallery me save karo",
+            paramName = "image prompt",
+            steps = listOf(
+                MacroStep("open_app", mapOf("name" to "Gemini")),
+                MacroStep("wait", mapOf("seconds" to "4")),
+                MacroStep("tap_text", mapOf("text" to "New chat"), optional = true),
+                MacroStep("wait", mapOf("seconds" to "3")),
+                MacroStep("tap_text", mapOf("text" to "Add attachments"), optional = true),
+                MacroStep("wait", mapOf("seconds" to "2")),
+                MacroStep("tap_text", mapOf("text" to "Images"), optional = true),
+                MacroStep("wait", mapOf("seconds" to "2")),
+                MacroStep("type_text", mapOf("text" to "Create an image: {param}")),
+                MacroStep("tap_text", mapOf("text" to "Send")),
+                MacroStep("wait_for_screen_text", mapOf("text" to "Generated image", "mode" to "appear", "timeout_seconds" to "300")),
+                MacroStep("wait", mapOf("seconds" to "2")),
+                MacroStep("tap_text", mapOf("text" to "Generated image 1"), optional = true),
+                MacroStep("wait", mapOf("seconds" to "3")),
+                MacroStep("tap_text", mapOf("text" to "Save"), optional = true),
+                MacroStep("wait", mapOf("seconds" to "3")),
+                MacroStep("go_back", emptyMap())
+            )
+        ),
+        BuiltinMacro(
+            name = "gemini video",
+            intent = "Gemini app me Videos tool se video banao aur save karo",
+            paramName = "video prompt",
+            steps = listOf(
+                MacroStep("open_app", mapOf("name" to "Gemini")),
+                MacroStep("wait", mapOf("seconds" to "4")),
+                MacroStep("tap_text", mapOf("text" to "New chat"), optional = true),
+                MacroStep("wait", mapOf("seconds" to "3")),
+                MacroStep("tap_text", mapOf("text" to "Add attachments")),
+                MacroStep("wait", mapOf("seconds" to "2")),
+                MacroStep("tap_text", mapOf("text" to "Videos")),
+                MacroStep("wait", mapOf("seconds" to "3")),
+                MacroStep("type_text", mapOf("text" to "{param}")),
+                MacroStep("tap_text", mapOf("text" to "Send")),
+                MacroStep("wait_for_screen_text", mapOf("text" to "Your video is ready", "mode" to "appear", "timeout_seconds" to "600")),
+                MacroStep("wait", mapOf("seconds" to "2")),
+                MacroStep("tap_text", mapOf("text" to "More options")),
+                MacroStep("wait", mapOf("seconds" to "2")),
+                MacroStep("tap_text", mapOf("text" to "Save video")),
+                MacroStep("wait", mapOf("seconds" to "4"))
+            )
+        ),
+        BuiltinMacro(
+            name = "chatgpt se poochho",
+            intent = "ChatGPT app me sawaal poochho aur jawab padhke sunao",
+            paramName = "sawaal",
+            steps = listOf(
+                MacroStep("open_app", mapOf("name" to "ChatGPT")),
+                MacroStep("wait", mapOf("seconds" to "4")),
+                MacroStep("tap_text", mapOf("text" to "New chat"), optional = true),
+                MacroStep("wait", mapOf("seconds" to "4")),
+                MacroStep("type_text", mapOf("text" to "{param}")),
+                MacroStep("tap_text", mapOf("text" to "Send Message")),
+                MacroStep("wait", mapOf("seconds" to "15")),
+                MacroStep("read_screen", emptyMap())
+            )
+        ),
+        BuiltinMacro(
+            name = "gemini se poochho",
+            intent = "Gemini app me sawaal poochho aur jawab padhke sunao",
+            paramName = "sawaal",
+            steps = listOf(
+                MacroStep("open_app", mapOf("name" to "Gemini")),
+                MacroStep("wait", mapOf("seconds" to "4")),
+                MacroStep("tap_text", mapOf("text" to "New chat"), optional = true),
+                MacroStep("wait", mapOf("seconds" to "3")),
+                MacroStep("type_text", mapOf("text" to "{param}")),
+                MacroStep("tap_text", mapOf("text" to "Send")),
+                MacroStep("wait", mapOf("seconds" to "15")),
+                MacroStep("read_screen", emptyMap())
+            )
+        )
+    )
+
     fun getGeminiToolsJson(): JSONArray {
         val funcs = JSONArray()
 
         funcs.put(
             JSONObject()
                 .put("name", "open_app")
-                .put("description", "Open any installed mobile application on the user's Android phone such as WhatsApp, YouTube, Instagram, Chrome, Camera, Settings, Gallery, Calculator, etc.")
+                .put("description", "Open any installed mobile application on the user's Android phone such as WhatsApp, YouTube, Instagram, ChatGPT, Gemini, Chrome, Camera, Settings, etc.")
                 .put(
                     "parameters", JSONObject()
                         .put("type", "OBJECT")
-                        .put(
-                            "properties", JSONObject()
-                                .put("app_name", JSONObject().put("type", "STRING").put("description", "Name of the app to open, e.g., WhatsApp, YouTube, Instagram, Settings"))
-                        )
+                        .put("properties", JSONObject().put("app_name", JSONObject().put("type", "STRING").put("description", "Name of the app to open")))
                         .put("required", JSONArray().put("app_name"))
                 )
         )
@@ -69,21 +188,53 @@ object MeeraTools {
         funcs.put(
             JSONObject()
                 .put("name", "read_screen")
-                .put("description", "Read all text, messages, buttons, and content currently visible on the user's phone screen using Accessibility service.")
+                .put("description", "List all visible text, buttons, icons and input fields on the current screen, each with an #id number (#1, #2, etc.) that can be tapped with tap_element.")
                 .put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()))
         )
 
         funcs.put(
             JSONObject()
+                .put("name", "tap_element")
+                .put("description", "Tap an on-screen element by its #id number from read_screen, or by its visible text label.")
+                .put(
+                    "parameters", JSONObject()
+                        .put("type", "OBJECT")
+                        .put(
+                            "properties", JSONObject()
+                                .put("id", JSONObject().put("type", "INTEGER").put("description", "The #id number from read_screen"))
+                                .put("text", JSONObject().put("type", "STRING").put("description", "Visible text or button label to tap if id is not used"))
+                        )
+                )
+        )
+
+        funcs.put(
+            JSONObject()
+                .put("name", "wait_for_screen_text")
+                .put("description", "Wait until specific text APPEARS on or DISAPPEARS from the screen (e.g. waiting for image generation or page load).")
+                .put(
+                    "parameters", JSONObject()
+                        .put("type", "OBJECT")
+                        .put(
+                            "properties", JSONObject()
+                                .put("text", JSONObject().put("type", "STRING").put("description", "On-screen text to watch for"))
+                                .put("mode", JSONObject().put("type", "STRING").put("description", "appear (default) or disappear"))
+                                .put("timeout_seconds", JSONObject().put("type", "INTEGER").put("description", "Max seconds to wait (default 30)"))
+                        )
+                        .put("required", JSONArray().put("text"))
+                )
+        )
+
+        funcs.put(
+            JSONObject()
                 .put("name", "screen_action")
-                .put("description", "Perform an action on the screen: click a button/text, type text into an input field, scroll up/down, or navigate home/back.")
+                .put("description", "Perform an action on the screen: click text, type text into an input field, scroll_down, scroll_up, home, or back.")
                 .put(
                     "parameters", JSONObject()
                         .put("type", "OBJECT")
                         .put(
                             "properties", JSONObject()
                                 .put("action_type", JSONObject().put("type", "STRING").put("description", "One of: click, type, home, back, scroll_down, scroll_up, notifications"))
-                                .put("target_or_text", JSONObject().put("type", "STRING").put("description", "Button/contact text to click, or message text to type"))
+                                .put("target_or_text", JSONObject().put("type", "STRING").put("description", "Button text to click, or message text to type"))
                         )
                         .put("required", JSONArray().put("action_type"))
                 )
@@ -92,13 +243,13 @@ object MeeraTools {
         funcs.put(
             JSONObject()
                 .put("name", "whatsapp_message")
-                .put("description", "Send a WhatsApp message or open a WhatsApp chat with a contact name or phone number.")
+                .put("description", "Send a WhatsApp message to a contact name or phone number. Supports both Hindi and English contact names, verifies chat opening and sending, and searches inside WhatsApp if needed.")
                 .put(
                     "parameters", JSONObject()
                         .put("type", "OBJECT")
                         .put(
                             "properties", JSONObject()
-                                .put("contact_name", JSONObject().put("type", "STRING").put("description", "Name or phone number of the person"))
+                                .put("contact_name", JSONObject().put("type", "STRING").put("description", "Contact name exactly as spoken by user"))
                                 .put("message", JSONObject().put("type", "STRING").put("description", "Message text to send"))
                         )
                         .put("required", JSONArray().put("contact_name"))
@@ -108,7 +259,7 @@ object MeeraTools {
         funcs.put(
             JSONObject()
                 .put("name", "make_phone_call")
-                .put("description", "Place a phone call to a contact name or phone number.")
+                .put("description", "Place a phone call to a contact name (matches Hindi speech to English contacts) or phone number.")
                 .put(
                     "parameters", JSONObject()
                         .put("type", "OBJECT")
@@ -122,24 +273,55 @@ object MeeraTools {
 
         funcs.put(
             JSONObject()
-                .put("name", "play_or_search")
-                .put("description", "Play a song/video on YouTube or search something on Google.")
+                .put("name", "youtube_search_and_play")
+                .put("description", "Open YouTube, search for the song/video, and AUTOMATICALLY PLAY the first real video result (skipping Shorts and ads). Use when the user says 'chalao', 'laga do', or 'play'.")
                 .put(
                     "parameters", JSONObject()
                         .put("type", "OBJECT")
                         .put(
                             "properties", JSONObject()
-                                .put("query", JSONObject().put("type", "STRING").put("description", "Song name, video topic, or search query"))
-                                .put("platform", JSONObject().put("type", "STRING").put("description", "youtube or google"))
+                                .put("query", JSONObject().put("type", "STRING").put("description", "Song or video name to play on YouTube"))
                         )
                         .put("required", JSONArray().put("query"))
+                )
+        )
+
+        funcs.put(
+            JSONObject()
+                .put("name", "play_or_search")
+                .put("description", "Search something on YouTube or Google. Set auto_play=true if the user asked to play/watch the video.")
+                .put(
+                    "parameters", JSONObject()
+                        .put("type", "OBJECT")
+                        .put(
+                            "properties", JSONObject()
+                                .put("query", JSONObject().put("type", "STRING").put("description", "Search query or song name"))
+                                .put("platform", JSONObject().put("type", "STRING").put("description", "youtube or google"))
+                                .put("auto_play", JSONObject().put("type", "BOOLEAN").put("description", "true to automatically click and play the first video"))
+                        )
+                        .put("required", JSONArray().put("query"))
+                )
+        )
+
+        funcs.put(
+            JSONObject()
+                .put("name", "play_macro")
+                .put("description", "Run one of the built-in multi-step task playbooks: 'chatgpt image', 'gemini image', 'gemini video', 'chatgpt se poochho', 'gemini se poochho'.")
+                .put(
+                    "parameters", JSONObject()
+                        .put("type", "OBJECT")
+                        .put(
+                            "properties", JSONObject()
+                                .put("name", JSONObject().put("type", "STRING").put("description", "Macro name, e.g., 'chatgpt image', 'gemini image', 'gemini video', 'chatgpt se poochho', 'gemini se poochho'"))
+                                .put("param", JSONObject().put("type", "STRING").put("description", "The prompt or question for the macro"))
+                        )
+                        .put("required", JSONArray().put("name"))
                 )
         )
 
         return JSONArray().put(JSONObject().put("functionDeclarations", funcs))
     }
 
-    /** Gemini से आए किसी भी Function Call को एग्जीक्यूट करना */
     fun executeFunctionCall(ctx: Context, name: String, args: JSONObject): ToolExecutionResult {
         return when (name) {
             "open_app" -> {
@@ -151,15 +333,35 @@ object MeeraTools {
             "read_screen" -> {
                 val svc = MeeraAccessibilityService.instance
                 if (svc == null) {
-                    ToolExecutionResult(
-                        true, name,
-                        "स्क्रीन पढ़ने के लिए पहले Accessibility सर्विस ऑन करनी होगी।",
-                        "ERROR: Accessibility service is OFF. Ask user to enable Meera AI in Accessibility Settings."
-                    )
+                    ToolExecutionResult(true, name, "स्क्रीन पढ़ने के लिए पहले Accessibility सर्विस ऑन करनी होगी।", "ERROR: Accessibility service is OFF.")
                 } else {
-                    val content = svc.readScreenText()
+                    val content = svc.readScreenElements()
                     val summary = if (content.isBlank()) "स्क्रीन पर अभी कोई टेक्स्ट नहीं दिख रहा है।" else content
-                    ToolExecutionResult(true, name, "", "CURRENT SCREEN CONTENT:\n$summary")
+                    ToolExecutionResult(true, name, "", "CURRENT SCREEN ELEMENTS:\n$summary")
+                }
+            }
+            "tap_element" -> {
+                val svc = MeeraAccessibilityService.instance
+                if (svc == null) {
+                    ToolExecutionResult(true, name, "टैप करने के लिए Accessibility ऑन करें।", "ERROR: Accessibility OFF")
+                } else {
+                    val id = args.optInt("id", -1)
+                    val text = args.optString("text", "").trim()
+                    val ok = if (id > 0) svc.tapElementById(id) else svc.clickByText(text)
+                    val label = if (id > 0) "#$id" else text
+                    ToolExecutionResult(true, name, if (ok) "$label पर टैप कर दिया।" else "स्क्रीन पर '$label' नहीं मिला।", if (ok) "SUCCESS: Tapped $label" else "FAILED: $label not found")
+                }
+            }
+            "wait_for_screen_text" -> {
+                val svc = MeeraAccessibilityService.instance
+                val text = args.optString("text", "").trim()
+                val mode = args.optString("mode", "appear").trim()
+                val timeout = args.optInt("timeout_seconds", 30)
+                if (svc == null) {
+                    ToolExecutionResult(true, name, "Accessibility बंद है।", "ERROR: Accessibility OFF")
+                } else {
+                    val ok = svc.waitForScreenText(text, mode, timeout)
+                    ToolExecutionResult(true, name, if (ok) "'$text' पूरा हो गया।" else "'$text' का इंतज़ार टाइमआउट हो गया।", if (ok) "SUCCESS: Condition met for $text" else "TIMEOUT waiting for $text")
                 }
             }
             "screen_action" -> {
@@ -180,34 +382,102 @@ object MeeraTools {
             "whatsapp_message" -> {
                 val person = args.optString("contact_name", "").trim()
                 val msg = args.optString("message", "").trim()
-                sendWhatsAppToPerson(ctx, person, msg)
+                sendWhatsAppVerified(ctx, person, msg)
             }
             "make_phone_call" -> {
                 val person = args.optString("contact_name", "").trim()
                 callPerson(ctx, person)
             }
+            "youtube_search_and_play" -> {
+                val q = args.optString("query", "").trim()
+                playOrSearchMedia(ctx, q, "youtube", autoPlay = true)
+            }
             "play_or_search" -> {
                 val q = args.optString("query", "").trim()
                 val platform = args.optString("platform", "youtube").lowercase()
-                playOrSearchMedia(ctx, q, platform)
+                val autoPlay = args.optBoolean("auto_play", !platform.contains("google"))
+                playOrSearchMedia(ctx, q, platform, autoPlay = autoPlay)
+            }
+            "play_macro" -> {
+                val macroName = args.optString("name", "").trim()
+                val param = args.optString("param", "").trim()
+                runBuiltinMacro(ctx, macroName, param)
             }
             else -> ToolExecutionResult(false)
         }
     }
 
-    /**
-     * लोकल फास्ट कमांड राउटर (Modular/Chat मोड में बिना रुके तुरंत ऐप खोलने या स्क्रीन पढ़ने के लिए)
-     */
+    /** Execute a Built-in Macro Playbook step-by-step with wait_for_screen_text & _optional support */
+    fun runBuiltinMacro(ctx: Context, macroName: String, param: String): ToolExecutionResult {
+        val cleanName = macroName.lowercase().trim()
+        val macro = BUILTIN_MACROS.find {
+            it.name.equals(cleanName, true) || cleanName.contains(it.name) || it.name.contains(cleanName)
+        } ?: return ToolExecutionResult(true, "play_macro", "'$macroName' नाम का कोई टास्क नहीं मिला।", "ERROR: Macro not found")
+
+        if (param.isBlank()) {
+            return ToolExecutionResult(
+                true, "play_macro",
+                "'${macro.name}' चलाने के लिए ${macro.paramName} बताइए—क्या लिखना या बनवाना है?",
+                "NEEDS_INPUT: Ask user for ${macro.paramName}"
+            )
+        }
+
+        Thread {
+            var lastRead = ""
+            for (step in macro.steps) {
+                try {
+                    val svc = MeeraAccessibilityService.instance
+                    when (step.tool) {
+                        "open_app" -> openAppByName(ctx, step.args["name"].orEmpty())
+                        "wait" -> {
+                            val sec = (step.args["seconds"]?.toLongOrNull() ?: 3L).coerceIn(1L, 30L)
+                            Thread.sleep(sec * 1000L)
+                        }
+                        "tap_text" -> {
+                            val t = step.args["text"].orEmpty().replace("{param}", param)
+                            val ok = svc?.clickByText(t) == true
+                            if (!ok && !step.optional) {
+                                Thread.sleep(1200)
+                                svc?.clickByText(t)
+                            }
+                        }
+                        "type_text" -> {
+                            val t = step.args["text"].orEmpty().replace("{param}", param)
+                            svc?.inputText(t, autoSend = false)
+                        }
+                        "wait_for_screen_text" -> {
+                            val t = step.args["text"].orEmpty()
+                            val mode = step.args["mode"] ?: "appear"
+                            val timeout = step.args["timeout_seconds"]?.toIntOrNull() ?: 120
+                            svc?.waitForScreenText(t, mode, timeout)
+                        }
+                        "read_screen" -> {
+                            lastRead = svc?.readScreenElements() ?: ""
+                        }
+                        "go_back" -> svc?.performSystemAction("back")
+                    }
+                } catch (_: Exception) {}
+            }
+        }.start()
+
+        return ToolExecutionResult(
+            true, "play_macro",
+            "चालू कर रही हूँ '${macro.name}' ✨ मैं हर स्टेप स्क्रीन देखकर पूरा करूँगी।",
+            "SUCCESS: Started macro ${macro.name} with param '$param'"
+        )
+    }
+
+    /** Direct Voice Router with Strict Scroll Guard & Smart Intent Separation */
     fun tryDirectVoiceCommand(ctx: Context, userText: String): ToolExecutionResult {
-        val raw = userText.trim().trimEnd('।', '.', '!', '?', ',', ' ')
+        val raw = userText.trim()
         val low = raw.lowercase()
 
-        // 1. स्क्रीन पढ़ने या नोटिफिकेशन पढ़ने की कमांड
-        if (low.contains("स्क्रॉल डाउन") || low.contains("नीचे स्क्रॉल") || low.contains("नीचे करो") || low.contains("scroll down")) {
+        // 1. Strict Scroll Guard: ONLY scroll when user explicitly says scroll / नीचे स्क्रॉल / ऊपर स्क्रॉल
+        if (low.contains("स्क्रॉल डाउन") || low.contains("नीचे स्क्रॉल") || low == "नीचे करो" || low.contains("scroll down")) {
             val ok = MeeraAccessibilityService.instance?.performSystemAction("scroll_down") == true
             return ToolExecutionResult(true, "screen_action", if (ok) "नीचे स्क्रॉल कर दिया है। और नीचे करूँ या कुछ खोलना है?" else "स्क्रॉल करने के लिए Accessibility ऑन करें।", "SUCCESS: Scrolled Down")
         }
-        if (low.contains("स्क्रॉल अप") || low.contains("ऊपर स्क्रॉल") || low.contains("ऊपर करो") || low.contains("scroll up")) {
+        if (low.contains("स्क्रॉल अप") || low.contains("ऊपर स्क्रॉल") || low == "ऊपर करो" || low.contains("scroll up")) {
             val ok = MeeraAccessibilityService.instance?.performSystemAction("scroll_up") == true
             return ToolExecutionResult(true, "screen_action", if (ok) "ऊपर स्क्रॉल कर दिया है। आगे बताओ क्या करना है?" else "Accessibility ऑन करें।", "SUCCESS: Scrolled Up")
         }
@@ -215,18 +485,29 @@ object MeeraTools {
             val ok = MeeraAccessibilityService.instance?.performSystemAction("back") == true
             return ToolExecutionResult(true, "screen_action", if (ok) "पीछे आ गई। अब बताओ क्या करें?" else "Accessibility ऑन करें।", "SUCCESS: Back")
         }
+
+        // 2. Built-in Macro Triggers (e.g., "ChatGPT में शेर की इमेज बनाओ")
+        if ((low.contains("chatgpt") || low.contains("चैटजीपीटी")) && (low.contains("इमेज") || low.contains("फोटो") || low.contains("image") || low.contains("photo"))) {
+            val promptClean = raw.replace(Regex("(?i)(chatgpt|चैटजीपीटी|में|मे|जाकर|जाओ|एक|की|का|इमेज|फोटो|image|photo|बनाओ|बना दो|जनरेट करो)"), " ").trim()
+            if (promptClean.isNotBlank()) return runBuiltinMacro(ctx, "chatgpt image", promptClean)
+        }
+        if ((low.contains("gemini") || low.contains("जेमिनी")) && (low.contains("इमेज") || low.contains("फोटो") || low.contains("image") || low.contains("photo"))) {
+            val promptClean = raw.replace(Regex("(?i)(gemini|जेमिनी|में|मे|जाकर|जाओ|एक|की|का|इमेज|फोटो|image|photo|बनाओ|बना दो|जनरेट करो)"), " ").trim()
+            if (promptClean.isNotBlank()) return runBuiltinMacro(ctx, "gemini image", promptClean)
+        }
+
+        // 3. Screen Read & Notifications
         if (low.contains("स्क्रीन पढ़") || low.contains("screen padh") || low.contains("स्क्रीन पर क्या") ||
             low.contains("screen par kya") || low.contains("read screen")
         ) {
             return executeFunctionCall(ctx, "read_screen", JSONObject())
         }
-
         if (low.contains("नोटिफिकेशन") || low.contains("notification") || low.contains("किसका मैसेज आया")) {
             val notifSummary = MeeraNotificationService.getLatestSummary()
             return ToolExecutionResult(true, "read_notifications", "", "RECENT NOTIFICATIONS:\n$notifSummary")
         }
 
-        // 2. होम स्क्रीन या बैक जाने की कमांड
+        // 4. Home Screen
         if (low == "होम स्क्रीन पे आओ" || low == "होम स्क्रीन पर आओ" || low == "go home" || low == "home screen") {
             val svc = MeeraAccessibilityService.instance
             if (svc != null && svc.performSystemAction("home")) {
@@ -234,32 +515,34 @@ object MeeraTools {
             }
         }
 
-        // 3. YouTube पर गाना/वीडियो चलाने की कमांड
-        val ytMatch = Regex("(?:youtube\\s*(?:पर|पे|par|pe|me)|यूट्यूब\\s*(?:पर|पे))\\s+(.+?)(?:\\s+(?:चलाओ|चला दो|प्ले करो|खोलो|लगाओ|play|search))?$", RegexOption.IGNORE_CASE).find(raw)
+        // 5. YouTube Search vs Auto-Play ("चलाओ/लगाओ/play" -> autoPlay=true; "सर्च करो/ढूँढो" -> autoPlay=false)
+        val ytMatch = Regex("(?:youtube[ \t]*(?:पर|पे|par|pe|me)|यूट्यूब[ \t]*(?:पर|पे))[ \t]+(.+?)(?:[ \t]+(चलाओ|चला दो|प्ले करो|लगाओ|लगा दो|सर्च करो|खोजो|play|search))?$", RegexOption.IGNORE_CASE).find(raw)
         if (ytMatch != null) {
-            val song = ytMatch.groupValues[1].trim()
-            if (song.isNotBlank()) return playOrSearchMedia(ctx, song, "youtube")
+            val song = ytMatch.groupValues[1].replace(Regex("(?i)(गाना|सॉन्ग|वीडियो|song|video)$"), "").trim()
+            val verb = ytMatch.groupValues.getOrNull(2).orEmpty().lowercase()
+            val shouldPlay = !verb.contains("सर्च") && !verb.contains("खोज") && !verb.contains("search")
+            if (song.isNotBlank()) return playOrSearchMedia(ctx, song, "youtube", autoPlay = shouldPlay)
         }
 
-        // 4. WhatsApp मैसेज कमांड (जैसे: "लक्ष्मण को व्हाट्सएप पर मैसेज भेजो कि...")
-        val waMatch = Regex("(.+?)\\s+को\\s+(?:whatsapp|व्हाट्सएप|व्हाट्सऐप).*?(?:मैसेज|message)\\s+(?:भेजो|करो|लिखो)(?:\\s+कि|\\s+ki)?\\s*(.*)", RegexOption.IGNORE_CASE).find(raw)
+        // 6. WhatsApp Message Command
+        val waMatch = Regex("(.+?)[ \t]+को[ \t]+(?:whatsapp|व्हाट्सएप|व्हाट्सऐप).*?(?:मैसेज|message)[ \t]+(?:भेजो|करो|लिखो)(?:[ \t]+कि|[ \t]+ki)?[ \t]*(.*)", RegexOption.IGNORE_CASE).find(raw)
         if (waMatch != null) {
-            val person = waMatch.groupValues[1].replace(Regex("^(?:मीरा|अरे|सुनो|एक काम करो)\\s*"), "").trim()
+            val person = waMatch.groupValues[1].replace(Regex("^(?:मीरा|अरे|सुनो|एक काम करो)[ \t]*"), "").trim()
             val msg = waMatch.groupValues[2].trim()
-            return sendWhatsAppToPerson(ctx, person, msg)
+            return sendWhatsAppVerified(ctx, person, msg)
         }
 
-        // 5. कॉल लगाने की कमांड (जैसे: "लक्ष्मण को कॉल लगाओ / फोन करो")
-        val callMatch = Regex("(.+?)\\s+को\\s+(?:कॉल|फोन|call|phone)\\s+(?:लगाओ|करो|मिलाओ|लगा दो)", RegexOption.IGNORE_CASE).find(raw)
+        // 7. Phone Call Command
+        val callMatch = Regex("(.+?)[ \t]+को[ \t]+(?:कॉल|फोन|call|phone)[ \t]+(?:लगाओ|करो|मिलाओ|लगा दो)", RegexOption.IGNORE_CASE).find(raw)
         if (callMatch != null) {
-            val person = callMatch.groupValues[1].replace(Regex("^(?:मीरा|अरे|सुनो)\\s*"), "").trim()
+            val person = callMatch.groupValues[1].replace(Regex("^(?:मीरा|अरे|सुनो)[ \t]*"), "").trim()
             return callPerson(ctx, person)
         }
 
-        // 6. कोई भी ऐप खोलने की कमांड (जैसे: "WhatsApp ओपन करो", "यूट्यूब खोलो", "open instagram")
+        // 8. Open App Command
         val openPatterns = listOf(
-            Regex("^(?:मीरा|अरे|सुनो|प्लीज)?\\s*(.+?)\\s+(?:ओपन करो|ओपन कर दो|खोलो|खोल दो|चालू करो|open karo|open kar do|kholo|khol do)$", RegexOption.IGNORE_CASE),
-            Regex("^(?:open|launch)\\s+(.+)$", RegexOption.IGNORE_CASE)
+            Regex("^(?:मीरा|अरे|सुनो|प्लीज)?[ \t]*(.+?)[ \t]+(?:ओपन करो|ओपन कर दो|खोलो|खोल दो|चालू करो|open karo|open kar do|kholo|khol do)$", RegexOption.IGNORE_CASE),
+            Regex("^(?:open|launch)[ \t]+(.+)$", RegexOption.IGNORE_CASE)
         )
         for (pat in openPatterns) {
             val m = pat.find(raw)
@@ -267,8 +550,8 @@ object MeeraTools {
                 val appCandidate = m.groupValues[1]
                     .replace(Regex("(?:ऐप|app|एप्लीकेशन|application)$", RegexOption.IGNORE_CASE), "")
                     .trim()
-                if (appCandidate.length in 2..30 && openAppByName(ctx, appCandidate)) {
-                    return ToolExecutionResult(true, "open_app", "$appCandidate खोल दिया है।", "SUCCESS: Opened $appCandidate")
+                if (appCandidate.length in 2..25 && !appCandidate.contains(" और ") && !appCandidate.contains(" and ") && openAppByName(ctx, appCandidate)) {
+                    return ToolExecutionResult(true, "open_app", "$appCandidate खोल दिया है! बताओ इसमें आगे क्या करना है?", "SUCCESS: Opened $appCandidate")
                 }
             }
         }
@@ -276,33 +559,14 @@ object MeeraTools {
         return ToolExecutionResult(false)
     }
 
-    /** फोन में इंस्टॉल किसी भी ऐप को उसके नाम (हिंदी या इंग्लिश) से खोलना */
-    private val CMD_HINTS = listOf(
-        "खोल", "ओपन", "open", "चला", "चालू", "play", "कॉल", "call", "फोन", "मैसेज", "message", "msg",
-        "भेज", "व्हाट्स", "whatsapp", "यूट्यूब", "youtube", "स्क्रॉल", "scroll", "स्क्रीन", "screen",
-        "बैक", "back", "होम", "home", "सर्च", "search", "ढूंढ", "लगा", "नोटिफिकेशन", "notification",
-        "क्लिक", "click", "टैप", "tap"
-    )
-
-    /** Modular मोड में: क्या यह वाक्य फोन-कमांड जैसा लगता है? (सिर्फ़ तभी LLM-राउटर चलेगा, ताकि सामान्य बातचीत तेज़ रहे) */
-    fun looksLikeCommand(text: String): Boolean {
-        val low = text.lowercase()
-        return CMD_HINTS.any { low.contains(it) }
-    }
-
     fun openAppByName(ctx: Context, rawName: String): Boolean {
         val clean = rawName.lowercase().replace("ऐप", "").replace("app", "").trim()
         if (clean.isBlank()) return false
-
-        // स्पेशल सिस्टम स्क्रीन
         if (clean == "settings" || clean == "सेटिंग" || clean == "सेटिंग्स") {
             ctx.startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             return true
         }
-
         val pm = ctx.packageManager
-
-        // 1. पहले Known Apps मैप में चेक करें
         for ((key, pkgs) in KNOWN_APPS) {
             if (clean.contains(key) || key.contains(clean)) {
                 for (pkg in pkgs) {
@@ -315,15 +579,14 @@ object MeeraTools {
                 }
             }
         }
-
-        // 2. फोन के सारे Launcher Apps के नामों में मैच ढूँढें
+        val latinClean = transliterateHindiToEnglish(clean)
         return try {
             val mainIntent = Intent(Intent.ACTION_MAIN, null).addCategory(Intent.CATEGORY_LAUNCHER)
             val resolved = pm.queryIntentActivities(mainIntent, 0)
             for (info in resolved) {
                 val label = info.loadLabel(pm).toString().lowercase()
                 val pkg = info.activityInfo.packageName.lowercase()
-                if (label == clean || label.contains(clean) || clean.contains(label) || pkg.contains(clean)) {
+                if (label == clean || label.contains(clean) || label.contains(latinClean) || pkg.contains(latinClean)) {
                     val launch = pm.getLaunchIntentForPackage(info.activityInfo.packageName)
                     if (launch != null) {
                         launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -338,11 +601,115 @@ object MeeraTools {
         }
     }
 
-    /** कॉन्टैक्ट्स में से नाम के आधार पर मोबाइल नंबर ढूँढना */
+    /**
+     * Layer 1: Devanagari (Hindi) to English Phonetic Transliteration + Maya AbstractC2163ad2 Fuzzy Scorer
+     * Matches spoken "लक्ष्मण सालवी" -> "lakshman salvi" against saved English contact "Laxman Salvi"
+     */
+    fun transliterateHindiToEnglish(input: String): String {
+        val map = mapOf(
+            'अ' to "a", 'आ' to "aa", 'इ' to "i", 'ई' to "ee", 'उ' to "u", 'ऊ' to "oo",
+            'ए' to "e", 'ऐ' to "ai", 'ओ' to "o", 'औ' to "au", 'ऋ' to "ri",
+            'ा' to "a", 'ि' to "i", 'ी' to "i", 'ु' to "u", 'ू' to "oo",
+            'े' to "e", 'ै' to "ai", 'ो' to "o", 'ौ' to "au", 'ृ' to "ri",
+            'ं' to "n", 'ँ' to "n", 'ः' to "h", '्' to "", '़' to "",
+            'क' to "k", 'ख' to "kh", 'ग' to "g", 'घ' to "gh", 'ङ' to "n",
+            'च' to "ch", 'छ' to "chh", 'ज' to "j", 'झ' to "jh", 'ञ' to "n",
+            'ट' to "t", 'ठ' to "th", 'ड' to "d", 'ढ' to "dh", 'ण' to "n",
+            'त' to "t", 'थ' to "th", 'द' to "d", 'ध' to "dh", 'न' to "n",
+            'प' to "p", 'फ' to "ph", 'ब' to "b", 'भ' to "bh", 'म' to "m",
+            'य' to "y", 'र' to "r", 'ल' to "l", 'व' to "v",
+            'श' to "sh", 'ष' to "sh", 'स' to "s", 'ह' to "h",
+            'क्ष' to "x", 'त्र' to "tr", 'ज्ञ' to "gy"
+        )
+        val sb = StringBuilder()
+        var i = 0
+        while (i < input.length) {
+            // Check 2-char conjuncts like क्ष (क + ् + ष)
+            if (i + 2 < input.length && input[i] == 'क' && input[i + 1] == '्' && input[i + 2] == 'ष') {
+                sb.append("x")
+                i += 3
+                continue
+            }
+            val ch = input[i]
+            val mapped = map[ch]
+            if (mapped != null) {
+                sb.append(mapped)
+                // Add implicit 'a' after Hindi consonant if not followed by matra/halant/space
+                val isConsonant = ch in 'क'..'ह'
+                val nextCh = if (i + 1 < input.length) input[i + 1] else ' '
+                val nextIsMatraOrHalant = nextCh in 'ा'..'ौ' || nextCh == '्' || nextCh == ' '
+                if (isConsonant && !nextIsMatraOrHalant) {
+                    sb.append('a')
+                }
+            } else {
+                sb.append(ch)
+            }
+            i++
+        }
+        return sb.toString().lowercase(Locale.ROOT).trim()
+    }
+
+    /** Phonetic Consonant Skeleton so "laxman" and "lakshman" both become "lxmn" */
+    private fun phoneticSkeleton(s: String): String {
+        return s.lowercase(Locale.ROOT)
+            .replace("ksh", "x")
+            .replace("chh", "c")
+            .replace("sh", "s")
+            .replace("ph", "f")
+            .replace("bh", "b")
+            .replace("dh", "d")
+            .replace("th", "t")
+            .replace("gh", "g")
+            .replace("kh", "k")
+            .replace("w", "v")
+            .replace("z", "j")
+            .replace(Regex("[aeiouy ]+"), "")
+    }
+
+    /** Maya AbstractC2163ad2.f style 4-tier contact similarity score */
+    private fun scoreContactMatch(savedName: String, rawQuery: String): Float {
+        val sLow = savedName.lowercase(Locale.ROOT).trim()
+        val qRaw = rawQuery.lowercase(Locale.ROOT).trim()
+        val qLat = transliterateHindiToEnglish(qRaw)
+
+        if (sLow == qRaw || sLow == qLat) return 1.0f
+
+        val sWords = sLow.split(Regex("[ ]+")).filter { it.isNotBlank() }
+        val qWords = qLat.split(Regex("[ ]+")).filter { it.isNotBlank() }
+
+        if (sWords.any { it == qLat || it == qRaw }) return 0.95f
+        if (sLow.startsWith(qLat) || sLow.contains(qLat)) return 0.90f
+
+        // Phonetic skeleton comparison (e.g., "laxman salvi" == "lakshman salvi" -> "lxmnslv")
+        val sSkel = phoneticSkeleton(sLow)
+        val qSkel = phoneticSkeleton(qLat)
+        if (sSkel.isNotEmpty() && qSkel.isNotEmpty()) {
+            if (sSkel == qSkel) return 0.94f
+            if (sSkel.contains(qSkel) || qSkel.contains(sSkel)) return 0.86f
+        }
+
+        // Word-by-word phonetic overlap
+        if (qWords.isNotEmpty() && sWords.isNotEmpty()) {
+            var matchedWords = 0
+            for (qw in qWords) {
+                val qws = phoneticSkeleton(qw)
+                if (sWords.any { sw ->
+                        val sws = phoneticSkeleton(sw)
+                        sw.startsWith(qw.take(3)) || (qws.length >= 2 && sws == qws)
+                    }
+                ) {
+                    matchedWords++
+                }
+            }
+            if (matchedWords == qWords.size) return 0.92f
+            if (matchedWords > 0) return 0.78f + (0.1f * matchedWords / max(sWords.size, qWords.size))
+        }
+        return 0.0f
+    }
+
     fun findContactNumber(ctx: Context, nameQuery: String): Pair<String, String>? {
         val hasPerm = ContextCompat.checkSelfPermission(ctx, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
         if (!hasPerm || nameQuery.isBlank()) return null
-        val q = nameQuery.trim().lowercase()
         var cursor: Cursor? = null
         try {
             cursor = ctx.contentResolver.query(
@@ -352,12 +719,15 @@ object MeeraTools {
             )
             if (cursor != null) {
                 var bestMatch: Pair<String, String>? = null
+                var bestScore = 0.74f
                 while (cursor.moveToNext()) {
-                    val dName = cursor.getString(0) ?: continue
-                    val num = cursor.getString(1) ?: continue
-                    if (dName.equals(q, ignoreCase = true)) return dName to num
-                    if (dName.lowercase().contains(q) || q.contains(dName.lowercase())) {
+                    val dName = cursor.getString(0)?.trim() ?: continue
+                    val num = cursor.getString(1)?.trim() ?: continue
+                    val sc = scoreContactMatch(dName, nameQuery)
+                    if (sc > bestScore) {
+                        bestScore = sc
                         bestMatch = dName to num
+                        if (sc >= 0.99f) break
                     }
                 }
                 return bestMatch
@@ -369,7 +739,10 @@ object MeeraTools {
         return null
     }
 
-    private fun sendWhatsAppToPerson(ctx: Context, person: String, message: String): ToolExecutionResult {
+    /**
+     * Layer 2: Closed-Loop Verified WhatsApp Sender + In-App Search Fallback (Maya GR1.java style)
+     */
+    private fun sendWhatsAppVerified(ctx: Context, person: String, message: String): ToolExecutionResult {
         val contact = findContactNumber(ctx, person)
         val rawDigits = (contact?.second ?: person).replace(Regex("[^0-9+]"), "")
         val phone = when {
@@ -377,6 +750,7 @@ object MeeraTools {
             rawDigits.startsWith("+") -> rawDigits.substring(1)
             else -> rawDigits
         }
+        val targetDisplay = contact?.first ?: transliterateHindiToEnglish(person).replaceFirstChar { it.uppercase() }
 
         return try {
             if (phone.length >= 10) {
@@ -387,27 +761,60 @@ object MeeraTools {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
                 ctx.startActivity(i)
-                // अगर Accessibility चालू है और मैसेज दिया गया है, तो 1.2s बाद Send बटन भी दबाने की कोशिश करें
-                if (message.isNotBlank()) {
+
+                if (message.isBlank()) {
+                    return ToolExecutionResult(true, "whatsapp_message", "$targetDisplay की WhatsApp चैट खोल दी है! बताइए क्या मैसेज लिखना है?", "SUCCESS: Opened WhatsApp chat for $targetDisplay")
+                }
+
+                // Event-driven Wait & 3-Point Verification
+                val svc = MeeraAccessibilityService.instance
+                if (svc != null) {
+                    val ready = svc.waitForScreenText("Send", "appear", 6) || svc.waitForScreenText("भेजें", "appear", 2)
+                    if (ready) {
+                        Thread.sleep(350)
+                        val clicked = svc.clickByText("Send") || svc.clickByText("भेजें")
+                        Thread.sleep(500)
+                        val verified = clicked && svc.isInputCleared()
+                        return if (verified) {
+                            ToolExecutionResult(true, "whatsapp_message", "$targetDisplay को WhatsApp पर मैसेज भेज दिया है और स्क्रीन पर वेरीफाई भी कर लिया है!", "SUCCESS: Verified WhatsApp message sent to $targetDisplay")
+                        } else {
+                            ToolExecutionResult(true, "whatsapp_message", "$targetDisplay की चैट खोलकर मैसेज भर दिया है और Send पर टैप किया, पर एक बार स्क्रीन देख लो कि चला गया या नहीं।", "PARTIAL: Opened chat for $targetDisplay, Send tapped")
+                        }
+                    }
+                }
+                ToolExecutionResult(true, "whatsapp_message", "$targetDisplay की WhatsApp चैट में मैसेज तैयार कर दिया है।", "OPENED: WhatsApp chat for $targetDisplay")
+            } else {
+                // Maya GR1.java Fallback: Search inside WhatsApp itself when contact is not in phonebook
+                openAppByName(ctx, "WhatsApp")
+                val searchName = transliterateHindiToEnglish(person)
+                val svc = MeeraAccessibilityService.instance
+                if (svc != null) {
                     Thread {
                         try {
-                            Thread.sleep(1400)
-                            MeeraAccessibilityService.instance?.let { svc ->
-                                svc.clickByText("Send") || svc.clickByText("भेजें")
+                            Thread.sleep(1500)
+                            if (svc.clickByText("Search") || svc.clickByText("खोजें")) {
+                                Thread.sleep(500)
+                                svc.inputText(searchName, autoSend = false)
+                                Thread.sleep(1200)
+                                if (svc.clickByText(searchName) && message.isNotBlank()) {
+                                    Thread.sleep(800)
+                                    svc.inputText(message, autoSend = true)
+                                }
                             }
                         } catch (_: Exception) {}
                     }.start()
+                    ToolExecutionResult(
+                        true, "whatsapp_message",
+                        "फोनबुक में '$person' सीधा नहीं मिला, इसलिए मैंने WhatsApp के अंदर '$searchName' सर्च करके मैसेज भेजने की प्रोसेस शुरू कर दी है।",
+                        "IN_APP_SEARCH: Searching '$searchName' inside WhatsApp"
+                    )
+                } else {
+                    ToolExecutionResult(
+                        true, "whatsapp_message",
+                        "कॉन्टैक्ट्स में '$person' नहीं मिला, मैंने WhatsApp खोल दिया है। Accessibility ऑन कर देंगे तो मैं अंदर सर्च करके भी भेज दूँगी।",
+                        "Opened WhatsApp (Accessibility OFF for in-app search)"
+                    )
                 }
-                val targetName = contact?.first ?: person
-                ToolExecutionResult(true, "whatsapp_message", "$targetName की WhatsApp चैट खोल दी है।", "SUCCESS: Opened WhatsApp chat for $targetName")
-            } else {
-                // अगर कॉन्टैक्ट नंबर नहीं मिला, तो सीधे WhatsApp खोलें
-                openAppByName(ctx, "WhatsApp")
-                ToolExecutionResult(
-                    true, "whatsapp_message",
-                    "कॉन्टैक्ट्स में '$person' का नंबर नहीं मिला, इसलिए मैंने WhatsApp खोल दिया है।",
-                    "Opened WhatsApp (contact '$person' not found in phonebook)"
-                )
             }
         } catch (_: Exception) {
             openAppByName(ctx, "WhatsApp")
@@ -419,7 +826,7 @@ object MeeraTools {
         val contact = findContactNumber(ctx, person)
         val number = contact?.second ?: person.filter { it.isDigit() || it == '+' }
         if (number.length < 3) {
-            return ToolExecutionResult(true, "make_phone_call", "कॉन्टैक्ट्स में '$person' का नंबर नहीं मिला।", "ERROR: Contact $person not found")
+            return ToolExecutionResult(true, "make_phone_call", "कॉन्टैक्ट्स में '$person' का नंबर नहीं मिला। क्या यह किसी और नाम से सेव है?", "ERROR: Contact $person not found")
         }
         val canDirectCall = ContextCompat.checkSelfPermission(ctx, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED
         val action = if (canDirectCall) Intent.ACTION_CALL else Intent.ACTION_DIAL
@@ -427,23 +834,58 @@ object MeeraTools {
             val intent = Intent(action, Uri.parse("tel:$number")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             ctx.startActivity(intent)
             val label = contact?.first ?: person
-            ToolExecutionResult(true, "make_phone_call", "$label को कॉल लगा रही हूँ।", "SUCCESS: Calling $label ($number)")
+            ToolExecutionResult(true, "make_phone_call", "$label को कॉल लगा दिया है।", "SUCCESS: Calling $label ($number)")
         } catch (e: Exception) {
             ToolExecutionResult(true, "make_phone_call", "कॉल लगाने में दिक्कत आई।", "ERROR: ${e.message}")
         }
     }
 
-    private fun playOrSearchMedia(ctx: Context, query: String, platform: String): ToolExecutionResult {
+    /**
+     * YouTube Search & Auto-Play Engine (Maya youtube_search_and_play style)
+     */
+    private fun playOrSearchMedia(ctx: Context, query: String, platform: String, autoPlay: Boolean = true): ToolExecutionResult {
         return try {
             val encoded = URLEncoder.encode(query, "UTF-8")
-            val uri = if (platform.contains("google")) {
-                Uri.parse("https://www.google.com/search?q=$encoded")
-            } else {
-                Uri.parse("https://www.youtube.com/results?search_query=$encoded")
+            if (platform.contains("google")) {
+                val uri = Uri.parse("https://www.google.com/search?q=$encoded")
+                ctx.startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                return ToolExecutionResult(true, "play_or_search", "Google पर '$query' सर्च कर दिया है।", "SUCCESS: Google search $query")
             }
-            val i = Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            ctx.startActivity(i)
-            ToolExecutionResult(true, "play_or_search", "YouTube पर '$query' लगा दिया है! सुनिए, और कुछ काम हो तो बताइए?", "SUCCESS: Opened $platform for $query")
+
+            val searchIntent = Intent(Intent.ACTION_SEARCH).apply {
+                setPackage("com.google.android.youtube")
+                putExtra("query", query)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            try {
+                ctx.startActivity(searchIntent)
+            } catch (_: Exception) {
+                val uri = Uri.parse("https://www.youtube.com/results?search_query=$encoded")
+                ctx.startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            }
+
+            if (autoPlay) {
+                Thread {
+                    try {
+                        val svc = MeeraAccessibilityService.instance
+                        if (svc != null) {
+                            Thread.sleep(2200)
+                            svc.clickFirstYoutubeVideo()
+                        }
+                    } catch (_: Exception) {}
+                }.start()
+                ToolExecutionResult(
+                    true, "youtube_search_and_play",
+                    "YouTube पर '$query' सर्च करके पहला वीडियो प्ले कर दिया है! सुनिए, और कुछ काम हो तो बताइए?",
+                    "SUCCESS: YouTube search and auto-play '$query'"
+                )
+            } else {
+                ToolExecutionResult(
+                    true, "play_or_search",
+                    "YouTube पर '$query' सर्च कर दिया है! बताइए कौन-सा वाला वीडियो चलाऊँ?",
+                    "SUCCESS: YouTube search '$query'"
+                )
+            }
         } catch (_: Exception) {
             ToolExecutionResult(false)
         }

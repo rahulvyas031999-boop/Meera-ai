@@ -1,5 +1,7 @@
 package com.meraai.app
 
+import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.GestureDescription
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -7,14 +9,11 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.os.Build
-import android.os.IBinder
-
-import android.accessibilityservice.AccessibilityService
-import android.accessibilityservice.GestureDescription
 import android.graphics.Path
 import android.graphics.Rect
+import android.os.Build
 import android.os.Bundle
+import android.os.IBinder
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.view.accessibility.AccessibilityEvent
@@ -22,12 +21,13 @@ import android.view.accessibility.AccessibilityNodeInfo
 import java.util.concurrent.CopyOnWriteArrayList
 
 data class NotifItem(val pkg: String, val title: String, val text: String, val time: Long)
+data class ScreenElement(val id: Int, val label: String, val kind: String, val bounds: Rect)
 
 class MeeraNotificationService : NotificationListenerService() {
     companion object {
         val recentNotifs = CopyOnWriteArrayList<NotifItem>()
         fun getLatestSummary(): String {
-            if (recentNotifs.isEmpty()) return "अभी कोई नया नोटिफिकेशन नहीं है।"
+            if (recentNotifs.isEmpty()) return "Abhi koi naya notification nahi hai."
             return recentNotifs.takeLast(8).reversed().joinToString("\n") { "• [${it.title}]: ${it.text}" }
         }
     }
@@ -57,6 +57,8 @@ class MeeraAccessibilityService : AccessibilityService() {
             private set
     }
 
+    private val lastElements = CopyOnWriteArrayList<ScreenElement>()
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
@@ -73,53 +75,142 @@ class MeeraAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
-    /** चालू स्क्रीन के सारे पठनीय टेक्स्ट, बटन और लेबल्स निकालना */
-    fun readScreenText(maxItems: Int = 45): String {
+    /** Maya UN.java style: Read screen elements with #id numbers */
+    fun readScreenElements(maxItems: Int = 45): String {
         val root = rootInActiveWindow ?: return ""
-        val items = LinkedHashSet<String>()
         val pkg = root.packageName?.toString().orEmpty()
-        collectNodes(root, items, maxItems)
-        if (items.isEmpty()) return ""
-        return "Active App: $pkg\n" + items.joinToString("\n") { "• $it" }
+        val rawList = ArrayList<ScreenElement>()
+        collectElements(root, rawList, maxItems)
+        lastElements.clear()
+        lastElements.addAll(rawList)
+        if (rawList.isEmpty()) return ""
+        return "Active App: $pkg\n" + rawList.joinToString("\n") { "#${it.id} [${it.kind}] ${it.label}" }
     }
 
-    private fun collectNodes(node: AccessibilityNodeInfo?, out: MutableSet<String>, limit: Int) {
+    fun readScreenText(maxItems: Int = 45): String = readScreenElements(maxItems)
+
+    private fun collectElements(node: AccessibilityNodeInfo?, out: MutableList<ScreenElement>, limit: Int) {
         if (node == null || out.size >= limit) return
         if (node.isVisibleToUser) {
             val t = node.text?.toString()?.trim().orEmpty()
             val d = node.contentDescription?.toString()?.trim().orEmpty()
+            val hint = if (Build.VERSION.SDK_INT >= 26) node.hintText?.toString()?.trim().orEmpty() else ""
             val label = when {
                 t.isNotBlank() && d.isNotBlank() && !t.equals(d, true) -> "$t ($d)"
                 t.isNotBlank() -> t
                 d.isNotBlank() -> d
+                hint.isNotBlank() -> hint
                 else -> ""
             }
-            if (label.length in 2..180) {
-                val tag = if (node.isClickable) "[Button] " else if (node.isEditable) "[Input] " else ""
-                out.add("$tag$label")
+            if (label.length in 1..180) {
+                val kind = when {
+                    node.isEditable -> "Input"
+                    node.isClickable -> "Button"
+                    else -> "Text"
+                }
+                val rect = Rect()
+                node.getBoundsInScreen(rect)
+                val duplicate = out.any { it.label.equals(label, ignoreCase = true) && it.kind == kind }
+                if (!duplicate) {
+                    out.add(ScreenElement(out.size + 1, label, kind, rect))
+                }
             }
         }
         for (i in 0 until node.childCount) {
             if (out.size >= limit) break
-            collectNodes(node.getChild(i), out, limit)
+            collectElements(node.getChild(i), out, limit)
         }
     }
 
-    /** स्क्रीन पर दिख रहे किसी टेक्स्ट या बटन को ढूँढकर उस पर क्लिक करना */
+    /** Maya UN.java style: Tap an element by its #id */
+    fun tapElementById(id: Int): Boolean {
+        val el = lastElements.find { it.id == id } ?: return false
+        if (!el.bounds.isEmpty) {
+            return tapCoordinates(el.bounds.exactCenterX(), el.bounds.exactCenterY())
+        }
+        return clickByText(el.label)
+    }
+
+    fun tapCoordinates(x: Float, y: Float): Boolean {
+        val path = Path().apply { moveTo(x, y) }
+        val stroke = GestureDescription.StrokeDescription(path, 0, 85)
+        return dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
+    }
+
+    /** Maya wait_for_screen_text: Wait for text to appear or disappear on screen */
+    fun waitForScreenText(query: String, mode: String = "appear", timeoutSeconds: Int = 30): Boolean {
+        val target = query.trim()
+        if (target.isEmpty()) return true
+        val deadline = System.currentTimeMillis() + (timeoutSeconds.coerceIn(1, 600) * 1000L)
+        val wantAppear = !mode.equals("disappear", ignoreCase = true)
+        while (System.currentTimeMillis() < deadline) {
+            val root = rootInActiveWindow
+            val found = root != null && findNodeByText(root, target) != null
+            if (wantAppear && found) return true
+            if (!wantAppear && !found) return true
+            try { Thread.sleep(350) } catch (_: Exception) { break }
+        }
+        return false
+    }
+
+    fun hasScreenText(query: String): Boolean {
+        val root = rootInActiveWindow ?: return false
+        return findNodeByText(root, query.trim()) != null
+    }
+
     fun clickByText(query: String): Boolean {
         val root = rootInActiveWindow ?: return false
         val target = findNodeByText(root, query.trim()) ?: return false
         return performClickOnNode(target)
     }
 
-    private fun findNodeByText(node: AccessibilityNodeInfo?, q: String): AccessibilityNodeInfo? {
-        if (node == null) return null
+    /** YouTube Auto-Play: Click the first real video result (skipping Shorts, Ads, and Search bar) */
+    fun clickFirstYoutubeVideo(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val candidates = ArrayList<AccessibilityNodeInfo>()
+        collectVideoCandidates(root, candidates)
+        for (node in candidates) {
+            if (performClickOnNode(node)) return true
+        }
+        // Fallback: tap center-upper area where first video thumbnail renders
+        val dm = resources.displayMetrics
+        return tapCoordinates(dm.widthPixels * 0.5f, dm.heightPixels * 0.36f)
+    }
+
+    private fun collectVideoCandidates(node: AccessibilityNodeInfo?, out: MutableList<AccessibilityNodeInfo>) {
+        if (node == null || out.size >= 8) return
         if (node.isVisibleToUser) {
             val t = node.text?.toString()?.trim().orEmpty()
             val d = node.contentDescription?.toString()?.trim().orEmpty()
-            if (t.contains(q, ignoreCase = true) || d.contains(q, ignoreCase = true)) {
-                return node
+            val combined = "$t $d".trim()
+            val low = combined.lowercase()
+            val isVideoRow = combined.length >= 15 &&
+                (low.contains("minutes") || low.contains("seconds") || low.contains("views") ||
+                 low.contains("ago") || low.contains("मिनट") || low.contains("व्यू") ||
+                 combined.contains(":")) &&
+                !low.contains("shorts") && !low.contains("sponsored") &&
+                !low.startsWith("search") && !low.contains("filter")
+            if (isVideoRow) {
+                val r = Rect()
+                node.getBoundsInScreen(r)
+                if (r.top > 180 && r.height() > 60) {
+                    out.add(node)
+                }
             }
+        }
+        for (i in 0 until node.childCount) {
+            if (out.size >= 8) break
+            collectVideoCandidates(node.getChild(i), out)
+        }
+    }
+
+    private fun findNodeByText(node: AccessibilityNodeInfo?, q: String): AccessibilityNodeInfo? {
+        if (node == null || q.isEmpty()) return null
+        if (node.isVisibleToUser) {
+            val t = node.text?.toString()?.trim().orEmpty()
+            val d = node.contentDescription?.toString()?.trim().orEmpty()
+            if (t.equals(q, ignoreCase = true) || d.equals(q, ignoreCase = true)) return node
+            if (t.contains(q, ignoreCase = true) || d.contains(q, ignoreCase = true)) return node
         }
         for (i in 0 until node.childCount) {
             val found = findNodeByText(node.getChild(i), q)
@@ -137,14 +228,11 @@ class MeeraAccessibilityService : AccessibilityService() {
         val rect = Rect()
         node.getBoundsInScreen(rect)
         if (!rect.isEmpty) {
-            val path = Path().apply { moveTo(rect.exactCenterX(), rect.exactCenterY()) }
-            val stroke = GestureDescription.StrokeDescription(path, 0, 80)
-            return dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
+            return tapCoordinates(rect.exactCenterX(), rect.exactCenterY())
         }
         return false
     }
 
-    /** स्क्रीन के इनपुट बॉक्स (जैसे WhatsApp/Search बार) में टेक्स्ट टाइप करना */
     fun inputText(text: String, autoSend: Boolean = true): Boolean {
         val root = rootInActiveWindow ?: return false
         val editNode = findEditableNode(root) ?: return false
@@ -154,10 +242,18 @@ class MeeraAccessibilityService : AccessibilityService() {
         }
         val ok = editNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
         if (ok && autoSend) {
-            Thread.sleep(250)
-            clickByText("Send") || clickByText("भेजें") || clickByText("Search")
+            try { Thread.sleep(300) } catch (_: Exception) {}
+            clickByText("Send") || clickByText("भेजें") || clickByText("Send Message") || clickByText("Search")
         }
         return ok
+    }
+
+    fun isInputCleared(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val editNode = findEditableNode(root) ?: return true
+        val t = editNode.text?.toString()?.trim().orEmpty()
+        val hint = if (Build.VERSION.SDK_INT >= 26) editNode.hintText?.toString()?.trim().orEmpty() else ""
+        return t.isEmpty() || t.equals(hint, ignoreCase = true) || t.equals("Message", ignoreCase = true)
     }
 
     private fun findEditableNode(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
@@ -170,7 +266,6 @@ class MeeraAccessibilityService : AccessibilityService() {
         return null
     }
 
-    /** सिस्टम नेविगेशन और स्क्रॉल (home, back, notifications, scroll_down, scroll_up) */
     fun performSystemAction(action: String): Boolean {
         return when (action.lowercase().trim()) {
             "home" -> performGlobalAction(GLOBAL_ACTION_HOME)
@@ -210,7 +305,6 @@ class MeeraAccessibilityService : AccessibilityService() {
     }
 }
 
-
 class MeeraKeepAliveService : Service() {
     companion object {
         private const val CH_ID = "meera_live_channel"
@@ -233,7 +327,7 @@ class MeeraKeepAliveService : Service() {
             }
             val notif = if (Build.VERSION.SDK_INT >= 26) {
                 Notification.Builder(this, CH_ID)
-                    .setContentTitle("Meera AI चालू है")
+                    .setContentTitle("Meera AI चालू है 🎙️")
                     .setContentText("आप किसी भी ऐप में बोलकर कमांड दे सकते हैं")
                     .setSmallIcon(android.R.drawable.ic_btn_speak_now)
                     .setOngoing(true)
