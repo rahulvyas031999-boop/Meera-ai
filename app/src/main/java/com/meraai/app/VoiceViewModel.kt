@@ -138,7 +138,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
 
             // 1. पहले चेक करें कि क्या यह सीधा फोन टूल कमांड है (जैसे WhatsApp खोलो, स्क्रीन पढ़ो)
             val toolRes = MeeraTools.tryDirectVoiceCommand(appCtx, clean).let { if (it.executed) it else routeViaLlm(clean) }
-            if (toolRes.executed && toolRes.spokenReply.isNotBlank() && toolRes.rawDataForAi.startsWith("SUCCESS:")) {
+            if (toolRes.executed && toolRes.spokenReply.isNotBlank() && (toolRes.rawDataForAi.startsWith("VERIFIED_SUCCESS:") || toolRes.rawDataForAi.startsWith("SUCCESS:"))) {
                 _ui.update {
                     it.copy(
                         ai = toolRes.spokenReply,
@@ -155,7 +155,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
             } else clean
 
             history.add("user" to effectivePrompt)
-            val sysPrompt = SystemPrompt.build(prefs.persona, prefs.girlfriendMode, prefs.getMemories())
+            val sysPrompt = SystemPrompt.build(prefs.persona, prefs.girlfriendMode, prefs.getMemories() + prefs.getSkills())
             val full = StringBuilder()
             try {
                 rest.streamChat(history.takeLast(12), sysPrompt, prefs.chatModel) { s ->
@@ -284,7 +284,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
         setState(VState.CONNECTING)
         am.mode = AudioManager.MODE_IN_COMMUNICATION
         am.isSpeakerphoneOn = true
-        val sysPrompt = SystemPrompt.build(prefs.persona, prefs.girlfriendMode, prefs.getMemories())
+        val sysPrompt = SystemPrompt.build(prefs.persona, prefs.girlfriendMode, prefs.getMemories() + prefs.getSkills())
         try {
             player = PcmPlayer()
             if (prefs.mode == Mode.LIVE) {
@@ -453,7 +453,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
                 appendChatLog("user", finishedUserText)
                 autoLearnFromUser(finishedUserText)
                 // अगर मॉडल ने टूल कॉल किए बिना बोला हो लेकिन यूज़र ने ऐप खोलने कहा हो, तो बैकअप के तौर पर चलाएँ
-                if (!toolCalledThisTurn) MeeraTools.tryDirectVoiceCommand(appCtx, finishedUserText)
+                if (!toolCalledThisTurn && finishedUserText.length < 45 && !finishedUserText.lowercase().contains("chatgpt")) MeeraTools.tryDirectVoiceCommand(appCtx, finishedUserText)
             }
             if (finishedAiText.isNotBlank()) appendChatLog("model", finishedAiText)
             toolCalledThisTurn = false
@@ -512,7 +512,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
 
                 // Modular डायरेक्ट कमांड चेक (जैसे "WhatsApp खोलो", "स्क्रीन पढ़ो")
                 val toolRes = MeeraTools.tryDirectVoiceCommand(appCtx, text).let { if (it.executed) it else routeViaLlm(text) }
-                if (toolRes.executed && toolRes.spokenReply.isNotBlank() && toolRes.rawDataForAi.startsWith("SUCCESS:")) {
+                if (toolRes.executed && toolRes.spokenReply.isNotBlank() && (toolRes.rawDataForAi.startsWith("VERIFIED_SUCCESS:") || toolRes.rawDataForAi.startsWith("SUCCESS:"))) {
                     _ui.update { it.copy(ai = toolRes.spokenReply, lastToolStatus = "⚡ ${toolRes.toolName}") }
                     appendChatLog("model", toolRes.spokenReply)
                     val pcm = rest.tts(toolRes.spokenReply, prefs.voice, prefs.ttsModel, prefs.persona, prefs.girlfriendMode)
@@ -528,7 +528,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
 
                 history.add("user" to effectiveUserMsg); userAdded = true
 
-                val sysPrompt = SystemPrompt.build(prefs.persona, prefs.girlfriendMode, prefs.getMemories())
+                val sysPrompt = SystemPrompt.build(prefs.persona, prefs.girlfriendMode, prefs.getMemories() + prefs.getSkills())
                 val ttsJobs = Channel<Deferred<ByteArray>>(capacity = 3)
                 val voice = prefs.voice
                 val selectedTts = prefs.ttsModel
@@ -583,10 +583,16 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
 
     private fun friendly(e: Throwable): String {
         val m = e.message ?: e.javaClass.simpleName
+        val low = m.lowercase()
         return when {
-            e is UnknownHostException -> "इंटरनेट कमज़ोर या बंद है"
-            m.contains("API key", true) || m.contains("HTTP 401") || m.contains("HTTP 403") -> "API Key सही नहीं है या इजाज़त नहीं: ${m.take(120)}"
-            m.contains("HTTP 429") -> "कोटा/लिमिट पूरी हो गई (429)"
+            e is UnknownHostException || low.contains("unable to resolve host") || low.contains("network is unreachable") ->
+                "इंटरनेट कनेक्शन कमज़ोर या बंद है। एक बार Wi-Fi या मोबाइल डेटा चेक कर लो 🌐"
+            low.contains("429") || low.contains("quota") || low.contains("resource_exhausted") || low.contains("rate limit") ->
+                "अरे सुनो, अभी आपकी Gemini API Key की फ्री मिनट्स/कोटा लिमिट पूरी हो गई है 🥺 एक-दो मिनट रुककर फिर से बात करते हैं, या साइड मेन्यू में जाकर दूसरी Key डाल लो!"
+            low.contains("503") || low.contains("busy") || low.contains("overloaded") ->
+                "अभी Google का AI सर्वर थोड़ा व्यस्त (Busy) है, कुछ सेकंड बाद दोबारा बोलो!"
+            low.contains("api key") || low.contains("401") || low.contains("403") ->
+                "Google ने यह API Key स्वीकार नहीं की। कृपया Google AI Studio से पूरी Key कॉपी करके दोबारा पेस्ट करें।"
             else -> m.take(160)
         }
     }

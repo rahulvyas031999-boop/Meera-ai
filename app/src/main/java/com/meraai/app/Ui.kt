@@ -648,10 +648,11 @@ private fun YaadeinTabContent(vm: VoiceViewModel) {
         // Built-in Smart Automation Tasks (जैसे Maya के 'Sikhe hue tasks')
         Text("⚡ 1-Tap स्मार्ट टास्क (Built-in Actions)", color = AccentCyan, fontSize = 14.sp, fontWeight = FontWeight.Bold)
         val builtInTasks = listOf(
-            Triple("WhatsApp खोलो", "सीधे WhatsApp ऐप लॉन्च करें", "WhatsApp ओपन करो"),
-            Triple("YouTube खोलो", "YouTube वीडियो ऐप लॉन्च करें", "YouTube ओपन करो"),
-            Triple("स्क्रीन पढ़कर सुनाओ", "Accessibility से स्क्रीन का सारा टेक्स्ट पढ़ें", "स्क्रीन पर क्या लिखा है पढ़कर बताओ"),
-            Triple("नए नोटिफिकेशन बताओ", "WhatsApp और अन्य ऐप्स के ताज़ा मैसेज सुनें", "नोटिफिकेशन पढ़कर बताओ")
+            Triple("gemini se poochho · 8 steps", "sawaal · built-in (Gemini ऐप में सवाल पूछकर जवाब सुनाए)", "Gemini ऐप खोलकर आज की मुख्य टेक्नोलॉजी न्यूज़ पूछो"),
+            Triple("chatgpt se poochho · 8 steps", "sawaal · built-in (ChatGPT ऐप में सवाल पूछकर जवाब सुनाए)", "ChatGPT में जाकर एक मोटिवेशनल कहानी पूछो"),
+            Triple("gemini video · 16 steps", "video prompt · built-in (Gemini में वीडियो बनाकर सेव करे)", "Gemini में उगते सूरज का वीडियो बनाओ"),
+            Triple("gemini image · 17 steps", "image prompt · built-in (Gemini में इमेज बनाकर गैलरी में सेव करे)", "Gemini में दहाड़ते हुए शेर की इमेज बनाओ"),
+            Triple("chatgpt image · 14 steps", "image prompt · built-in (ChatGPT में इमेज बनाकर टैप करके डाउनलोड करे)", "ChatGPT में दहाड़ते हुए शेर की इमेज बनाओ")
         )
         builtInTasks.forEach { (title, sub, cmd) ->
             Surface(
