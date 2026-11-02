@@ -891,6 +891,13 @@ object MeeraTools {
         }
     }
 
+    private val CMD_HINTS = listOf(
+        "खोल", "ओपन", "open", "चला", "चालू", "play", "कॉल", "call", "फोन", "मैसेज", "message", "msg",
+        "भेज", "व्हाट्स", "whatsapp", "यूट्यूब", "youtube", "स्क्रॉल", "scroll", "स्क्रीन", "screen",
+        "बैक", "back", "होम", "home", "सर्च", "search", "ढूंढ", "लगा", "नोटिफिकेशन", "notification",
+        "क्लिक", "click", "टैप", "tap"
+    )
+
     fun looksLikeCommand(text: String): Boolean {
         val low = text.lowercase()
         return CMD_HINTS.any { low.contains(it) }
