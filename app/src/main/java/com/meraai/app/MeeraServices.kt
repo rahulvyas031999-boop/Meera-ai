@@ -18,8 +18,8 @@ import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import android.view.accessibility.AccessibilityService.ScreenshotResult
-import android.view.accessibility.AccessibilityService.TakeScreenshotCallback
+import android.accessibilityservice.AccessibilityService.ScreenshotResult
+import android.accessibilityservice.AccessibilityService.TakeScreenshotCallback
 import java.util.concurrent.CopyOnWriteArrayList
 
 data class NotifItem(val pkg: String, val title: String, val text: String, val time: Long)

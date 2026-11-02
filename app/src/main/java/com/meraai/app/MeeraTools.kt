@@ -374,6 +374,7 @@ object MeeraTools {
                     ToolExecutionResult(true, name, "मैं अपने डैशबोर्ड (Meera AI) पर आ गई हूँ।", "VERIFIED_SUCCESS: Opened Meera Dashboard")
                 } else ToolExecutionResult(true, name, "डैशबोर्ड नहीं मिला।", "ERROR")
             }
+            @Suppress("NewApi")
             "look_at_screen_visually" -> {
                 val svc = MeeraAccessibilityService.instance
                 if (svc == null || android.os.Build.VERSION.SDK_INT < 30) {
