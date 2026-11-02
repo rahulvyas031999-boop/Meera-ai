@@ -217,15 +217,8 @@ fun CameraCard(vm: VoiceViewModel, modifier: Modifier = Modifier) {
 
 @Composable
 fun VisionCameraTab(vm: VoiceViewModel) {
-    val ui by vm.ui.collectAsStateWithLifecycle()
-    Column(Modifier.fillMaxSize()) {
-        CameraCard(vm, Modifier.fillMaxWidth().height(300.dp).padding(horizontal = 16.dp, vertical = 8.dp))
-        Text(
-            if (ui.mode == Mode.LIVE) "Live मोड: कैमरा हर सेकंड का फ्रेम Meera को भेजता है। माइक दबाकर पूछो — 'ये क्या है?'"
-            else "Modular मोड में कैमरा फ्रेम अभी नहीं जाता (अगला पार्ट)। Live मोड चुनो।",
-            color = VMuted, fontSize = 12.sp,
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = 2.dp)
-        )
-        Box(Modifier.weight(1f)) { VisionTabContent(vm) }
+    Box(Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 6.dp)) {
+        CameraCard(vm, Modifier.fillMaxSize())
+        VisionTabContent(vm)
     }
 }

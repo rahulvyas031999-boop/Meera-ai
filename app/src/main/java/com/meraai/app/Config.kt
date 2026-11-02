@@ -175,6 +175,25 @@ class Prefs(ctx: Context) {
     fun clearMemories() {
         sp.edit().putString("memories_json", "[]").apply()
     }
+
+    fun getSkills(): List<String> {
+        val raw = sp.getString("learned_skills_json", "[]") ?: "[]"
+        return try {
+            val arr = JSONArray(raw)
+            (0 until arr.length()).mapNotNull { arr.optString(it).takeIf { s -> s.isNotBlank() } }
+        } catch (_: Exception) { emptyList() }
+    }
+
+    fun addSkill(skillRule: String) {
+        val clean = skillRule.trim()
+        if (clean.length < 5) return
+        val current = getSkills().toMutableList()
+        if (current.any { it.equals(clean, ignoreCase = true) }) return
+        current.add(clean)
+        val arr = JSONArray()
+        current.forEach { arr.put(it) }
+        sp.edit().putString("learned_skills_json", arr.toString()).apply()
+    }
 }
 
 object SystemPrompt {
@@ -223,7 +242,15 @@ $gfBlock
 2. Expressive Audio: No markdown, no lists, no emojis, no symbols, because everything you write is spoken aloud. Let natural warmth, light laughs ("हाहा", "हेहे"), and pauses ("...") come through naturally.
 3. NATURAL TASK FOLLOW-UP: When you complete a task or open an app/song, warmly ask a casual follow-up like a real companion (e.g., "गाना लगा दिया है, और बताओ आगे क्या करना है?" or "ये काम हो गया, इसमें कुछ और करूँ या नया काम शुरू करें?").
 4. Noise Ignore: If the input is just a cough or meaningless noise, ignore it or briefly say "हम्म?".
-5. PHONE TOOLS & AUTOMATION: You have real tools (`open_app`, `read_screen`, `screen_action`, `whatsapp_message`, `make_phone_call`, `play_or_search`). When the user asks to open any app (like WhatsApp, YouTube, Instagram), read the screen, tap something, or call/message someone, ALWAYS call the matching tool immediately and confirm briefly.
+5. STRICT ZERO-HALLUCINATION & CLOSED-LOOP VERIFICATION:
+   - NEVER claim that you sent a message, played a video, tapped a button, or downloaded an image UNLESS you actually called the tool AND the tool response starts with "VERIFIED_SUCCESS".
+   - If a tool returns "PARTIAL", "FAILED", or "NEEDS_USER_HELP", tell the user honestly what happened on screen (e.g., "Maine YouTube par search kar diya hai par video play nahi ho paya, batao kaunsa click karun?" or "Image ban gayi hai par Download button nahi dikh raha").
+6. OPEN CHAT & SCREEN AWARENESS:
+   - If the user is already inside an open WhatsApp/Instagram chat and says "is chat me Hi bhejo" or "message bhejo ki...", call `whatsapp_send_in_open_chat` (or `whatsapp_message` with contact_name="current").
+   - If the user says "screen dekho video play nahi hua, play karo", call `youtube_search_and_play` or `read_screen` + `tap_element`.
+7. INTERACTIVE SKILL LEARNING (PUCH KAR SEEKHNA):
+   - When you don't know how to complete a step in an app (like downloading an image in ChatGPT), ASK the user how to do it.
+   - Whenever the user teaches you a procedure or rule (e.g., "ChatGPT me image par tap karne pe download ka option aata hai, isko yaad rakh lo"), IMMEDIATELY call `save_learned_skill` to remember it permanently!
 
 $memoryBlock
 """.trimIndent()

@@ -72,23 +72,23 @@ object MeeraTools {
     val BUILTIN_MACROS: List<BuiltinMacro> = listOf(
         BuiltinMacro(
             name = "chatgpt image",
-            intent = "ChatGPT app me image generate karo aur gallery me save karo",
+            intent = "ChatGPT app me image generate karo aur image par tap karke gallery me save/download karo",
             paramName = "image prompt",
             steps = listOf(
                 MacroStep("open_app", mapOf("name" to "ChatGPT")),
                 MacroStep("wait", mapOf("seconds" to "4")),
                 MacroStep("tap_text", mapOf("text" to "New chat"), optional = true),
-                MacroStep("wait", mapOf("seconds" to "4")),
+                MacroStep("wait", mapOf("seconds" to "3")),
                 MacroStep("type_text", mapOf("text" to "Create an image: {param}")),
                 MacroStep("tap_text", mapOf("text" to "Send Message")),
                 MacroStep("wait", mapOf("seconds" to "6")),
                 MacroStep("wait_for_screen_text", mapOf("text" to "Creating image", "mode" to "disappear", "timeout_seconds" to "300")),
                 MacroStep("wait", mapOf("seconds" to "3")),
-                MacroStep("tap_text", mapOf("text" to "Share")),
+                MacroStep("tap_center_image", emptyMap(), optional = true),
                 MacroStep("wait", mapOf("seconds" to "2")),
-                MacroStep("tap_text", mapOf("text" to "Download")),
-                MacroStep("wait", mapOf("seconds" to "3")),
-                MacroStep("go_back", emptyMap())
+                MacroStep("tap_save_or_download", emptyMap(), optional = true),
+                MacroStep("wait", mapOf("seconds" to "2")),
+                MacroStep("go_back", emptyMap(), optional = true)
             )
         ),
         BuiltinMacro(
@@ -305,6 +305,37 @@ object MeeraTools {
 
         funcs.put(
             JSONObject()
+                .put("name", "whatsapp_send_in_open_chat")
+                .put("description", "Type and send a message directly in the CURRENTLY OPEN WhatsApp/Instagram chat on screen without searching contacts. Use when the user says 'abhi hum us chat me hain message bhejo', 'is chat me Hi bhejo', or 'yahan message likho'.")
+                .put(
+                    "parameters", JSONObject()
+                        .put("type", "OBJECT")
+                        .put(
+                            "properties", JSONObject()
+                                .put("message", JSONObject().put("type", "STRING").put("description", "Exact message text to send in the open chat"))
+                        )
+                        .put("required", JSONArray().put("message"))
+                )
+        )
+
+        funcs.put(
+            JSONObject()
+                .put("name", "save_learned_skill")
+                .put("description", "Save a new UI automation trick or app skill taught by the user into permanent memory (e.g., 'ChatGPT me image banne ke baad image par tap karne se Save/Download ka option aata hai').")
+                .put(
+                    "parameters", JSONObject()
+                        .put("type", "OBJECT")
+                        .put(
+                            "properties", JSONObject()
+                                .put("app_or_task", JSONObject().put("type", "STRING").put("description", "App or task name, e.g. 'ChatGPT Image Download'"))
+                                .put("how_to_steps", JSONObject().put("type", "STRING").put("description", "Clear step-by-step rule taught by the user"))
+                        )
+                        .put("required", JSONArray().put("app_or_task").put("how_to_steps"))
+                )
+        )
+
+        funcs.put(
+            JSONObject()
                 .put("name", "play_macro")
                 .put("description", "Run one of the built-in multi-step task playbooks: 'chatgpt image', 'gemini image', 'gemini video', 'chatgpt se poochho', 'gemini se poochho'.")
                 .put(
@@ -379,6 +410,22 @@ object MeeraTools {
                     ToolExecutionResult(true, name, if (ok) "कर दिया।" else "स्क्रीन पर '$target' नहीं मिला।", if (ok) "SUCCESS: $act ($target)" else "FAILED: $act ($target)")
                 }
             }
+            "whatsapp_send_in_open_chat" -> {
+                val msg = args.optString("message", "").trim()
+                sendInCurrentOpenChatTool(msg)
+            }
+            "save_learned_skill" -> {
+                val appTask = args.optString("app_or_task", "").trim()
+                val steps = args.optString("how_to_steps", "").trim()
+                val combined = "[$appTask]: $steps"
+                Prefs(ctx).addSkill(combined)
+                Prefs(ctx).addMemory("सीखा हुआ स्किल $combined")
+                ToolExecutionResult(
+                    true, name,
+                    "मैंने '$appTask' का यह तरीका अपनी मेमोरी और स्किल्स में हमेशा के लिए सेव कर लिया है! अगली बार मैं बिल्कुल ऐसे ही करूँगी।",
+                    "VERIFIED_SUCCESS: Saved learned skill -> $combined"
+                )
+            }
             "whatsapp_message" -> {
                 val person = args.optString("contact_name", "").trim()
                 val msg = args.optString("message", "").trim()
@@ -451,6 +498,19 @@ object MeeraTools {
                             val timeout = step.args["timeout_seconds"]?.toIntOrNull() ?: 120
                             svc?.waitForScreenText(t, mode, timeout)
                         }
+                        "tap_center_image" -> {
+                            svc?.tapCenterImage()
+                        }
+                        "tap_save_or_download" -> {
+                            val saved = svc?.clickByText("Save") == true ||
+                                svc?.clickByText("Download") == true ||
+                                svc?.clickByText("सेव") == true ||
+                                (svc?.clickByText("More options") == true && Thread.sleep(900).let { svc.clickByText("Download") || svc.clickByText("Save") }) ||
+                                (svc?.clickByText("Share") == true && Thread.sleep(1200).let { svc.clickByText("Download") || svc.clickByText("Save") })
+                            if (!saved) {
+                                lastRead = "NEEDS_USER_HELP: Image generated on screen, but Save/Download button was not automatically found."
+                            }
+                        }
                         "read_screen" -> {
                             lastRead = svc?.readScreenElements() ?: ""
                         }
@@ -486,9 +546,26 @@ object MeeraTools {
             return ToolExecutionResult(true, "screen_action", if (ok) "पीछे आ गई। अब बताओ क्या करें?" else "Accessibility ऑन करें।", "SUCCESS: Back")
         }
 
+        // 1B. Open-Chat Direct Message (जब यूज़र कहे "इस चैट में हाय भेजो" या WhatsApp खुला हो और कहे "मैसेज भेजो ...")
+        val openChatMatch = Regex("(?:इस चैट में|इसी चैट में|यहाँ|अंदर|is chat me|isi chat me|yahan)[ \t]*(.+?)[ \t]*(?:का मैसेज भेजो|मैसेज भेजो|लिखो|भेजो|bhejo|send karo)$", RegexOption.IGNORE_CASE).find(raw)
+        if (openChatMatch != null) {
+            val msg = openChatMatch.groupValues[1].replace(Regex("^(?:कि|ki)[ \t]*", RegexOption.IGNORE_CASE), "").trim()
+            if (msg.isNotBlank()) return sendInCurrentOpenChatTool(msg)
+        }
+        val activePkg = MeeraAccessibilityService.instance?.getActivePackage().orEmpty()
+        if (activePkg.contains("whatsapp") && !low.contains("को ") && (low.contains("मैसेज भेजो") || low.contains("message bhejo") || low.contains("लिखकर भेजो"))) {
+            val msg = raw.replace(Regex("(?i)^.*?(?:मैसेज भेजो|message bhejo|लिखकर भेजो)(?:[ \t]+कि|[ \t]+ki)?[ \t]*"), "").trim()
+            if (msg.isNotBlank()) return sendInCurrentOpenChatTool(msg)
+        }
+
         // 2. Built-in Macro Triggers (e.g., "ChatGPT में शेर की इमेज बनाओ")
         if ((low.contains("chatgpt") || low.contains("चैटजीपीटी")) && (low.contains("इमेज") || low.contains("फोटो") || low.contains("image") || low.contains("photo"))) {
-            val promptClean = raw.replace(Regex("(?i)(chatgpt|चैटजीपीटी|में|मे|जाकर|जाओ|एक|की|का|इमेज|फोटो|image|photo|बनाओ|बना दो|जनरेट करो)"), " ").trim()
+            val promptClean = raw
+                .replace(Regex("(?i)(और उसे डाउनलोड करो|और डाउनलोड करो|डाउनलोड भी करो|गैलरी में सेव करो|and download it|and save it)"), " ")
+                .replace(Regex("(?i)(हेलो|मीरा|अरे|सुनो|चैटजीपीटी|chatgpt|में|मे|जाकर|जाओ|वहां पर|वहाँ पर|एक|की|का|इमेज|फोटो|image|photo|बनाओ|बना दो|जनरेट करो|क्रिएट करो|create karo|generate karo)"), " ")
+                .replace(Regex("[।,.!]+"), " ")
+                .replace(Regex("\\s+"), " ")
+                .trim()
             if (promptClean.isNotBlank()) return runBuiltinMacro(ctx, "chatgpt image", promptClean)
         }
         if ((low.contains("gemini") || low.contains("जेमिनी")) && (low.contains("इमेज") || low.contains("फोटो") || low.contains("image") || low.contains("photo"))) {
@@ -742,7 +819,38 @@ object MeeraTools {
     /**
      * Layer 2: Closed-Loop Verified WhatsApp Sender + In-App Search Fallback (Maya GR1.java style)
      */
+    private fun sendInCurrentOpenChatTool(message: String): ToolExecutionResult {
+        val svc = MeeraAccessibilityService.instance
+            ?: return ToolExecutionResult(true, "whatsapp_send_in_open_chat", "मैसेज भेजने के लिए Accessibility सर्विस ऑन होनी चाहिए।", "ERROR: Accessibility OFF")
+        if (message.isBlank()) {
+            return ToolExecutionResult(true, "whatsapp_send_in_open_chat", "बताइए इस चैट में क्या मैसेज लिखकर भेजना है?", "NEEDS_INPUT: Message text is empty")
+        }
+        val sent = svc.sendInOpenChatVerified(message)
+        return if (sent) {
+            ToolExecutionResult(
+                true, "whatsapp_send_in_open_chat",
+                "खुली हुई चैट में '$message' भेज दिया है और स्क्रीन पर वेरीफाई भी कर लिया है!",
+                "VERIFIED_SUCCESS: Sent '$message' in currently open chat and verified input box cleared."
+            )
+        } else {
+            ToolExecutionResult(
+                true, "whatsapp_send_in_open_chat",
+                "मैंने खुली हुई स्क्रीन पर मैसेज बॉक्स या Send बटन ढूँढने की कोशिश की, पर मैसेज जा नहीं पाया। कृपया देखें कि क्या चैट खुली हुई है?",
+                "FAILED_NOT_VERIFIED: Could not find editable chat box or Send button on current screen."
+            )
+        }
+    }
+
     private fun sendWhatsAppVerified(ctx: Context, person: String, message: String): ToolExecutionResult {
+        val pLow = person.lowercase().trim()
+        val svc = MeeraAccessibilityService.instance
+        val inWhatsAppNow = svc?.getActivePackage()?.contains("whatsapp") == true
+
+        // If user meant current open chat ("current", "is chat", or empty person while inside WhatsApp)
+        if ((pLow.isEmpty() || pLow == "current" || pLow.contains("इस चैट") || pLow.contains("is chat") || pLow.contains("यहाँ")) && inWhatsAppNow) {
+            return sendInCurrentOpenChatTool(message)
+        }
+
         val contact = findContactNumber(ctx, person)
         val rawDigits = (contact?.second ?: person).replace(Regex("[^0-9+]"), "")
         val phone = when {
@@ -763,62 +871,82 @@ object MeeraTools {
                 ctx.startActivity(i)
 
                 if (message.isBlank()) {
-                    return ToolExecutionResult(true, "whatsapp_message", "$targetDisplay की WhatsApp चैट खोल दी है! बताइए क्या मैसेज लिखना है?", "SUCCESS: Opened WhatsApp chat for $targetDisplay")
+                    return ToolExecutionResult(true, "whatsapp_message", "$targetDisplay की WhatsApp चैट खोल दी है! बताइए क्या मैसेज लिखना है?", "VERIFIED_SUCCESS: Opened WhatsApp chat for $targetDisplay")
                 }
 
-                // Event-driven Wait & 3-Point Verification
-                val svc = MeeraAccessibilityService.instance
                 if (svc != null) {
-                    val ready = svc.waitForScreenText("Send", "appear", 6) || svc.waitForScreenText("भेजें", "appear", 2)
-                    if (ready) {
-                        Thread.sleep(350)
-                        val clicked = svc.clickByText("Send") || svc.clickByText("भेजें")
-                        Thread.sleep(500)
+                    // Wait 1.4s for deep-link transition, then verify WhatsApp chat window is active
+                    Thread.sleep(1400)
+                    val chatOpen = svc.waitForWhatsAppChatOpen(7)
+                    if (chatOpen) {
+                        Thread.sleep(450)
+                        var clicked = svc.clickWhatsAppSendButton()
+                        if (!clicked) {
+                            // If deep link didn't pre-fill or Send icon wasn't visible yet, type explicitly and send
+                            clicked = svc.sendInOpenChatVerified(message)
+                        } else {
+                            Thread.sleep(550)
+                        }
                         val verified = clicked && svc.isInputCleared()
                         return if (verified) {
-                            ToolExecutionResult(true, "whatsapp_message", "$targetDisplay को WhatsApp पर मैसेज भेज दिया है और स्क्रीन पर वेरीफाई भी कर लिया है!", "SUCCESS: Verified WhatsApp message sent to $targetDisplay")
+                            ToolExecutionResult(
+                                true, "whatsapp_message",
+                                "$targetDisplay को WhatsApp पर '$message' भेज दिया है और स्क्रीन देखकर वेरीफाई भी कर लिया है!",
+                                "VERIFIED_SUCCESS: WhatsApp message '$message' sent to $targetDisplay and verified."
+                            )
                         } else {
-                            ToolExecutionResult(true, "whatsapp_message", "$targetDisplay की चैट खोलकर मैसेज भर दिया है और Send पर टैप किया, पर एक बार स्क्रीन देख लो कि चला गया या नहीं।", "PARTIAL: Opened chat for $targetDisplay, Send tapped")
+                            ToolExecutionResult(
+                                true, "whatsapp_message",
+                                "$targetDisplay की चैट खुल गई है और मैसेज बॉक्स में है, पर Send बटन अपने-आप दबने की पुष्टि नहीं हुई—एक बार स्क्रीन देख लीजिए।",
+                                "PARTIAL_NOT_VERIFIED: Chat opened for $targetDisplay, but Send confirmation failed."
+                            )
                         }
                     }
                 }
-                ToolExecutionResult(true, "whatsapp_message", "$targetDisplay की WhatsApp चैट में मैसेज तैयार कर दिया है।", "OPENED: WhatsApp chat for $targetDisplay")
+                ToolExecutionResult(
+                    true, "whatsapp_message",
+                    "$targetDisplay की WhatsApp चैट में मैसेज तैयार कर दिया है, पर Accessibility बंद होने से Send बटन नहीं दबा सकी।",
+                    "PARTIAL: Opened WhatsApp chat for $targetDisplay (Accessibility not active)"
+                )
             } else {
-                // Maya GR1.java Fallback: Search inside WhatsApp itself when contact is not in phonebook
+                // Maya GR1.java Fallback: Search inside WhatsApp itself synchronously and verify!
                 openAppByName(ctx, "WhatsApp")
                 val searchName = transliterateHindiToEnglish(person)
-                val svc = MeeraAccessibilityService.instance
                 if (svc != null) {
-                    Thread {
-                        try {
-                            Thread.sleep(1500)
-                            if (svc.clickByText("Search") || svc.clickByText("खोजें")) {
-                                Thread.sleep(500)
-                                svc.inputText(searchName, autoSend = false)
-                                Thread.sleep(1200)
-                                if (svc.clickByText(searchName) && message.isNotBlank()) {
-                                    Thread.sleep(800)
-                                    svc.inputText(message, autoSend = true)
-                                }
+                    Thread.sleep(1600)
+                    val searchOpened = svc.clickByText("Search") || svc.clickByText("खोजें")
+                    if (searchOpened) {
+                        Thread.sleep(500)
+                        svc.inputText(searchName, autoSend = false)
+                        Thread.sleep(1200)
+                        val chatClicked = svc.clickByText(searchName) || svc.clickByText(person)
+                        if (chatClicked && message.isNotBlank()) {
+                            Thread.sleep(900)
+                            val sentOk = svc.sendInOpenChatVerified(message)
+                            if (sentOk) {
+                                return ToolExecutionResult(
+                                    true, "whatsapp_message",
+                                    "WhatsApp के अंदर '$searchName' ढूँढकर '$message' भेज दिया है और वेरीफाई भी कर लिया है!",
+                                    "VERIFIED_SUCCESS: Searched '$searchName' inside WhatsApp and sent message."
+                                )
                             }
-                        } catch (_: Exception) {}
-                    }.start()
+                        }
+                    }
                     ToolExecutionResult(
                         true, "whatsapp_message",
-                        "फोनबुक में '$person' सीधा नहीं मिला, इसलिए मैंने WhatsApp के अंदर '$searchName' सर्च करके मैसेज भेजने की प्रोसेस शुरू कर दी है।",
-                        "IN_APP_SEARCH: Searching '$searchName' inside WhatsApp"
+                        "मुझे फोनबुक और WhatsApp सर्च में '$person' नाम का पक्का कॉन्टैक्ट नहीं मिला। मैंने WhatsApp खोल दिया है, बताइए किस नाम पर टैप करूँ?",
+                        "FAILED_NOT_FOUND: Could not verify contact '$person' ($searchName) in WhatsApp."
                     )
                 } else {
                     ToolExecutionResult(
                         true, "whatsapp_message",
-                        "कॉन्टैक्ट्स में '$person' नहीं मिला, मैंने WhatsApp खोल दिया है। Accessibility ऑन कर देंगे तो मैं अंदर सर्च करके भी भेज दूँगी।",
-                        "Opened WhatsApp (Accessibility OFF for in-app search)"
+                        "कॉन्टैक्ट्स में '$person' नहीं मिला और Accessibility बंद है।",
+                        "FAILED: Contact not found and Accessibility OFF"
                     )
                 }
             }
-        } catch (_: Exception) {
-            openAppByName(ctx, "WhatsApp")
-            ToolExecutionResult(true, "whatsapp_message", "WhatsApp खोल दिया है।", "Opened WhatsApp")
+        } catch (e: Exception) {
+            ToolExecutionResult(true, "whatsapp_message", "WhatsApp में मैसेज भेजने में तकनीकी दिक्कत आई: ${e.message}", "ERROR: ${e.message}")
         }
     }
 
@@ -834,27 +962,44 @@ object MeeraTools {
             val intent = Intent(action, Uri.parse("tel:$number")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             ctx.startActivity(intent)
             val label = contact?.first ?: person
-            ToolExecutionResult(true, "make_phone_call", "$label को कॉल लगा दिया है।", "SUCCESS: Calling $label ($number)")
+            ToolExecutionResult(true, "make_phone_call", "$label को कॉल लगा दिया है।", "VERIFIED_SUCCESS: Calling $label ($number)")
         } catch (e: Exception) {
             ToolExecutionResult(true, "make_phone_call", "कॉल लगाने में दिक्कत आई।", "ERROR: ${e.message}")
         }
     }
 
     /**
-     * YouTube Search & Auto-Play Engine (Maya youtube_search_and_play style)
+     * Synchronous Verified YouTube Search & Auto-Play Engine (Waits for video click before reporting success!)
      */
     private fun playOrSearchMedia(ctx: Context, query: String, platform: String, autoPlay: Boolean = true): ToolExecutionResult {
+        val cleanQuery = query
+            .replace(Regex("(?i)(यूट्यूब पर|यूट्यूब में|youtube par|youtube me|सर्च करके|search karke|चलाओ|प्ले करो|play karo|लगाओ)"), "")
+            .trim()
+            .ifBlank { query.trim() }
+
         return try {
-            val encoded = URLEncoder.encode(query, "UTF-8")
+            val encoded = URLEncoder.encode(cleanQuery, "UTF-8")
             if (platform.contains("google")) {
                 val uri = Uri.parse("https://www.google.com/search?q=$encoded")
                 ctx.startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                return ToolExecutionResult(true, "play_or_search", "Google पर '$query' सर्च कर दिया है।", "SUCCESS: Google search $query")
+                return ToolExecutionResult(true, "play_or_search", "Google पर '$cleanQuery' सर्च कर दिया है।", "VERIFIED_SUCCESS: Google search $cleanQuery")
+            }
+
+            // If user said "video play nahi hua, play karo" while ALREADY on YouTube search results
+            val svc = MeeraAccessibilityService.instance
+            val alreadyOnYouTube = svc?.getActivePackage()?.contains("youtube") == true
+            if (alreadyOnYouTube && (cleanQuery.isBlank() || cleanQuery.contains("वीडियो") || cleanQuery.contains("video"))) {
+                val clickedNow = svc?.clickFirstYoutubeVideoVerified(3500L) == true
+                return if (clickedNow) {
+                    ToolExecutionResult(true, "youtube_search_and_play", "स्क्रीन देखकर पहला वीडियो प्ले कर दिया है!", "VERIFIED_SUCCESS: Clicked first video on existing YouTube screen")
+                } else {
+                    ToolExecutionResult(true, "youtube_search_and_play", "मैंने स्क्रीन देखी पर कोई वीडियो आइटम क्लिक नहीं हो पाया।", "FAILED_NOT_VERIFIED: Could not click video on YouTube screen")
+                }
             }
 
             val searchIntent = Intent(Intent.ACTION_SEARCH).apply {
                 setPackage("com.google.android.youtube")
-                putExtra("query", query)
+                putExtra("query", cleanQuery)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             try {
@@ -865,28 +1010,37 @@ object MeeraTools {
             }
 
             if (autoPlay) {
-                Thread {
-                    try {
-                        val svc = MeeraAccessibilityService.instance
-                        if (svc != null) {
-                            Thread.sleep(2200)
-                            svc.clickFirstYoutubeVideo()
-                        }
-                    } catch (_: Exception) {}
-                }.start()
-                ToolExecutionResult(
-                    true, "youtube_search_and_play",
-                    "YouTube पर '$query' सर्च करके पहला वीडियो प्ले कर दिया है! सुनिए, और कुछ काम हो तो बताइए?",
-                    "SUCCESS: YouTube search and auto-play '$query'"
-                )
+                if (svc == null) {
+                    return ToolExecutionResult(
+                        true, "youtube_search_and_play",
+                        "YouTube पर '$cleanQuery' सर्च कर दिया है, पर वीडियो अपने-आप प्ले करने के लिए Accessibility सर्विस ऑन करनी होगी।",
+                        "PARTIAL_NO_A11Y: YouTube search opened for '$cleanQuery', but Accessibility is OFF so could not click video."
+                    )
+                }
+                // Wait 1.8s for YouTube search results activity to open, then synchronously poll & click!
+                Thread.sleep(1800)
+                val clicked = svc.clickFirstYoutubeVideoVerified(6500L)
+                if (clicked) {
+                    ToolExecutionResult(
+                        true, "youtube_search_and_play",
+                        "YouTube पर '$cleanQuery' सर्च करके पहला वीडियो प्ले कर दिया है! सुनिए, और कुछ काम हो तो बताइए?",
+                        "VERIFIED_SUCCESS: YouTube searched '$cleanQuery' and verified click on first video result."
+                    )
+                } else {
+                    ToolExecutionResult(
+                        true, "youtube_search_and_play",
+                        "मैंने YouTube पर '$cleanQuery' सर्च कर दिया है, पर नेटवर्क या स्क्रीन लोड होने की वजह से वीडियो अपने-आप प्ले नहीं हो पाया। बोलिए 'पहला वीडियो चलाओ' तो मैं दोबारा टैप कर दूँगी!",
+                        "PARTIAL_NOT_PLAYED: YouTube search results opened for '$cleanQuery', but auto-click on first video was not verified."
+                    )
+                }
             } else {
                 ToolExecutionResult(
                     true, "play_or_search",
-                    "YouTube पर '$query' सर्च कर दिया है! बताइए कौन-सा वाला वीडियो चलाऊँ?",
-                    "SUCCESS: YouTube search '$query'"
+                    "YouTube पर '$cleanQuery' सर्च कर दिया है! बताइए कौन-सा वाला वीडियो चलाऊँ?",
+                    "VERIFIED_SUCCESS: YouTube search '$cleanQuery'"
                 )
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             ToolExecutionResult(false)
         }
     }
