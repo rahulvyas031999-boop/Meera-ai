@@ -520,11 +520,64 @@ fun VisionTabContent(vm: VoiceViewModel) {
     var screenDump by remember { mutableStateOf("") }
     val a11yOn = MeeraAccessibilityService.instance != null
 
-    Column(
-        Modifier.fillMaxSize().padding(18.dp).verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Text("👁️ Meera Vision & Screen Inspector", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
+    var showInspector by remember { mutableStateOf(false) }
+    Box(Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 4.dp)) {
+        
+        // Bottom-left Floating Pill to toggle Screen Inspector without blocking full-screen camera
+        Row(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 14.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                color = Color(0xCC090D18),
+                shape = RoundedCornerShape(20.dp),
+                modifier = Modifier.border(1.dp, AccentCyan.copy(alpha = 0.6f), RoundedCornerShape(20.dp))
+            ) {
+                Text(
+                    "● LIVE FULL-SCREEN VISION",
+                    color = AccentCyan,
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+                )
+            }
+
+            Surface(
+                color = if (showInspector) AccentBlue else Color(0xCC16203A),
+                shape = RoundedCornerShape(20.dp),
+                modifier = Modifier
+                    .border(1.dp, CardBorder, RoundedCornerShape(20.dp))
+                    .clickable { showInspector = !showInspector }
+            ) {
+                Text(
+                    if (showInspector) "✕ कैमरा देखें" else "🔍 स्क्रीन टूल्स",
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
+                )
+            }
+        }
+
+        if (showInspector) {
+            Surface(
+                color = Color(0xEE090D18),
+                shape = RoundedCornerShape(22.dp),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(bottom = 60.dp, start = 8.dp, end = 8.dp)
+                    .border(1.dp, CardBorder, RoundedCornerShape(22.dp))
+            ) {
+                Column(
+                    Modifier.padding(16.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text("👁️ Meera Vision & Screen Inspector", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
         Text(
             "यहाँ से Meera आपकी चालू स्क्रीन या किसी भी ऐप के टेक्स्ट को पढ़कर समझा सकती है और उस पर एक्शन ले सकती है।",
             color = Muted, fontSize = 13.sp
@@ -575,8 +628,11 @@ fun VisionTabContent(vm: VoiceViewModel) {
             }
         }
     }
-}
 
+                }
+            }
+        }
+    }
 @Composable
 private fun YaadeinTabContent(vm: VoiceViewModel) {
     val ctx = LocalContext.current
