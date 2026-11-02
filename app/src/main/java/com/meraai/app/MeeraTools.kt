@@ -619,7 +619,7 @@ object MeeraTools {
             'प' to "p", 'फ' to "ph", 'ब' to "b", 'भ' to "bh", 'म' to "m",
             'य' to "y", 'र' to "r", 'ल' to "l", 'व' to "v",
             'श' to "sh", 'ष' to "sh", 'स' to "s", 'ह' to "h",
-            'क्ष' to "x", 'त्र' to "tr", 'ज्ञ' to "gy"
+            'ॐ' to "om"
         )
         val sb = StringBuilder()
         var i = 0
@@ -889,5 +889,10 @@ object MeeraTools {
         } catch (_: Exception) {
             ToolExecutionResult(false)
         }
+    }
+
+    fun looksLikeCommand(text: String): Boolean {
+        val low = text.lowercase()
+        return CMD_HINTS.any { low.contains(it) }
     }
 }
