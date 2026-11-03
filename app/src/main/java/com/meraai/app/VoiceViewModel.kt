@@ -480,7 +480,10 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
                 appendChatLog("user", finishedUserText)
                 autoLearnFromUser(finishedUserText)
                 // अगर मॉडल ने टूल कॉल किए बिना बोला हो लेकिन यूज़र ने ऐप खोलने कहा हो, तो बैकअप के तौर पर चलाएँ
-                if (!toolCalledThisTurn && finishedUserText.length < 45 && !finishedUserText.lowercase().contains("chatgpt")) MeeraTools.tryDirectVoiceCommand(appCtx, finishedUserText)
+                if (!toolCalledThisTurn && finishedUserText.length < 45 && !finishedUserText.lowercase().contains("chatgpt")) {
+                    val cmdText = finishedUserText
+                    viewModelScope.launch(Dispatchers.IO) { MeeraTools.tryDirectVoiceCommand(appCtx, cmdText) }
+                }
             }
             if (finishedAiText.isNotBlank()) appendChatLog("model", finishedAiText)
             toolCalledThisTurn = false
