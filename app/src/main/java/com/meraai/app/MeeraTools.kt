@@ -364,7 +364,22 @@ object MeeraTools {
         return JSONArray().put(JSONObject().put("functionDeclarations", funcs))
     }
 
+    /** Koi bhi tool fail ho to app crash na kare, bas Meera bol de */
     fun executeFunctionCall(ctx: Context, name: String, args: JSONObject): ToolExecutionResult {
+        return try {
+            executeFunctionCallInner(ctx, name, args)
+        } catch (e: Exception) {
+            val m = e.message ?: e.javaClass.simpleName
+            val busy = m.contains("503") || m.contains("429") || m.contains("UNAVAILABLE")
+            ToolExecutionResult(
+                true, name,
+                if (busy) "अभी Google का AI सर्वर व्यस्त है, कुछ सेकंड बाद दोबारा कहो।" else "यह काम करते समय दिक्कत आई, फिर से कोशिश करो।",
+                "ERROR: ${m.take(200)}"
+            )
+        }
+    }
+
+    private fun executeFunctionCallInner(ctx: Context, name: String, args: JSONObject): ToolExecutionResult {
         return when (name) {
             "open_meera_dashboard" -> {
                 val intent = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName)
