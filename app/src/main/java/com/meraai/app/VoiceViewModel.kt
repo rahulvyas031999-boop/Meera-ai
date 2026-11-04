@@ -252,23 +252,40 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
     private suspend fun routeViaLlm(text: String): ToolExecutionResult {
         if (!MeeraTools.looksLikeCommand(text)) return ToolExecutionResult(false)
         val svc = MeeraAccessibilityService.instance
-        val screen = try { svc?.readScreenElements(40) ?: "" } catch (_: Exception) { "" }
-        val out = try {
-            rest.toolLoop(text, screen, MeeraTools.getGeminiToolsJson()) { name, args ->
-                MeeraTools.executeFunctionCall(appCtx, name, args)
+        val currentScreen = svc?.readScreenText(10) ?: "Unknown"
+        val plan = rest.generatePlan(text, currentScreen)
+        if (plan.isEmpty()) return ToolExecutionResult(false)
+        
+        var stepCount = 0
+        var finalSpokenReply = ""
+        var executedCount = 0
+        var failed = false
+        val maxSteps = 8
+        
+        while (stepCount < plan.size && stepCount < maxSteps) {
+            val step = plan[stepCount]
+            stepCount++
+            val r = rest.routeCommand(step) ?: continue
+            if (r.first == "none" || r.first.isBlank()) continue
+            
+            val res = MeeraTools.executeFunctionCall(appCtx, r.first, r.second)
+            executedCount++
+            finalSpokenReply += res.spokenReply + " "
+            
+            if (res.rawDataForAi.startsWith("FAILED") || res.rawDataForAi.startsWith("NEEDS_USER_HELP") || res.rawDataForAi.startsWith("PARTIAL") || res.rawDataForAi.startsWith("ERROR") || res.rawDataForAi.startsWith("TIMEOUT")) {
+                finalSpokenReply = "Boss, step ${stepCount} par dikkat aayi: ${res.spokenReply}"
+                failed = true
+                break
             }
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            MeeraDebugLog.log("TOOLLOOP", "loop crash: ${e.message}")
-            null
+            if (r.first == "tap_element" || r.first == "screen_action" || r.first == "tap_text") {
+                svc?.waitForScreenSettle(1200L)
+            } else {
+                kotlinx.coroutines.delay(1000)
+            }
         }
-        if (out == null || out.toolsRun == 0) return ToolExecutionResult(false)
-        return if (out.failed) {
-            ToolExecutionResult(true, "ToolLoop", out.text, "FAILED: ${out.text}")
-        } else {
-            ToolExecutionResult(true, "ToolLoop", out.text, "SUCCESS: completed with ${out.toolsRun} tool call(s)")
-        }
+        if (executedCount == 0) return ToolExecutionResult(true, "AgentLoop", "मैं यह काम नहीं कर पाई, एक बार फिर से बोलिए।", "FAILED: no step could be executed")
+        if (failed) return ToolExecutionResult(true, "AgentLoop", finalSpokenReply.trim(), "FAILED: step $stepCount failed")
+        return ToolExecutionResult(true, "AgentLoop", finalSpokenReply.trim(), "SUCCESS: Completed $executedCount of ${plan.size} steps.")
     }
 
     fun sendCameraFrame(jpeg: ByteArray) {
