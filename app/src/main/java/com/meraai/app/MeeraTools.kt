@@ -364,7 +364,45 @@ object MeeraTools {
         return JSONArray().put(JSONObject().put("functionDeclarations", funcs))
     }
 
+    private val SCREEN_AFTER_TOOLS = setOf(
+        "open_app", "tap_element", "screen_action", "tap_coordinates",
+        "play_or_search", "youtube_search_and_play",
+        "whatsapp_message", "whatsapp_send_in_open_chat"
+    )
+
+    /** Action ke baad nayi screen padhkar result me jodo, taaki model agla step dekh kar chun sake */
+    private fun withScreenState(name: String, res: ToolExecutionResult): ToolExecutionResult {
+        if (name !in SCREEN_AFTER_TOOLS || !res.executed) return res
+        val svc = MeeraAccessibilityService.instance ?: return res
+        return try {
+            if (name == "open_app" || name == "play_or_search" || name == "youtube_search_and_play") Thread.sleep(1500)
+            svc.waitForScreenSettle(1500L)
+            val screen = svc.readScreenElements(50)   // ye last me, taaki #id wahi rahein jo model ko dikhe
+            if (screen.isBlank()) res
+            else res.copy(
+                rawDataForAi = res.rawDataForAi +
+                    "\nNEW SCREEN AFTER ACTION:\n" + screen +
+                    "\nIf the user's overall task is NOT finished yet, immediately call the next tool (prefer tap_element with the #id). Do not ask the user what to do next."
+            )
+        } catch (_: Exception) { res }
+    }
+
+    /** Koi bhi tool fail ho to app crash na kare, bas Meera bol de */
     fun executeFunctionCall(ctx: Context, name: String, args: JSONObject): ToolExecutionResult {
+        return try {
+            withScreenState(name, executeFunctionCallInner(ctx, name, args))
+        } catch (e: Exception) {
+            val m = e.message ?: e.javaClass.simpleName
+            val busy = m.contains("503") || m.contains("429") || m.contains("UNAVAILABLE")
+            ToolExecutionResult(
+                true, name,
+                if (busy) "अभी Google का AI सर्वर व्यस्त है, कुछ सेकंड बाद दोबारा कहो।" else "यह काम करते समय दिक्कत आई, फिर से कोशिश करो।",
+                "ERROR: ${m.take(200)}"
+            )
+        }
+    }
+
+    private fun executeFunctionCallInner(ctx: Context, name: String, args: JSONObject): ToolExecutionResult {
         return when (name) {
             "open_meera_dashboard" -> {
                 val intent = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName)
@@ -571,7 +609,7 @@ object MeeraTools {
 
     /** Direct Voice Router with Strict Scroll Guard & Smart Intent Separation */
     fun tryDirectVoiceCommand(ctx: Context, userText: String): ToolExecutionResult {
-        val raw = userText.trim()
+        val raw = userText.trim().trimEnd('।', '.', '!', '?', ',', ' ')
         val low = raw.lowercase()
 
         // 1. Strict Scroll Guard: ONLY scroll when user explicitly says scroll / नीचे स्क्रॉल / ऊपर स्क्रॉल
@@ -679,6 +717,28 @@ object MeeraTools {
     }
 
     fun openAppByName(ctx: Context, rawName: String): Boolean {
+        MeeraDebugLog.log("OPEN_APP", "request='$rawName'")
+        val ok = try {
+            openAppByNameInner(ctx, rawName)
+        } catch (e: Exception) {
+            MeeraDebugLog.log("OPEN_APP", "EXCEPTION ${e.javaClass.simpleName}: ${e.message}")
+            false
+        }
+        MeeraDebugLog.log("OPEN_APP", "startActivity returned=$ok")
+        val appCtx = ctx.applicationContext
+        Thread {
+            try {
+                Thread.sleep(2500)
+                val svc = MeeraAccessibilityService.instance
+                val pkg = if (svc == null) "(Accessibility OFF)" else svc.getActivePackage()
+                MeeraDebugLog.log("OPEN_APP", "2.5s baad ASLI foreground app=$pkg")
+                MeeraDebugLog.copyNow(appCtx)
+            } catch (_: Exception) {}
+        }.start()
+        return ok
+    }
+
+    private fun openAppByNameInner(ctx: Context, rawName: String): Boolean {
         val clean = rawName.lowercase().replace("ऐप", "").replace("app", "").trim()
         if (clean.isBlank()) return false
         if (clean == "settings" || clean == "सेटिंग" || clean == "सेटिंग्स") {

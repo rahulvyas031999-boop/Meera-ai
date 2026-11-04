@@ -258,6 +258,8 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
         
         var stepCount = 0
         var finalSpokenReply = ""
+        var executedCount = 0
+        var failed = false
         val maxSteps = 8
         
         while (stepCount < plan.size && stepCount < maxSteps) {
@@ -267,10 +269,12 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
             if (r.first == "none" || r.first.isBlank()) continue
             
             val res = MeeraTools.executeFunctionCall(appCtx, r.first, r.second)
+            executedCount++
             finalSpokenReply += res.spokenReply + " "
             
-            if (res.rawDataForAi.startsWith("FAILED") || res.rawDataForAi.startsWith("NEEDS_USER_HELP") || res.rawDataForAi.startsWith("PARTIAL")) {
+            if (res.rawDataForAi.startsWith("FAILED") || res.rawDataForAi.startsWith("NEEDS_USER_HELP") || res.rawDataForAi.startsWith("PARTIAL") || res.rawDataForAi.startsWith("ERROR") || res.rawDataForAi.startsWith("TIMEOUT")) {
                 finalSpokenReply = "Boss, step ${stepCount} par dikkat aayi: ${res.spokenReply}"
+                failed = true
                 break
             }
             if (r.first == "tap_element" || r.first == "screen_action" || r.first == "tap_text") {
@@ -279,7 +283,9 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
                 kotlinx.coroutines.delay(1000)
             }
         }
-        return ToolExecutionResult(true, "AgentLoop", finalSpokenReply.trim(), "VERIFIED_SUCCESS: Completed $stepCount steps.")
+        if (executedCount == 0) return ToolExecutionResult(true, "AgentLoop", "मैं यह काम नहीं कर पाई, एक बार फिर से बोलिए।", "FAILED: no step could be executed")
+        if (failed) return ToolExecutionResult(true, "AgentLoop", finalSpokenReply.trim(), "FAILED: step $stepCount failed")
+        return ToolExecutionResult(true, "AgentLoop", finalSpokenReply.trim(), "SUCCESS: Completed $executedCount of ${plan.size} steps.")
     }
 
     fun sendCameraFrame(jpeg: ByteArray) {
@@ -458,7 +464,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
         override fun onToolCall(id: String, name: String, args: JSONObject) {
             toolCalledThisTurn = true
             viewModelScope.launch(Dispatchers.IO) {
-                val res = MeeraTools.executeFunctionCall(appCtx, name, args)
+                val res = MeeraTools.executeFunctionCall(appCtx, name, args).also { MeeraDebugLog.log("LIVE_TOOL", "$name args=$args -> ${it.rawDataForAi.take(100)}") }
                 _ui.update { it.copy(lastToolStatus = "⚡ $name") }
                 live?.sendToolResponse(id, name, res.rawDataForAi.ifBlank { res.spokenReply })
             }
@@ -480,7 +486,10 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
                 appendChatLog("user", finishedUserText)
                 autoLearnFromUser(finishedUserText)
                 // अगर मॉडल ने टूल कॉल किए बिना बोला हो लेकिन यूज़र ने ऐप खोलने कहा हो, तो बैकअप के तौर पर चलाएँ
-                if (!toolCalledThisTurn && finishedUserText.length < 45 && !finishedUserText.lowercase().contains("chatgpt")) MeeraTools.tryDirectVoiceCommand(appCtx, finishedUserText)
+                if (!toolCalledThisTurn && finishedUserText.length < 45 && !finishedUserText.lowercase().contains("chatgpt")) {
+                    val cmdText = finishedUserText
+                    viewModelScope.launch(Dispatchers.IO) { MeeraTools.tryDirectVoiceCommand(appCtx, cmdText) }
+                }
             }
             if (finishedAiText.isNotBlank()) appendChatLog("model", finishedAiText)
             toolCalledThisTurn = false
@@ -538,7 +547,11 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
                 autoLearnFromUser(text)
 
                 // Modular डायरेक्ट कमांड चेक (जैसे "WhatsApp खोलो", "स्क्रीन पढ़ो")
-                val toolRes = MeeraTools.tryDirectVoiceCommand(appCtx, text).let { if (it.executed) it else routeViaLlm(text) }
+                MeeraDebugLog.log("MODULAR", "heard='$text'")
+                val directRes = MeeraTools.tryDirectVoiceCommand(appCtx, text)
+                MeeraDebugLog.log("DIRECT", "executed=${directRes.executed} tool=${directRes.toolName} raw=${directRes.rawDataForAi.take(90)}")
+                val toolRes = if (directRes.executed) directRes else routeViaLlm(text)
+                if (!directRes.executed) MeeraDebugLog.log("LLM_ROUTE", "executed=${toolRes.executed} tool=${toolRes.toolName} raw=${toolRes.rawDataForAi.take(90)}")
                 if (toolRes.executed && toolRes.spokenReply.isNotBlank() && (toolRes.rawDataForAi.startsWith("VERIFIED_SUCCESS:") || toolRes.rawDataForAi.startsWith("SUCCESS:"))) {
                     _ui.update { it.copy(ai = toolRes.spokenReply, lastToolStatus = "⚡ ${toolRes.toolName}") }
                     appendChatLog("model", toolRes.spokenReply)

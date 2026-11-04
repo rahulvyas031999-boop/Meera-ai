@@ -18,6 +18,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        MeeraCrashLog.install(this)
         setContent {
             MeraTheme { MeraApp(vm, onMic = ::onMic) }
         }
