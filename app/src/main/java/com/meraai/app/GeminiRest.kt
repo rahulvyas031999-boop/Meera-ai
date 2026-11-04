@@ -20,6 +20,8 @@ import java.io.IOException
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
+data class ToolLoopOutcome(val text: String, val toolsRun: Int, val failed: Boolean)
+
 class GeminiRest(private val http: OkHttpClient, private val key: () -> String) {
     private val base = "https://generativelanguage.googleapis.com/v1beta/models"
     private val jsonType = "application/json".toMediaType()
@@ -220,6 +222,105 @@ class GeminiRest(private val http: OkHttpClient, private val key: () -> String) 
             }
             found
         }
+    }
+
+    // ---------- Modular मोड: असली function-calling loop (Live जैसा) ----------
+    private fun isPaymentAction(name: String, args: JSONObject): Boolean {
+        if (name != "tap_text" && name != "screen_action") return false
+        val low = args.toString().lowercase()
+        return low.contains("send money") || low.contains("confirm payment") ||
+            low.contains("proceed to pay") || Regex("\\bpay\\b").containsMatchIn(low)
+    }
+
+    suspend fun toolLoop(
+        userText: String,
+        screen: String,
+        tools: JSONArray,
+        exec: suspend (String, JSONObject) -> ToolExecutionResult,
+    ): ToolLoopOutcome? = withContext<ToolLoopOutcome?>(Dispatchers.IO) {
+        val sys = """You are the phone-control brain of an Android voice assistant named Meera. The user speaks Hindi, Hinglish or English. Do the task by calling the provided tools. After each tool you get its result, and after screen actions also the NEW SCREEN list with #ids. Use it to choose the next tool; prefer tap_element with the #id. Keep calling tools until the WHOLE task is done. Never stop to ask what to do next between steps. If the message is only conversation or a question and needs no phone action, call no tool and reply with the single word NONE. Never tap Pay, Send money or Confirm payment; ask the user instead. When the task is finished, reply with ONE short spoken sentence in the user's language, no markdown. If a tool fails twice, stop and say what failed."""
+        val first = if (screen.isBlank()) userText else userText + "\n\n[CURRENT SCREEN - may be the assistant's own app]\n" + screen
+        val contents = JSONArray()
+        contents.put(JSONObject().put("role", "user").put("parts", JSONArray().put(JSONObject().put("text", first))))
+        val models = Cfg.CHAT_MODELS.filter { !it.contains("thinking") }.take(2)
+        var mi = 0
+        var lowOk = true
+        var toolsRun = 0
+        var failed = false
+        var done = false
+        var lastSig = ""
+        var repeats = 0
+        var finalText = ""
+        val t0 = System.currentTimeMillis()
+        var round = 0
+        while (round < 8) {
+            round++
+            if (System.currentTimeMillis() - t0 > 60000L) break
+            var resp: JSONObject? = null
+            while (mi < models.size && resp == null) {
+                val m = models[mi]
+                val useLow = lowOk && (m.contains("3.8") || m.contains("3.7") || m.contains("3.6"))
+                val body = JSONObject()
+                    .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", sys))))
+                    .put("contents", contents)
+                    .put("tools", tools)
+                if (useLow) body.put("generationConfig", JSONObject().put("thinkingConfig", JSONObject().put("thinkingLevel", "LOW")))
+                try {
+                    val r = http.newCall(request(m, "generateContent", body)).await().okOrThrow()
+                    resp = r.use { JSONObject(it.body!!.string()) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    val msg = e.message ?: ""
+                    MeeraDebugLog.log("TOOLLOOP", "model=$m low=$useLow err=${msg.take(160)}")
+                    if (msg.contains("503") || msg.contains("429") || msg.contains("UNAVAILABLE")) kotlinx.coroutines.delay(900)
+                    if (useLow) lowOk = false else mi++
+                }
+            }
+            val j = resp ?: break
+            val content = j.optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content")
+            val parts = content?.optJSONArray("parts")
+            if (content == null || parts == null) break
+            val calls = ArrayList<Pair<String, JSONObject>>()
+            val sb = StringBuilder()
+            for (i in 0 until parts.length()) {
+                val p = parts.optJSONObject(i) ?: continue
+                val fc = p.optJSONObject("functionCall")
+                if (fc != null) {
+                    calls.add(Pair(fc.optString("name"), fc.optJSONObject("args") ?: JSONObject()))
+                } else if (!p.optBoolean("thought", false)) {
+                    sb.append(p.optString("text", ""))
+                }
+            }
+            if (calls.isEmpty()) {
+                finalText = sb.toString().trim()
+                done = true
+                break
+            }
+            contents.put(content)
+            val respParts = JSONArray()
+            for ((name, args) in calls) {
+                val sig = name + args.toString()
+                if (sig == lastSig) repeats++ else { repeats = 0; lastSig = sig }
+                val result: String = if (repeats >= 2) {
+                    failed = true
+                    "BLOCKED: this same action was repeated. Stop and tell the user what is stuck."
+                } else if (isPaymentAction(name, args)) {
+                    "BLOCKED: payment buttons need the user's own confirmation. Ask the user."
+                } else {
+                    val res = exec(name, args)
+                    toolsRun++
+                    MeeraDebugLog.log("TOOLLOOP", "$name args=$args -> ${res.rawDataForAi.take(100)}")
+                    res.rawDataForAi.ifBlank { res.spokenReply }.take(6000)
+                }
+                respParts.put(JSONObject().put("functionResponse", JSONObject().put("name", name).put("response", JSONObject().put("result", result))))
+            }
+            contents.put(JSONObject().put("role", "user").put("parts", respParts))
+        }
+        if (toolsRun == 0) return@withContext null
+        if (!done) failed = true
+        val text = finalText.ifBlank { if (failed) "यह काम पूरा नहीं हो पाया, एक बार फिर बोलिए।" else "हो गया।" }
+        ToolLoopOutcome(text, toolsRun, failed)
     }
 
     // ---------- 2.8 Task Planner ----------
