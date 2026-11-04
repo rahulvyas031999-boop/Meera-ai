@@ -34,10 +34,10 @@ class GeminiRest(private val http: OkHttpClient, private val key: () -> String) 
     }
 
     private suspend fun Call.await(): Response = suspendCancellableCoroutine { c ->
-        c.invokeOnCancellation { cancel() }
+        val HTTP_T = System.currentTimeMillis(); c.invokeOnCancellation { cancel() }
         enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) { if (c.isActive) c.resumeWithException(e) }
-            override fun onResponse(call: Call, response: Response) { c.resume(response) }
+            override fun onFailure(call: Call, e: IOException) { MeeraDebugLog.log("HTTP", "${call.request().url.encodedPath.substringAfter("/models/")} FAIL ${System.currentTimeMillis() - HTTP_T}ms ${e.javaClass.simpleName}"); if (c.isActive) c.resumeWithException(e) }
+            override fun onResponse(call: Call, response: Response) { MeeraDebugLog.log("HTTP", "${call.request().url.encodedPath.substringAfter("/models/")} code=${response.code} ${System.currentTimeMillis() - HTTP_T}ms"); c.resume(response) }
         })
     }
 
