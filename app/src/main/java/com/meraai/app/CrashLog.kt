@@ -11,6 +11,7 @@ import java.io.File
 object MeeraCrashLog {
     fun install(ctx: Context) {
         val app = ctx.applicationContext
+        try { MeeraDebugLog.hook(app as android.app.Application) } catch (_: Throwable) {}
         val f = File(app.filesDir, "last_crash.txt")
         try {
             if (f.exists()) {

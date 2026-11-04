@@ -717,6 +717,28 @@ object MeeraTools {
     }
 
     fun openAppByName(ctx: Context, rawName: String): Boolean {
+        MeeraDebugLog.log("OPEN_APP", "request='$rawName'")
+        val ok = try {
+            openAppByNameInner(ctx, rawName)
+        } catch (e: Exception) {
+            MeeraDebugLog.log("OPEN_APP", "EXCEPTION ${e.javaClass.simpleName}: ${e.message}")
+            false
+        }
+        MeeraDebugLog.log("OPEN_APP", "startActivity returned=$ok")
+        val appCtx = ctx.applicationContext
+        Thread {
+            try {
+                Thread.sleep(2500)
+                val svc = MeeraAccessibilityService.instance
+                val pkg = if (svc == null) "(Accessibility OFF)" else svc.getActivePackage()
+                MeeraDebugLog.log("OPEN_APP", "2.5s baad ASLI foreground app=$pkg")
+                MeeraDebugLog.copyNow(appCtx)
+            } catch (_: Exception) {}
+        }.start()
+        return ok
+    }
+
+    private fun openAppByNameInner(ctx: Context, rawName: String): Boolean {
         val clean = rawName.lowercase().replace("ऐप", "").replace("app", "").trim()
         if (clean.isBlank()) return false
         if (clean == "settings" || clean == "सेटिंग" || clean == "सेटिंग्स") {
