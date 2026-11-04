@@ -609,7 +609,7 @@ object MeeraTools {
 
     /** Direct Voice Router with Strict Scroll Guard & Smart Intent Separation */
     fun tryDirectVoiceCommand(ctx: Context, userText: String): ToolExecutionResult {
-        val raw = userText.trim()
+        val raw = userText.trim().trimEnd('।', '.', '!', '?', ',', ' ')
         val low = raw.lowercase()
 
         // 1. Strict Scroll Guard: ONLY scroll when user explicitly says scroll / नीचे स्क्रॉल / ऊपर स्क्रॉल

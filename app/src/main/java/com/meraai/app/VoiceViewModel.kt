@@ -258,6 +258,8 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
         
         var stepCount = 0
         var finalSpokenReply = ""
+        var executedCount = 0
+        var failed = false
         val maxSteps = 8
         
         while (stepCount < plan.size && stepCount < maxSteps) {
@@ -267,10 +269,12 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
             if (r.first == "none" || r.first.isBlank()) continue
             
             val res = MeeraTools.executeFunctionCall(appCtx, r.first, r.second)
+            executedCount++
             finalSpokenReply += res.spokenReply + " "
             
-            if (res.rawDataForAi.startsWith("FAILED") || res.rawDataForAi.startsWith("NEEDS_USER_HELP") || res.rawDataForAi.startsWith("PARTIAL")) {
+            if (res.rawDataForAi.startsWith("FAILED") || res.rawDataForAi.startsWith("NEEDS_USER_HELP") || res.rawDataForAi.startsWith("PARTIAL") || res.rawDataForAi.startsWith("ERROR") || res.rawDataForAi.startsWith("TIMEOUT")) {
                 finalSpokenReply = "Boss, step ${stepCount} par dikkat aayi: ${res.spokenReply}"
+                failed = true
                 break
             }
             if (r.first == "tap_element" || r.first == "screen_action" || r.first == "tap_text") {
@@ -279,7 +283,9 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
                 kotlinx.coroutines.delay(1000)
             }
         }
-        return ToolExecutionResult(true, "AgentLoop", finalSpokenReply.trim(), "VERIFIED_SUCCESS: Completed $stepCount steps.")
+        if (executedCount == 0) return ToolExecutionResult(true, "AgentLoop", "मैं यह काम नहीं कर पाई, एक बार फिर से बोलिए।", "FAILED: no step could be executed")
+        if (failed) return ToolExecutionResult(true, "AgentLoop", finalSpokenReply.trim(), "FAILED: step $stepCount failed")
+        return ToolExecutionResult(true, "AgentLoop", finalSpokenReply.trim(), "SUCCESS: Completed $executedCount of ${plan.size} steps.")
     }
 
     fun sendCameraFrame(jpeg: ByteArray) {
