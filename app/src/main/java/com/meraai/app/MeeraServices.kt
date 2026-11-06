@@ -38,6 +38,7 @@ class MeeraNotificationService : NotificationListenerService() {
         val recentNotifs = CopyOnWriteArrayList<NotifItem>()
         private val replyActions = java.util.concurrent.ConcurrentHashMap<String, NotifReplyAction>()
         @Volatile var lastAnnouncedTime = 0L
+        @Volatile var lastNotifIsGroup = false
         @Volatile private var lastNotifKey = ""
         @Volatile private var lastSelfReplyText = ""
         @Volatile var onIncomingMessage: ((String, String, String) -> Unit)? = null
@@ -61,7 +62,7 @@ class MeeraNotificationService : NotificationListenerService() {
             } else {
                 replyActions.entries.firstOrNull { (k, v) ->
                     k != "latest" && (k.contains(q) || q.contains(k) || v.title.lowercase().contains(q))
-                }?.value ?: replyActions["latest"]
+                }?.value
             } ?: return false to "Is naam ka koi active notification reply button nahi mila."
 
             return try {
@@ -107,6 +108,7 @@ class MeeraNotificationService : NotificationListenerService() {
                         val isSelfEcho = lastSelfReplyText.isNotEmpty() && text.trim().lowercase() == lastSelfReplyText
                         if (pkg.contains("whatsapp") && notifKey != lastNotifKey && !isSelfEcho) {
                             lastNotifKey = notifKey
+                            lastNotifIsGroup = ex.getBoolean("android.isGroupConversation", false)
                             onIncomingMessage?.invoke(pkg, title, text)
                         }
                         break

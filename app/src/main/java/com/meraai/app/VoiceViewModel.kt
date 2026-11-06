@@ -331,8 +331,10 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
         MeeraKeepAliveService.start(getApplication())
         MeeraNotificationService.onIncomingMessage = { _, sender, msgText ->
             if (active && sender.isNotBlank() && msgText.isNotBlank()) {
+                val grpFlag = MeeraNotificationService.lastNotifIsGroup
                 viewModelScope.launch(Dispatchers.IO) {
-                    val rule = MeeraAutoReply.getRuleFor(sender)
+                    val rule0 = MeeraAutoReply.getRuleFor(sender)
+                    val rule = if (rule0 != null && !grpFlag && MeeraAutoReply.allowReply(sender)) rule0 else null
                     if (rule != null) {
                         try {
                             val autoReply = rest.generateQuickAutoReply(sender, msgText, rule, prefs.persona)

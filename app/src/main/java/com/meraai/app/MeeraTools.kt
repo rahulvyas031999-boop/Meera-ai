@@ -797,7 +797,7 @@ object MeeraTools {
         val low = raw.lowercase()
 
         // 00A. Emergency SOS Trigger ("SOS activate kar do" / "बचाओ इमरजेंसी")
-        if (low.contains("sos") || low.contains("एसओएस") || (low.contains("इमरजेंसी") && (low.contains("एक्टिवेट") || low.contains("बचाओ") || low.contains("अलर्ट")))) {
+        if (Regex("\\bsos\\b").containsMatchIn(low) || low.contains("एसओएस") || (low.contains("इमरजेंसी") && (low.contains("एक्टिवेट") || low.contains("बचाओ") || low.contains("अलर्ट")))) {
             if (low.contains("बंद") || low.contains("रोको") || low.contains("stop")) {
                 MeeraSiren.stop()
                 return ToolExecutionResult(true, "stop_sos", "SOS सायरन बंद कर दिया है।", "VERIFIED_SUCCESS: SOS stopped")
@@ -1680,7 +1680,8 @@ object MeeraTools {
             try {
                 @Suppress("DEPRECATION")
                 val sms = ctx.getSystemService(android.telephony.SmsManager::class.java) ?: android.telephony.SmsManager.getDefault()
-                sms.sendTextMessage(rawNum, null, sosMsg, null, null)
+                val parts = sms.divideMessage(sosMsg)
+                sms.sendMultipartTextMessage(rawNum, null, parts, null, null)
                 smsSent = true
             } catch (_: Exception) {}
         }
@@ -1954,9 +1955,21 @@ object MeeraAutoReply {
         if (k == "all" || k.isEmpty()) rules.clear() else rules.remove(k)
     }
 
+    private val lastReplyAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    /** ek vyakti ko 60 second me sirf 1 auto-reply */
+    fun allowReply(sender: String): Boolean {
+        val k = sender.trim().lowercase()
+        val now = System.currentTimeMillis()
+        val prev = lastReplyAt[k] ?: 0L
+        if (now - prev < 60_000L) return false
+        lastReplyAt[k] = now
+        return true
+    }
+
     fun getRuleFor(senderTitle: String): String? {
         val s = senderTitle.trim().lowercase()
         rules["all"]?.let { return it }
-        return rules.entries.firstOrNull { (k, _) -> s.contains(k) || k.contains(s) }?.value
+        return rules.entries.firstOrNull { (k, _) -> s.contains(k) || (s.length >= 3 && k.contains(s)) }?.value
     }
 }
