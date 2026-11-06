@@ -339,6 +339,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
             if (prefs.mode == Mode.LIVE) {
                 live = GeminiLive(wsHttp, liveEvents).also {
                     it.connect(prefs.apiKey, prefs.liveModel, prefs.voice, sysPrompt, prefs.silenceMs)
+                    MeeraLiveBridge.liveSession = it
                 }
             } else {
                 startMic()
@@ -354,6 +355,8 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
         active = false
         requestInFlight.set(false)
         pipeline?.cancel(); pipeline = null
+        MeeraLiveBridge.stopScreenWatch()
+        MeeraLiveBridge.liveSession = null
         live?.close(); live = null
         mic?.stop(); mic = null
         MicMute.set(false)

@@ -23,14 +23,56 @@ import android.accessibilityservice.AccessibilityService.TakeScreenshotCallback
 import java.util.concurrent.CopyOnWriteArrayList
 
 data class NotifItem(val pkg: String, val title: String, val text: String, val time: Long)
+data class NotifReplyAction(
+    val pkg: String,
+    val title: String,
+    val text: String,
+    val actionIntent: android.app.PendingIntent,
+    val remoteInputs: Array<android.app.RemoteInput>,
+    val time: Long
+)
 data class ScreenElement(val id: Int, val label: String, val kind: String, val bounds: Rect)
 
 class MeeraNotificationService : NotificationListenerService() {
     companion object {
         val recentNotifs = CopyOnWriteArrayList<NotifItem>()
+        private val replyActions = java.util.concurrent.ConcurrentHashMap<String, NotifReplyAction>()
+        @Volatile var lastAnnouncedTime = 0L
+
         fun getLatestSummary(): String {
             if (recentNotifs.isEmpty()) return "Abhi koi naya notification nahi hai."
             return recentNotifs.takeLast(8).reversed().joinToString("\n") { "• [${it.title}]: ${it.text}" }
+        }
+
+        fun getFreshUnreadAlert(): String {
+            val latest = recentNotifs.lastOrNull() ?: return ""
+            if (System.currentTimeMillis() - latest.time > 45_000L || latest.time <= lastAnnouncedTime) return ""
+            lastAnnouncedTime = latest.time
+            return "\n[NEW INCOMING NOTIFICATION just arrived from '${latest.title}': \"${latest.text}\". If appropriate, inform the user and ask if they want to reply using reply_whatsapp_notification.]"
+        }
+
+        fun replyToNotification(ctx: Context, senderQuery: String, replyText: String): Pair<Boolean, String> {
+            val q = senderQuery.trim().lowercase()
+            val target = if (q.isEmpty() || q == "latest" || q == "last" || q.contains("आखिरी") || q.contains("अभी")) {
+                replyActions["latest"]
+            } else {
+                replyActions.entries.firstOrNull { (k, v) ->
+                    k != "latest" && (k.contains(q) || q.contains(k) || v.title.lowercase().contains(q))
+                }?.value ?: replyActions["latest"]
+            } ?: return false to "Is naam ka koi active notification reply button nahi mila."
+
+            return try {
+                val fillIn = Intent().addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
+                val bundle = Bundle()
+                for (ri in target.remoteInputs) {
+                    bundle.putCharSequence(ri.resultKey, replyText)
+                }
+                android.app.RemoteInput.addResultsToIntent(target.remoteInputs, fillIn, bundle)
+                target.actionIntent.send(ctx.applicationContext, 0, fillIn)
+                true to target.title
+            } catch (e: Exception) {
+                false to (e.message ?: "Reply intent fail hua")
+            }
         }
     }
 
@@ -41,9 +83,26 @@ class MeeraNotificationService : NotificationListenerService() {
         val ex = n.extras ?: return
         val title = ex.getCharSequence("android.title")?.toString()?.trim().orEmpty()
         val text = ex.getCharSequence("android.text")?.toString()?.trim().orEmpty()
+        val lowText = text.lowercase()
+        if (lowText.contains("checking for new messages") || lowText.contains("messages from")) return
+
         if (title.isNotBlank() || text.isNotBlank()) {
             recentNotifs.add(NotifItem(pkg, title, text, System.currentTimeMillis()))
             while (recentNotifs.size > 25) recentNotifs.removeAt(0)
+
+            val actions = n.actions
+            if (actions != null) {
+                for (act in actions) {
+                    val ris = act.remoteInputs
+                    val pi = act.actionIntent
+                    if (!ris.isNullOrEmpty() && pi != null) {
+                        val item = NotifReplyAction(pkg, title, text, pi, ris, System.currentTimeMillis())
+                        replyActions["latest"] = item
+                        if (title.isNotBlank()) replyActions[title.lowercase()] = item
+                        break
+                    }
+                }
+            }
         }
     }
 
