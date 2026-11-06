@@ -361,11 +361,35 @@ object MeeraTools {
                 )
         )
 
+        funcs.put(
+            JSONObject()
+                .put("name", "set_mission_plan")
+                .put("description", "For ANY request with 2 or more steps or apps, call this FIRST with a numbered checklist, one short step per line. The checklist is remembered and repeated after every action so the task is never forgotten.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject().put("steps", JSONObject().put("type", "STRING").put("description", "Numbered steps, one step per line")))
+                    .put("required", JSONArray().put("steps")))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "mark_step_done")
+                .put("description", "Mark one checklist step as done ONLY after it is verified (VERIFIED_SUCCESS, or clearly visible on the new screen).")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject().put("step", JSONObject().put("type", "INTEGER").put("description", "Step number from the checklist")))
+                    .put("required", JSONArray().put("step")))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "finish_mission")
+                .put("description", "Clear the checklist when all steps are finished or the user cancels the task.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject().put("note", JSONObject().put("type", "STRING").put("description", "Optional short note"))))
+        )
         return JSONArray().put(JSONObject().put("functionDeclarations", funcs))
     }
 
     private val SCREEN_AFTER_TOOLS = setOf(
         "open_app", "tap_element", "screen_action", "tap_coordinates",
+        "set_mission_plan",
         "play_or_search", "youtube_search_and_play",
         "whatsapp_message", "whatsapp_send_in_open_chat"
     )
@@ -382,7 +406,7 @@ object MeeraTools {
             else res.copy(
                 rawDataForAi = res.rawDataForAi +
                     "\nNEW SCREEN AFTER ACTION:\n" + screen +
-                    "\nIf the user's overall task is NOT finished yet, immediately call the next tool (prefer tap_element with the #id). Do not ask the user what to do next."
+                    "\nIf the user's overall task is NOT finished yet, immediately call the next tool (prefer tap_element with the #id). Do not ask the user what to do next." + MeeraMission.extraContext(svc.getActivePackage())
             )
         } catch (_: Exception) { res }
     }
@@ -524,6 +548,19 @@ object MeeraTools {
                 val platform = args.optString("platform", "youtube").lowercase()
                 val autoPlay = args.optBoolean("auto_play", !platform.contains("google"))
                 playOrSearchMedia(ctx, q, platform, autoPlay = autoPlay)
+            }
+            "set_mission_plan" -> {
+                MeeraMission.set(args.optString("steps", ""))
+                ToolExecutionResult(true, name, "", "VERIFIED_SUCCESS: Plan saved.\n" + MeeraMission.status() + "\nStart the first pending step immediately. Do not wait for the user.")
+            }
+            "mark_step_done" -> {
+                val n = args.optInt("step", -1)
+                val ok = MeeraMission.markDone(n)
+                ToolExecutionResult(true, name, "", (if (ok) "VERIFIED_SUCCESS: Step $n marked done.\n" else "FAILED: no such step number.\n") + MeeraMission.status())
+            }
+            "finish_mission" -> {
+                MeeraMission.clear()
+                ToolExecutionResult(true, name, "", "VERIFIED_SUCCESS: Mission cleared.")
             }
             "play_macro" -> {
                 val macroName = args.optString("name", "").trim()
@@ -1157,5 +1194,105 @@ object MeeraTools {
     fun looksLikeCommand(text: String): Boolean {
         val low = text.lowercase()
         return CMD_HINTS.any { low.contains(it) }
+    }
+}
+
+/** Lambe kaam ki checklist: har action ke nateeje ke sath dohorayi jaati hai */
+object MeeraMission {
+    private val steps = mutableListOf<String>()
+    private val done = mutableSetOf<Int>()
+    @Volatile private var updatedAt = 0L
+    @Volatile private var lastGuidePkg = ""
+
+    private fun alive() = steps.isNotEmpty() && (System.currentTimeMillis() - updatedAt) < 30 * 60_000L
+
+    @Synchronized fun set(raw: String) {
+        steps.clear(); done.clear()
+        raw.split('\n', '|', ';')
+            .map { it.trim().replace(Regex("^\\d+[.)]\\s*"), "") }
+            .filter { it.isNotBlank() }
+            .take(15)
+            .forEach { steps.add(it) }
+        updatedAt = System.currentTimeMillis()
+        lastGuidePkg = ""
+    }
+
+    @Synchronized fun markDone(n: Int): Boolean {
+        if (n < 1 || n > steps.size) return false
+        done.add(n)
+        updatedAt = System.currentTimeMillis()
+        return true
+    }
+
+    @Synchronized fun clear() { steps.clear(); done.clear() }
+
+    @Synchronized fun status(): String {
+        if (!alive()) return ""
+        val sb = StringBuilder("MISSION CHECKLIST (the user's overall task):\n")
+        steps.forEachIndexed { i, s ->
+            sb.append(if ((i + 1) in done) "[x] " else "[ ] ").append(i + 1).append(". ").append(s).append("\n")
+        }
+        val next = steps.indices.firstOrNull { (it + 1) !in done }
+        if (next == null) {
+            sb.append("ALL STEPS DONE -> give the user ONE short spoken report, then call finish_mission and open_meera_dashboard.")
+        } else {
+            sb.append("NEXT PENDING STEP: ").append(next + 1)
+                .append(". Continue with it now. Call mark_step_done only after VERIFIED_SUCCESS or after you SEE on the screen that it is really done.")
+        }
+        return sb.toString()
+    }
+
+    @Synchronized fun extraContext(pkg: String): String {
+        val sb = StringBuilder()
+        val st = status()
+        if (st.isNotEmpty()) sb.append("\n").append(st)
+        val g = AppGuides.forPackage(pkg)
+        if (g != null && pkg != lastGuidePkg) {
+            sb.append("\nAPP GUIDE for ").append(pkg).append(":\n").append(g)
+            lastGuidePkg = pkg
+        }
+        return sb.toString()
+    }
+}
+
+/** Har app ki chhoti guide: app badalne par ek baar bheji jaati hai */
+object AppGuides {
+    private val youtube = listOf(
+        "- To open/play a video from feed or search results: tap the [Button] element with the BIGGEST height/width whose label holds the video title (long text with channel, views, duration). NEVER tap [MenuIcon] More options (3 dots), channel icon or Shorts buttons.",
+        "- After the video opens the player is at the top. Comments are BELOW the player: scroll_down once or twice, find Comments / Add a comment, tap it, type with screen_action(type), then tap Send/Post.",
+        "- Tapping the player once shows pause/seek controls. If the same screen comes back after a tap, try the title element or use look_at_screen_visually."
+    ).joinToString("\n")
+
+    private val whatsapp = listOf(
+        "- Bottom tabs: Chats, Updates, Communities, Calls. To open a chat, tap its [Button] row (name + last message).",
+        "- Inside a chat use whatsapp_send_in_open_chat to type and send reliably.",
+        "- If a chat or tab is not in the list, use screen_action(scroll_down) or look_at_screen_visually."
+    ).joinToString("\n")
+
+    private val instagram = listOf(
+        "- Bottom bar icons: Home, Search, Reels, Messages, Profile (read their descriptions).",
+        "- To visit a page: tap Search, type the username, tap the account result row.",
+        "- Bio, followers and posts are text on top of the profile: read_screen, scroll_down for more, then report what you read.",
+        "- Comment: tap the comment bubble under a post, tap Add a comment, type, tap Post."
+    ).joinToString("\n")
+
+    private val facebook = listOf(
+        "- Under each post: Like, Comment, Share. To comment tap Comment, type in Write a comment, tap the send arrow.",
+        "- Top tabs: Home, Friends, Video, Marketplace, Notifications, Menu. Search is an icon at the top.",
+        "- Facebook hides many labels: if an element is not found use look_at_screen_visually then tap_coordinates."
+    ).joinToString("\n")
+
+    private val chatgpt = listOf(
+        "- A generated picture appears as #id [Image] image(no text). Tap that #id with tap_element (or tap_coordinates using its @x,y center) to open it full-screen, then tap Save / Download / More options.",
+        "- Wait for generation to finish with wait_for_screen_text before tapping. The typing box is at the bottom."
+    ).joinToString("\n")
+
+    fun forPackage(pkg: String): String? = when {
+        pkg == "com.google.android.youtube" -> youtube
+        pkg == "com.whatsapp" || pkg == "com.whatsapp.w4b" -> whatsapp
+        pkg == "com.instagram.android" -> instagram
+        pkg == "com.facebook.katana" || pkg == "com.facebook.lite" -> facebook
+        pkg.startsWith("com.openai.chatgpt") -> chatgpt
+        else -> null
     }
 }

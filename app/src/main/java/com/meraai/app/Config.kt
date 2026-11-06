@@ -174,10 +174,19 @@ class Prefs(ctx: Context) {
 
     fun deleteMemory(fact: String) {
         val current = getMemories().toMutableList()
-        if (!current.remove(fact)) return
-        val arr = JSONArray()
-        current.forEach { arr.put(it) }
-        sp.edit().putString("memories_json", arr.toString()).apply()
+        val removedMem = current.remove(fact)
+        if (removedMem) {
+            val arr = JSONArray()
+            current.forEach { arr.put(it) }
+            sp.edit().putString("memories_json", arr.toString()).apply()
+        }
+        val rawSkill = fact.removePrefix("सीखा हुआ स्किल ").trim()
+        val skills = getSkills().toMutableList()
+        if (skills.removeAll { it.equals(fact, true) || it.equals(rawSkill, true) }) {
+            val sArr = JSONArray()
+            skills.forEach { sArr.put(it) }
+            sp.edit().putString("learned_skills_json", sArr.toString()).apply()
+        }
     }
 
     fun updateMemory(old: String, new: String) {
@@ -185,15 +194,26 @@ class Prefs(ctx: Context) {
         if (clean.length < 4) return
         val current = getMemories().toMutableList()
         val i = current.indexOf(old)
-        if (i < 0) return
-        current[i] = clean
-        val arr = JSONArray()
-        current.forEach { arr.put(it) }
-        sp.edit().putString("memories_json", arr.toString()).apply()
+        if (i >= 0) {
+            current[i] = clean
+            val arr = JSONArray()
+            current.forEach { arr.put(it) }
+            sp.edit().putString("memories_json", arr.toString()).apply()
+        }
+        val rawOld = old.removePrefix("सीखा हुआ स्किल ").trim()
+        val rawNew = clean.removePrefix("सीखा हुआ स्किल ").trim()
+        val skills = getSkills().toMutableList()
+        val si = skills.indexOfFirst { it.equals(old, true) || it.equals(rawOld, true) }
+        if (si >= 0) {
+            skills[si] = rawNew
+            val sArr = JSONArray()
+            skills.forEach { sArr.put(it) }
+            sp.edit().putString("learned_skills_json", sArr.toString()).apply()
+        }
     }
 
     fun clearMemories() {
-        sp.edit().putString("memories_json", "[]").apply()
+        sp.edit().putString("memories_json", "[]").putString("learned_skills_json", "[]").apply()
     }
 
     fun getSkills(): List<String> {
@@ -288,6 +308,17 @@ $gfBlock
 
 9. AGENTIC MISSION LOOP (MAYA STYLE):
    - You are a multi-step agent. After every tap, the system waits for the screen to settle. If a step fails, do not repeat it blindly.
+
+10. LONG TASKS (MISSION CHECKLIST):
+- If the user's request has 2 or more steps or apps (example: open YouTube, play a video, comment, then go to WhatsApp), FIRST call set_mission_plan with numbered steps (one short line each), then do them one by one.
+- After each step is really done (tool says VERIFIED_SUCCESS or you clearly SEE it done on the NEW SCREEN) call mark_step_done. The MISSION CHECKLIST is repeated in every tool result: always continue with the NEXT PENDING STEP, never forget it, never ask the user what to do next.
+- When all steps are done give ONE short spoken report, then call finish_mission and open_meera_dashboard. For a NEW multi-step request call set_mission_plan again (it replaces the old plan).
+
+11. READING THE SCREEN LIST:
+- Each element looks like: #id [Kind] label @centerX,centerY WIDTHxHEIGHT. The first lines show the app and the screen size.
+- Kind Image with label image(no text) is a picture without text (for example an AI generated image in ChatGPT). To open it, tap that #id (or use tap_coordinates with its @centerX,centerY).
+- Kind MenuIcon (3-dot More options) is a tiny menu button, NEVER the video content. To open or play a video tap the big [Button] element that holds the video title. If unsure, use look_at_screen_visually and then tap_coordinates.
+- After every tap read the NEW SCREEN and verify that something really changed. If the same screen came back, do NOT repeat the same tap: try a different element or use look_at_screen_visually.
 
 $memoryBlock
 """.trimIndent()

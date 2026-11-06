@@ -120,20 +120,38 @@ class MeeraAccessibilityService : AccessibilityService() {
         val rawList = ArrayList<ScreenElement>()
         collectElements(root, rawList, maxItems)
         val truncated = rawList.size >= maxItems
-        // ऊपर से नीचे (और एक ही पंक्ति में बाएँ से दाएँ) क्रम, फिर #id दोबारा 1 से
         val sorted = rawList
             .sortedWith(compareBy({ it.bounds.top / 40 }, { it.bounds.left }))
             .mapIndexed { i, e -> e.copy(id = i + 1) }
         lastElements.clear()
         lastElements.addAll(sorted)
         if (sorted.isEmpty()) return ""
+        val dm = resources.displayMetrics
         val note = if (truncated)
             "\n[NOTE: list cut at $maxItems items, more elements may exist. Scroll or use look_at_screen_visually if something is missing.]"
         else ""
-        return "Active App: $pkg\n" + sorted.joinToString("\n") { "#${it.id} [${it.kind}] ${it.label}" } + note
+        return "Active App: $pkg\nScreen: ${dm.widthPixels}x${dm.heightPixels} px\n" +
+            sorted.joinToString("\n") {
+                "#${it.id} [${it.kind}] ${it.label} @${it.bounds.centerX()},${it.bounds.centerY()} ${it.bounds.width()}x${it.bounds.height()}"
+            } + note
     }
 
     fun readScreenText(maxItems: Int = 200): String = readScreenElements(maxItems)
+
+    /** Bina text wali badi image (jaise ChatGPT ki banayi image, full-screen background ko chhodkar) */
+    private fun isBigImage(node: AccessibilityNodeInfo): Boolean {
+        if (node.childCount > 0) return false
+        val r = Rect()
+        node.getBoundsInScreen(r)
+        val dm = resources.displayMetrics
+        val notFullScreen = r.height() < (dm.heightPixels * 0.85).toInt()
+        return r.width() >= 280 && r.height() >= 280 && notFullScreen
+    }
+
+    private fun isMenuDots(label: String, resId: String): Boolean {
+        val low = label.lowercase()
+        return low == "more options" || low.contains("अधिक विकल्प") || resId.contains("overflow") || resId.contains("contextual_menu")
+    }
 
     private fun collectElements(node: AccessibilityNodeInfo?, out: MutableList<ScreenElement>, limit: Int) {
         if (node == null || out.size >= limit) return
@@ -149,12 +167,14 @@ class MeeraAccessibilityService : AccessibilityService() {
                 hint.isNotBlank() -> hint
                 node.isClickable && resId.isNotBlank() -> "icon:$resId"
                 node.isClickable -> "clickable_area"
-                else -> ""
+                else -> if (isBigImage(node)) "image(no text)" else ""
             }
             if (label.length in 1..180) {
                 val kind = when {
+                    label == "image(no text)" -> "Image"
                     node.isEditable -> "Input"
-                    node.isClickable -> "Button"
+                    isMenuDots(label, resId) -> "MenuIcon"
+                    node.isClickable || node.parent?.isClickable == true -> "Button"
                     else -> "Text"
                 }
                 val rect = Rect()
@@ -470,26 +490,33 @@ class MeeraAccessibilityService : AccessibilityService() {
         }
     }
 
-    private val scrollHandler = android.os.Handler(android.os.Looper.getMainLooper())
-    private var nextScrollAt = 0L
-
-    // हर scroll कमांड कतार में लगती है और 700ms के गैप से चलती है
+    // Reliable Multi-Scroll: Synchronous swipe + Accessibility node scroll fallback
     private fun scrollScreen(forward: Boolean): Boolean {
-        val now = android.os.SystemClock.uptimeMillis()
-        val runAt = maxOf(now, nextScrollAt)
-        nextScrollAt = runAt + 700
-        scrollHandler.postAtTime({ doSwipe(forward) }, runAt)
-        return true
-    }
-
-    private fun doSwipe(forward: Boolean) {
+        val before = readScreenElements(12)
+        val mainLatch = java.util.concurrent.CountDownLatch(1)
         val dm = resources.displayMetrics
         val cx = dm.widthPixels / 2f
-        val startY = if (forward) dm.heightPixels * 0.72f else dm.heightPixels * 0.28f
-        val endY   = if (forward) dm.heightPixels * 0.28f else dm.heightPixels * 0.72f
+        val startY = if (forward) dm.heightPixels * 0.75f else dm.heightPixels * 0.25f
+        val endY   = if (forward) dm.heightPixels * 0.22f else dm.heightPixels * 0.78f
         val path = Path().apply { moveTo(cx, startY); lineTo(cx, endY) }
-        val stroke = GestureDescription.StrokeDescription(path, 0, 350)
-        dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
+        val stroke = GestureDescription.StrokeDescription(path, 0, 320)
+        dispatchGesture(
+            GestureDescription.Builder().addStroke(stroke).build(),
+            object : GestureResultCallback() {
+                override fun onCompleted(gestureDescription: GestureDescription?) { mainLatch.countDown() }
+                override fun onCancelled(gestureDescription: GestureDescription?) { mainLatch.countDown() }
+            },
+            null
+        )
+        try { mainLatch.await(500, java.util.concurrent.TimeUnit.MILLISECONDS) } catch (_: Exception) {}
+        try { Thread.sleep(280) } catch (_: Exception) {}
+        val after = readScreenElements(12)
+        if (after == before) {
+            val action = if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+            findScrollable(rootInActiveWindow)?.performAction(action)
+            try { Thread.sleep(250) } catch (_: Exception) {}
+        }
+        return true
     }
 
     private fun findScrollable(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
