@@ -114,18 +114,26 @@ class MeeraAccessibilityService : AccessibilityService() {
     }
 
     /** Maya UN.java style: Read screen elements with #id numbers */
-    fun readScreenElements(maxItems: Int = 50): String {
+    fun readScreenElements(maxItems: Int = 200): String {
         val root = rootInActiveWindow ?: return ""
         val pkg = root.packageName?.toString().orEmpty()
         val rawList = ArrayList<ScreenElement>()
         collectElements(root, rawList, maxItems)
+        val truncated = rawList.size >= maxItems
+        // ऊपर से नीचे (और एक ही पंक्ति में बाएँ से दाएँ) क्रम, फिर #id दोबारा 1 से
+        val sorted = rawList
+            .sortedWith(compareBy({ it.bounds.top / 40 }, { it.bounds.left }))
+            .mapIndexed { i, e -> e.copy(id = i + 1) }
         lastElements.clear()
-        lastElements.addAll(rawList)
-        if (rawList.isEmpty()) return ""
-        return "Active App: $pkg\n" + rawList.joinToString("\n") { "#${it.id} [${it.kind}] ${it.label}" }
+        lastElements.addAll(sorted)
+        if (sorted.isEmpty()) return ""
+        val note = if (truncated)
+            "\n[NOTE: list cut at $maxItems items, more elements may exist. Scroll or use look_at_screen_visually if something is missing.]"
+        else ""
+        return "Active App: $pkg\n" + sorted.joinToString("\n") { "#${it.id} [${it.kind}] ${it.label}" } + note
     }
 
-    fun readScreenText(maxItems: Int = 50): String = readScreenElements(maxItems)
+    fun readScreenText(maxItems: Int = 200): String = readScreenElements(maxItems)
 
     private fun collectElements(node: AccessibilityNodeInfo?, out: MutableList<ScreenElement>, limit: Int) {
         if (node == null || out.size >= limit) return

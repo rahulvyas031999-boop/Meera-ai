@@ -377,7 +377,7 @@ object MeeraTools {
         return try {
             if (name == "open_app" || name == "play_or_search" || name == "youtube_search_and_play") Thread.sleep(1500)
             svc.waitForScreenSettle(1500L)
-            val screen = svc.readScreenElements(50)   // ye last me, taaki #id wahi rahein jo model ko dikhe
+            val screen = svc.readScreenElements(200)   // ye last me, taaki #id wahi rahein jo model ko dikhe
             if (screen.isBlank()) res
             else res.copy(
                 rawDataForAi = res.rawDataForAi +
