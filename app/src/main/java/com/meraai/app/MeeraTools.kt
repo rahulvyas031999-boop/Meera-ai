@@ -938,7 +938,6 @@ object MeeraTools {
                 val svc = MeeraAccessibilityService.instance
                 val pkg = if (svc == null) "(Accessibility OFF)" else svc.getActivePackage()
                 MeeraDebugLog.log("OPEN_APP", "2.5s baad ASLI foreground app=$pkg")
-                MeeraDebugLog.copyNow(appCtx)
             } catch (_: Exception) {}
         }.start()
         return ok

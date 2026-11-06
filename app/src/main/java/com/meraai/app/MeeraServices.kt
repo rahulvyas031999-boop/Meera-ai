@@ -274,7 +274,24 @@ class MeeraAccessibilityService : AccessibilityService() {
         return clickByText(el.label)
     }
 
+    // SAFETY: पेमेंट ऐप्स में Meera के प्रोग्रामैटिक क्लिक/टैप बंद
+    private val blockedPayPackages = setOf(
+        "net.one97.paytm",
+        "com.phonepe.app",
+        "com.google.android.apps.nbu.paisa.user",
+        "in.org.npci.upiapp",
+        "com.dreamplug.androidapp"
+    )
+
+    private fun isPaymentAppActive(): Boolean {
+        val pkg = getActivePackage()
+        val blocked = pkg in blockedPayPackages
+        if (blocked) MeeraDebugLog.log("SAFETY", "Click blocked in payment app: $pkg")
+        return blocked
+    }
+
     fun tapCoordinates(x: Float, y: Float): Boolean {
+        if (isPaymentAppActive()) return false
         val path = Path().apply { moveTo(x, y) }
         val stroke = GestureDescription.StrokeDescription(path, 0, 95)
         return dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
@@ -488,6 +505,7 @@ class MeeraAccessibilityService : AccessibilityService() {
     }
 
     private fun performClickOnNode(node: AccessibilityNodeInfo): Boolean {
+        if (isPaymentAppActive()) return false
         var cur: AccessibilityNodeInfo? = node
         while (cur != null) {
             if (cur.isClickable && cur.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
