@@ -57,6 +57,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -347,6 +348,25 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
                         NavTab.VISION -> VisionCameraTab(vm)
                         NavTab.YAADEIN -> YaadeinTabContent(vm)
                         NavTab.CHAT -> ChatTabContent(ui, vm)
+                    }
+                }
+
+                if (active) {
+                    val muted by MicMute.flow.collectAsState()
+                    Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), horizontalArrangement = Arrangement.Center) {
+                        Surface(
+                            color = if (muted) Color(0xFFE5484D).copy(alpha = 0.25f) else CardGlass,
+                            shape = RoundedCornerShape(20.dp),
+                            modifier = Modifier
+                                .border(1.dp, if (muted) Color(0xFFE5484D) else CardBorder, RoundedCornerShape(20.dp))
+                                .clickable { vm.toggleMute() }
+                        ) {
+                            Text(
+                                if (muted) "🔇 म्यूट है — दबाकर चालू करें" else "🎙️ सुन रही है — म्यूट करें",
+                                color = Color.White, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                            )
+                        }
                     }
                 }
 

@@ -97,6 +97,11 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
         _ui.update { it.copy(chatMessages = emptyList(), user = "", ai = "") }
     }
 
+    fun toggleMute() {
+        MicMute.toggle()
+        if (active) MeeraKeepAliveService.start(getApplication())   // नोटिफ़िकेशन का बटन/टेक्स्ट अपडेट
+    }
+
     fun isSetupDone(): Boolean = prefs.setupDone
     fun markSetupDone() { prefs.setupDone = true }
     fun getMemoriesList(): List<String> = prefs.getMemories()
@@ -351,6 +356,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
         pipeline?.cancel(); pipeline = null
         live?.close(); live = null
         mic?.stop(); mic = null
+        MicMute.set(false)
         player?.release(); player = null
         try { am.isSpeakerphoneOn = false; am.mode = AudioManager.MODE_NORMAL } catch (_: Exception) {}
         collecting = false
@@ -378,8 +384,9 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
     private fun turnOpen(): Boolean =
         (prefs.mode == Mode.MODULAR && pipeline?.isActive == true) || liveTurnOpen
 
-    private fun onFrame(frame: ShortArray) {
+    private fun onFrame(frameIn: ShortArray) {
         if (!active) return
+        val frame = if (MicMute.muted) ShortArray(frameIn.size) else frameIn   // म्यूट में सिर्फ़ ख़ामोशी जाती है
         val rms = rmsOf(frame)
         val p = player
         val assistant = st == VState.ASSISTANT_SPEAKING || p?.busy == true

@@ -518,6 +518,7 @@ class MeeraKeepAliveService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == MicMute.ACTION) MicMute.toggle()
         try {
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             if (Build.VERSION.SDK_INT >= 26) {
@@ -526,9 +527,18 @@ class MeeraKeepAliveService : Service() {
             val notif = if (Build.VERSION.SDK_INT >= 26) {
                 Notification.Builder(this, CH_ID)
                     .setContentTitle("Meera AI चालू है 🎙️")
-                    .setContentText("आप किसी भी ऐप में बोलकर कमांड दे सकते हैं")
+                    .setContentText(if (MicMute.muted) "🔇 म्यूट है — बाहर की आवाज़ नहीं सुन रही" else "आप किसी भी ऐप में बोलकर कमांड दे सकते हैं")
                     .setSmallIcon(android.R.drawable.ic_btn_speak_now)
                     .setOngoing(true)
+                    .addAction(
+                        android.R.drawable.ic_lock_silent_mode,
+                        if (MicMute.muted) "🔊 अनम्यूट" else "🔇 म्यूट",
+                        android.app.PendingIntent.getService(
+                            this, 7,
+                            Intent(this, MeeraKeepAliveService::class.java).setAction(MicMute.ACTION),
+                            android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT
+                        )
+                    )
                     .build()
             } else Notification()
 
@@ -542,4 +552,13 @@ class MeeraKeepAliveService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+}
+
+
+object MicMute {
+    const val ACTION = "com.meraai.app.TOGGLE_MUTE"
+    val flow = kotlinx.coroutines.flow.MutableStateFlow(false)
+    val muted: Boolean get() = flow.value
+    fun toggle() { flow.value = !flow.value }
+    fun set(v: Boolean) { flow.value = v }
 }
