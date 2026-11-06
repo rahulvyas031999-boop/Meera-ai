@@ -172,6 +172,26 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("setup_done", false)
         set(v) { sp.edit().putBoolean("setup_done", v).apply() }
 
+    fun deleteMemory(fact: String) {
+        val current = getMemories().toMutableList()
+        if (!current.remove(fact)) return
+        val arr = JSONArray()
+        current.forEach { arr.put(it) }
+        sp.edit().putString("memories_json", arr.toString()).apply()
+    }
+
+    fun updateMemory(old: String, new: String) {
+        val clean = new.trim()
+        if (clean.length < 4) return
+        val current = getMemories().toMutableList()
+        val i = current.indexOf(old)
+        if (i < 0) return
+        current[i] = clean
+        val arr = JSONArray()
+        current.forEach { arr.put(it) }
+        sp.edit().putString("memories_json", arr.toString()).apply()
+    }
+
     fun clearMemories() {
         sp.edit().putString("memories_json", "[]").apply()
     }

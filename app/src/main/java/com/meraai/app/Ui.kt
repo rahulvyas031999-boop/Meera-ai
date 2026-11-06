@@ -637,7 +637,10 @@ fun VisionTabContent(vm: VoiceViewModel) {
 private fun YaadeinTabContent(vm: VoiceViewModel) {
     val ctx = LocalContext.current
     var newFact by remember { mutableStateOf("") }
-    val memories = vm.getMemoriesList()
+    var tick by remember { mutableStateOf(0) }
+    var editingOld by remember { mutableStateOf<String?>(null) }
+    var editText by remember { mutableStateOf("") }
+    val memories = tick.let { vm.getMemoriesList() }
 
     Column(
         Modifier.fillMaxSize().padding(18.dp).verticalScroll(rememberScrollState()),
@@ -722,10 +725,48 @@ private fun YaadeinTabContent(vm: VoiceViewModel) {
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier.fillMaxWidth().border(1.dp, CardBorder, RoundedCornerShape(14.dp))
                 ) {
-                    Text("• $m", color = Color.White, fontSize = 13.5.sp, modifier = Modifier.padding(12.dp))
+                    Column(Modifier.padding(12.dp)) {
+                        Text("• $m", color = Color.White, fontSize = 13.5.sp)
+                        Spacer(Modifier.height(8.dp))
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(18.dp, Alignment.End)
+                        ) {
+                            Text(
+                                "✏️ बदलें", color = AccentCyan, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                                modifier = Modifier.clickable { editText = m; editingOld = m }
+                            )
+                            Text(
+                                "🗑️ हटाएँ", color = Color(0xFFFF6B6B), fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                                modifier = Modifier.clickable {
+                                    vm.deleteMemory(m); tick++
+                                    Toast.makeText(ctx, "हटा दिया", Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                        }
+                    }
                 }
             }
-            TextButton(onClick = { vm.clearAllMemories() }) {
+            editingOld?.let { old ->
+                AlertDialog(
+                    onDismissRequest = { editingOld = null },
+                    title = { Text("✏️ याद / स्किल बदलें") },
+                    text = {
+                        OutlinedTextField(
+                            value = editText,
+                            onValueChange = { editText = it },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { vm.editMemory(old, editText); tick++; editingOld = null }) { Text("सेव") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { editingOld = null }) { Text("रद्द") }
+                    }
+                )
+            }
+            TextButton(onClick = { vm.clearAllMemories(); tick++ }) {
                 Text("🗑️ सारी यादें मिटाएँ", color = Color(0xFFFF6B6B))
             }
         }

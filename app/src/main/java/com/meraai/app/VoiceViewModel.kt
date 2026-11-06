@@ -111,6 +111,17 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
         _ui.update { it.copy(memoryCount = 0) }
     }
 
+    fun deleteMemory(fact: String) {
+        prefs.deleteMemory(fact)
+        _ui.update { it.copy(memoryCount = prefs.getMemories().size) }
+    }
+
+    fun editMemory(old: String, new: String) {
+        prefs.updateMemory(old, new)
+        _ui.update { it.copy(memoryCount = prefs.getMemories().size) }
+    }
+
+
     private fun autoLearnFromUser(text: String) {
         if (text.length < 6) return
         viewModelScope.launch(Dispatchers.IO) {
