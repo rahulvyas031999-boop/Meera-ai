@@ -176,7 +176,7 @@ object MeeraTools {
         val funcs = JSONArray()
 
         funcs.put(
-            JSONObject().put("name", "open_meera_dashboard").put("description", "Open your OWN app (Meera AI Dashboard). Use when user says 'Come to your dashboard' or after finishing a task.").put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()))
+            JSONObject().put("name", "open_meera_dashboard").put("description", "Open your OWN app (Meera AI Dashboard). Use ONLY when the user explicitly asks you to come back to your own app or dashboard. NEVER call it by yourself after a task.").put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()))
         )
         funcs.put(
             JSONObject().put("name", "look_at_screen_visually").put("description", "Look at the screen image. Use if text parsing fails (e.g., hidden buttons, images).").put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject().put("question", JSONObject().put("type", "STRING"))))
@@ -1782,7 +1782,7 @@ object MeeraMission {
         }
         val next = steps.indices.firstOrNull { (it + 1) !in done }
         if (next == null) {
-            sb.append("ALL STEPS DONE -> give the user ONE short spoken report, then call finish_mission and open_meera_dashboard.")
+            sb.append("ALL STEPS DONE -> give the user ONE short spoken report, then call finish_mission. Stay in the current app, do NOT go to the dashboard.")
         } else {
             sb.append("NEXT PENDING STEP: ").append(next + 1)
                 .append(". Continue with it now. Call mark_step_done only after VERIFIED_SUCCESS or after you SEE on the screen that it is really done.")
