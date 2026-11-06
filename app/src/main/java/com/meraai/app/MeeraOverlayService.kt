@@ -122,6 +122,34 @@ class EdgeLightingView(context: Context) : View(context) {
         canvas.drawRoundRect(rect, 38f, 38f, glowPaint)
         canvas.drawRoundRect(rect, 38f, 38f, strokePaint)
 
+        val badge = MeeraMission.overlayBadge()
+        if (badge.isNotEmpty()) {
+            val pillW = (width * 0.72f).coerceAtMost(720f)
+            val pillH = 76f
+            val left = (width - pillW) / 2f
+            val top = 96f
+            val pillRect = RectF(left, top, left + pillW, top + pillH)
+            val bgP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor("#DD090D18")
+                style = Paint.Style.FILL
+            }
+            val brdP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor("#2EE6A8")
+                style = Paint.Style.STROKE
+                strokeWidth = 3f
+            }
+            val txtP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.WHITE
+                textSize = 31f
+                textAlign = Paint.Align.CENTER
+                isFakeBoldText = true
+            }
+            canvas.drawRoundRect(pillRect, 38f, 38f, bgP)
+            canvas.drawRoundRect(pillRect, 38f, 38f, brdP)
+            val shortBadge = if (badge.length > 36) badge.take(35) + "…" else badge
+            canvas.drawText(shortBadge, width / 2f, top + 49f, txtP)
+        }
+
         postInvalidateOnAnimation()
     }
 }

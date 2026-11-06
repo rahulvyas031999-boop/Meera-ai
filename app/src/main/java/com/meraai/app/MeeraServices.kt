@@ -38,6 +38,7 @@ class MeeraNotificationService : NotificationListenerService() {
         val recentNotifs = CopyOnWriteArrayList<NotifItem>()
         private val replyActions = java.util.concurrent.ConcurrentHashMap<String, NotifReplyAction>()
         @Volatile var lastAnnouncedTime = 0L
+        @Volatile var onIncomingMessage: ((String, String, String) -> Unit)? = null
 
         fun getLatestSummary(): String {
             if (recentNotifs.isEmpty()) return "Abhi koi naya notification nahi hai."
@@ -99,6 +100,7 @@ class MeeraNotificationService : NotificationListenerService() {
                         val item = NotifReplyAction(pkg, title, text, pi, ris, System.currentTimeMillis())
                         replyActions["latest"] = item
                         if (title.isNotBlank()) replyActions[title.lowercase()] = item
+                        if (pkg.contains("whatsapp")) onIncomingMessage?.invoke(pkg, title, text)
                         break
                     }
                 }
@@ -267,6 +269,17 @@ class MeeraAccessibilityService : AccessibilityService() {
     }
 
     /** Tap center of screen (used for tapping generated images in ChatGPT/Gemini to reveal Save/Download bar) */
+    /** Wake & Swipe Up Lock Screen (Maya Voice Unlock Style) */
+    fun swipeUpUnlockScreen(): Boolean {
+        val dm = resources.displayMetrics
+        val cx = dm.widthPixels * 0.5f
+        val startY = dm.heightPixels * 0.82f
+        val endY = dm.heightPixels * 0.18f
+        val path = Path().apply { moveTo(cx, startY); lineTo(cx, endY) }
+        val stroke = GestureDescription.StrokeDescription(path, 0, 280)
+        return dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
+    }
+
     fun tapCenterImage(): Boolean {
         val dm = resources.displayMetrics
         return tapCoordinates(dm.widthPixels * 0.5f, dm.heightPixels * 0.44f)

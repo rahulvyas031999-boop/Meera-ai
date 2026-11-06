@@ -437,6 +437,37 @@ object MeeraTools {
                 .put("description", "Set phone volume to 100% maximum and ring/speak loudly when the user asks 'Mera phone kahan hai' or cannot find their phone.")
                 .put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()))
         )
+                funcs.put(
+            JSONObject()
+                .put("name", "activate_sos")
+                .put("description", "Activate Emergency SOS: starts loud siren, fetches live GPS Google Maps location link, sends emergency SMS + WhatsApp location alert, and calls the emergency contact.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("emergency_contact", JSONObject().put("type", "STRING").put("description", "Optional contact name to alert (defaults to Papa/Mummy/Bhai/Emergency)"))))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "stop_sos")
+                .put("description", "Stop the emergency SOS siren sound.")
+                .put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "set_whatsapp_auto_reply")
+                .put("description", "Enable or disable autonomous WhatsApp chat handling for a specific contact (e.g., 'Ritik ka chat tum apne hisab se handle kar lo').")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("contact_name", JSONObject().put("type", "STRING").put("description", "Contact name whose chat Meera should handle automatically, or 'all'"))
+                        .put("enable", JSONObject().put("type", "BOOLEAN").put("description", "true to enable autonomous replies, false to stop"))
+                        .put("style_note", JSONObject().put("type", "STRING").put("description", "How to reply, e.g., 'polite professional intro and handle questions'")))
+                    .put("required", JSONArray().put("contact_name")))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "unlock_phone_screen")
+                .put("description", "Wake the screen and perform swipe-up unlock gesture when the user says 'unlock karo' or 'lock kholo'.")
+                .put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()))
+        )
         return JSONArray().put(JSONObject().put("functionDeclarations", funcs))
     }
 
@@ -647,6 +678,34 @@ object MeeraTools {
                     ToolExecutionResult(true, name, "लाइव स्क्रीन देखना बंद कर दिया है।", "VERIFIED_SUCCESS: Live screen watching stopped.")
                 }
             }
+            "activate_sos" -> {
+                val target = args.optString("emergency_contact", "").trim()
+                activateSosTool(ctx, target)
+            }
+            "stop_sos" -> {
+                MeeraSiren.stop()
+                ToolExecutionResult(true, name, "SOS सायरन बंद कर दिया है।", "VERIFIED_SUCCESS: SOS siren stopped.")
+            }
+            "set_whatsapp_auto_reply" -> {
+                val cName = args.optString("contact_name", "").trim()
+                val en = args.optBoolean("enable", true)
+                val note = args.optString("style_note", "Friendly & helpful reply on behalf of Rahul").trim()
+                if (en && cName.isNotBlank()) {
+                    MeeraAutoReply.enable(cName, note)
+                    val firstSent = MeeraNotificationService.replyToNotification(ctx, cName, "नमस्ते! मैं राहुल की AI असिस्टेंट मीरा हूँ, बताइए क्या काम है?").first
+                    ToolExecutionResult(
+                        true, name,
+                        "ठीक है! मैं '$cName' का चैट हैंडल कर रही हूँ${if (firstSent) " और अभी के मैसेज का रिप्लाई भी भेज दिया है" else ""}। जैसे ही कोई नया मैसेज आएगा मैं खुद संभाल लूँगी!",
+                        "VERIFIED_SUCCESS: Autonomous chat handler enabled for '$cName'."
+                    )
+                } else {
+                    MeeraAutoReply.disable(cName)
+                    ToolExecutionResult(true, name, "'$cName' के लिए ऑटो-रिप्लाई बंद कर दिया है।", "VERIFIED_SUCCESS: Auto-reply disabled for '$cName'.")
+                }
+            }
+            "unlock_phone_screen" -> {
+                unlockPhoneScreenTool(ctx)
+            }
             "find_my_phone" -> {
                 findMyPhoneTool(ctx)
             }
@@ -737,6 +796,18 @@ object MeeraTools {
         val raw = userText.trim().trimEnd('।', '.', '!', '?', ',', ' ')
         val low = raw.lowercase()
 
+        // 00A. Emergency SOS Trigger ("SOS activate kar do" / "बचाओ इमरजेंसी")
+        if (low.contains("sos") || low.contains("एसओएस") || (low.contains("इमरजेंसी") && (low.contains("एक्टिवेट") || low.contains("बचाओ") || low.contains("अलर्ट")))) {
+            if (low.contains("बंद") || low.contains("रोको") || low.contains("stop")) {
+                MeeraSiren.stop()
+                return ToolExecutionResult(true, "stop_sos", "SOS सायरन बंद कर दिया है।", "VERIFIED_SUCCESS: SOS stopped")
+            }
+            return activateSosTool(ctx, "")
+        }
+        // 00B. Voice Unlock Screen ("अनलॉक करो" / "लॉक खोलो")
+        if (low == "अनलॉक करो" || low == "अनलॉक कर दो" || low == "लॉक खोलो" || low == "फोन अनलॉक करो" || low == "unlock karo" || low == "unlock phone") {
+            return unlockPhoneScreenTool(ctx)
+        }
         // 0A. Find My Phone ("मेरा फोन कहाँ है")
         if (low.contains("मेरा फोन कहां") || low.contains("मेरा फ़ोन कहां") || low.contains("मेरा फोन कहाँ") || low.contains("mera phone kahan") || low.contains("phone kahan hai")) {
             return findMyPhoneTool(ctx)
@@ -1556,6 +1627,102 @@ object MeeraTools {
         }
     }
 
+    
+    @Suppress("MissingPermission")
+    private fun getLiveLocationLink(ctx: Context): String {
+        return try {
+            val fine = ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            val coarse = ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            if (!fine && !coarse) return "Location permission not granted"
+            val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
+            val providers = listOf(
+                android.location.LocationManager.GPS_PROVIDER,
+                android.location.LocationManager.NETWORK_PROVIDER,
+                android.location.LocationManager.PASSIVE_PROVIDER
+            )
+            var best: android.location.Location? = null
+            for (p in providers) {
+                val loc = try { lm.getLastKnownLocation(p) } catch (_: Exception) { null }
+                if (loc != null && (best == null || loc.accuracy < best.accuracy)) {
+                    best = loc
+                }
+            }
+            if (best != null) {
+                "https://maps.google.com/?q=${best.latitude},${best.longitude}"
+            } else {
+                "https://maps.google.com/"
+            }
+        } catch (_: Exception) {
+            "https://maps.google.com/"
+        }
+    }
+
+    private fun activateSosTool(ctx: Context, preferredContact: String): ToolExecutionResult {
+        MeeraSiren.start(ctx)
+        val locLink = getLiveLocationLink(ctx)
+        val sosMsg = "🚨 EMERGENCY SOS ALERT! राहुल को तुरंत मदद की ज़रूरत है! मेरी लाइव GPS लोकेशन यहाँ देखें: $locLink"
+
+        val candidates = buildList {
+            if (preferredContact.isNotBlank()) add(preferredContact)
+            addAll(listOf("Papa", "Mummy", "Bhai", "Home", "Emergency", "पापा", "मम्मी", "भाई"))
+        }
+        var foundContact: Pair<String, String>? = null
+        for (c in candidates) {
+            foundContact = findContactNumber(ctx, c)
+            if (foundContact != null) break
+        }
+
+        var smsSent = false
+        val contactName = foundContact?.first ?: "Emergency Contact"
+        val rawNum = foundContact?.second?.replace(Regex("[^0-9+]"), "").orEmpty()
+
+        if (rawNum.length >= 10 && ContextCompat.checkSelfPermission(ctx, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED) {
+            try {
+                @Suppress("DEPRECATION")
+                val sms = ctx.getSystemService(android.telephony.SmsManager::class.java) ?: android.telephony.SmsManager.getDefault()
+                sms.sendTextMessage(rawNum, null, sosMsg, null, null)
+                smsSent = true
+            } catch (_: Exception) {}
+        }
+
+        if (rawNum.length >= 10) {
+            try {
+                val canCall = ContextCompat.checkSelfPermission(ctx, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED
+                val callIntent = Intent(if (canCall) Intent.ACTION_CALL else Intent.ACTION_DIAL, Uri.parse("tel:$rawNum")).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                ctx.startActivity(callIntent)
+            } catch (_: Exception) {}
+        }
+
+        return ToolExecutionResult(
+            true, "activate_sos",
+            "SOS इमरजेंसी एक्टिवेट कर दिया है! सायरन चालू है, आपकी लाइव लोकेशन ($locLink) ${if (smsSent) "$contactName को SMS कर दी गई है और " else ""}इमरजेंसी कॉल लगा दिया है!",
+            "VERIFIED_SUCCESS: SOS siren active, GPS link=$locLink, SMS sent=$smsSent, calling=$contactName ($rawNum)"
+        )
+    }
+
+    private fun unlockPhoneScreenTool(ctx: Context): ToolExecutionResult {
+        return try {
+            val pm = ctx.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            @Suppress("DEPRECATION")
+            val wl = pm.newWakeLock(
+                android.os.PowerManager.SCREEN_BRIGHT_WAKE_LOCK or android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                "meera:unlock_wake"
+            )
+            wl.acquire(3000L)
+            val svc = MeeraAccessibilityService.instance
+            val swiped = svc?.swipeUpUnlockScreen() == true
+            ToolExecutionResult(
+                true, "unlock_phone_screen",
+                if (swiped) "जय श्री राम बॉस! स्क्रीन ऑन करके लॉक स्वाइप कर दिया है, बताइए अब क्या करना है?" else "स्क्रीन ऑन कर दी है, कृपया Accessibility चालू रखें ताकि मैं स्वाइप भी कर सकूँ।",
+                if (swiped) "VERIFIED_SUCCESS: Woke screen and performed swipe-up unlock gesture." else "PARTIAL: Woke screen."
+            )
+        } catch (e: Exception) {
+            ToolExecutionResult(true, "unlock_phone_screen", "अनलॉक स्वाइप में दिक्कत आई।", "ERROR: ${e.message}")
+        }
+    }
+
     private val CMD_HINTS = listOf(
         "खोल", "ओपन", "open", "चला", "चालू", "play", "कॉल", "call", "फोन", "मैसेज", "message", "msg",
         "भेज", "व्हाट्स", "whatsapp", "यूट्यूब", "youtube", "स्क्रॉल", "scroll", "स्क्रीन", "screen",
@@ -1597,6 +1764,12 @@ object MeeraMission {
     }
 
     @Synchronized fun clear() { steps.clear(); done.clear() }
+
+    @Synchronized fun overlayBadge(): String {
+        if (!alive()) return ""
+        val nextIdx = steps.indices.firstOrNull { (it + 1) !in done } ?: return ""
+        return "⚡ ${nextIdx + 1}/${steps.size}: ${steps[nextIdx]}"
+    }
 
     @Synchronized fun status(): String {
         if (!alive()) return ""
@@ -1723,5 +1896,65 @@ object MeeraLiveBridge {
         watching = false
         try { watchThread?.interrupt() } catch (_: Exception) {}
         watchThread = null
+    }
+}
+
+/** Emergency SOS Loud Siren Generator */
+object MeeraSiren {
+    @Volatile private var active = false
+    private var thread: Thread? = null
+
+    @Synchronized
+    fun start(ctx: Context) {
+        if (active) return
+        active = true
+        try {
+            val am = ctx.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+            am.setStreamVolume(android.media.AudioManager.STREAM_ALARM, am.getStreamMaxVolume(android.media.AudioManager.STREAM_ALARM), 0)
+        } catch (_: Exception) {}
+        thread = Thread({
+            val tone = try { android.media.ToneGenerator(android.media.AudioManager.STREAM_ALARM, 100) } catch (_: Exception) { null }
+            try {
+                var high = true
+                while (active) {
+                    tone?.startTone(
+                        if (high) android.media.ToneGenerator.TONE_CDMA_EMERGENCY_RINGBACK else android.media.ToneGenerator.TONE_SUP_ERROR,
+                        380
+                    )
+                    high = !high
+                    Thread.sleep(420)
+                }
+            } catch (_: InterruptedException) {
+            } finally {
+                try { tone?.release() } catch (_: Exception) {}
+            }
+        }, "meera-sos-siren").also { it.isDaemon = true; it.start() }
+    }
+
+    @Synchronized
+    fun stop() {
+        active = false
+        try { thread?.interrupt() } catch (_: Exception) {}
+        thread = null
+    }
+}
+
+/** Autonomous WhatsApp Chat Reply Rules (Maya 'handle Ritik chat' style) */
+object MeeraAutoReply {
+    private val rules = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    fun enable(contact: String, style: String) {
+        rules[contact.trim().lowercase()] = style
+    }
+
+    fun disable(contact: String) {
+        val k = contact.trim().lowercase()
+        if (k == "all" || k.isEmpty()) rules.clear() else rules.remove(k)
+    }
+
+    fun getRuleFor(senderTitle: String): String? {
+        val s = senderTitle.trim().lowercase()
+        rules["all"]?.let { return it }
+        return rules.entries.firstOrNull { (k, _) -> s.contains(k) || k.contains(s) }?.value
     }
 }

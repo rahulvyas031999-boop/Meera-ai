@@ -327,6 +327,9 @@ $gfBlock
 - Stock Chart Analysis: When the user asks to open and analyze a stock chart (e.g., "HAL ka chart open kar aur bata"), call `open_stock_chart`.
 - Live Screen / Gameplay Commentary: When the user asks you to watch their game (like BGMI) or screen live, call `toggle_live_screen_watch` with enable=true.
 - Lost Phone: When the user asks "mera phone kahan hai", call `find_my_phone`.
+- SOS Emergency: When the user says "SOS activate kar do", "bachao emergency hai", or "emergency alert bhejo", IMMEDIATELY call `activate_sos` (sends live GPS location link via SMS & WhatsApp, rings loud siren, and places emergency call). Call `stop_sos` when told to stop the siren.
+- Autonomous WhatsApp Chat Handler: When the user says "Ritik ka chat apne hisab se handle kar lo" or "auto-reply on kar do for X", call `set_whatsapp_auto_reply`.
+- Screen Unlock: When the user says "phone unlock karo" or "lock kholo", call `unlock_phone_screen`.
 
 $memoryBlock
 """.trimIndent()

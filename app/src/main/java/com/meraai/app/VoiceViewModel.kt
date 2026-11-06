@@ -329,6 +329,39 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
         detector.reset(); preRoll.clear(); utter.clear(); collecting = false; bargeFrames = 0; quietMs = 0
         _ui.update { it.copy(user = "", ai = "", error = null, latencyMs = null, memoryCount = prefs.getMemories().size) }
         MeeraKeepAliveService.start(getApplication())
+        MeeraNotificationService.onIncomingMessage = { _, sender, msgText ->
+            if (active && sender.isNotBlank() && msgText.isNotBlank()) {
+                viewModelScope.launch(Dispatchers.IO) {
+                    val rule = MeeraAutoReply.getRuleFor(sender)
+                    if (rule != null) {
+                        try {
+                            val prompt = "You are handling WhatsApp chat on behalf of Rahul (${prefs.persona}). Incoming message from '$sender': \"$msgText\". Instruction: $rule. Write ONLY a short, natural 1-sentence Hinglish reply (no quotes, no markdown)."
+                            val body = org.json.JSONObject().put("contents", org.json.JSONArray().put(org.json.JSONObject().put("role", "user").put("parts", org.json.JSONArray().put(org.json.JSONObject().put("text", prompt)))))
+                            val autoReply = rest.analyzeScreenVisually(android.graphics.Bitmap.createBitmap(16, 16, android.graphics.Bitmap.Config.ARGB_8888), prompt).lineSequence().firstOrNull()?.trim().orEmpty().ifBlank { "Abhi Rahul thode busy hain, main Meera AI bol rahi hoon—unhe bata dungi!" }
+                            val (ok, _) = MeeraNotificationService.replyToNotification(appCtx, sender, autoReply)
+                            if (ok) {
+                                val info = "सुनो, WhatsApp पर $sender का मैसेज आया था: '$msgText' — मैंने हैंडल करके रिप्लाई भेज दिया है!"
+                                _ui.update { it.copy(ai = info, lastToolStatus = "🤖 Auto-Replied $sender") }
+                                appendChatLog("model", info)
+                                if (st == VState.LISTENING && player?.busy != true) {
+                                    val pcm = rest.tts(info, prefs.voice, prefs.ttsModel, prefs.persona, prefs.girlfriendMode)
+                                    player?.enqueue(pcm)
+                                }
+                            }
+                        } catch (_: Exception) {}
+                    } else if (st == VState.LISTENING && player?.busy != true && !turnOpen()) {
+                        try {
+                            val alertLine = "सुनो, WhatsApp पर $sender का मैसेज आया है: ${msgText.take(80)}। क्या मैं तुम्हारी तरफ से रिप्लाई कर दूँ?"
+                            _ui.update { it.copy(ai = alertLine, lastToolStatus = "🔔 WhatsApp: $sender") }
+                            appendChatLog("model", alertLine)
+                            val pcm = rest.tts(alertLine, prefs.voice, prefs.ttsModel, prefs.persona, prefs.girlfriendMode)
+                            setState(VState.ASSISTANT_SPEAKING)
+                            player?.enqueue(pcm)
+                        } catch (_: Exception) {}
+                    }
+                }
+            }
+        }
         MeeraOverlayService.start(getApplication())
         setState(VState.CONNECTING)
         am.mode = AudioManager.MODE_IN_COMMUNICATION
@@ -364,6 +397,8 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
         try { am.isSpeakerphoneOn = false; am.mode = AudioManager.MODE_NORMAL } catch (_: Exception) {}
         collecting = false
         _level.value = 0f
+        MeeraNotificationService.onIncomingMessage = null
+        MeeraSiren.stop()
         MeeraKeepAliveService.stop(getApplication())
         MeeraOverlayService.stop(getApplication())
         setState(VState.IDLE)
