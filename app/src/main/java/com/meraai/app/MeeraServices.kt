@@ -462,20 +462,26 @@ class MeeraAccessibilityService : AccessibilityService() {
         }
     }
 
+    private val scrollHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var nextScrollAt = 0L
+
+    // हर scroll कमांड कतार में लगती है और 700ms के गैप से चलती है
     private fun scrollScreen(forward: Boolean): Boolean {
-        val root = rootInActiveWindow ?: return false
-        val scrollable = findScrollable(root)
-        if (scrollable != null) {
-            val act = if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
-            if (scrollable.performAction(act)) return true
-        }
+        val now = android.os.SystemClock.uptimeMillis()
+        val runAt = maxOf(now, nextScrollAt)
+        nextScrollAt = runAt + 700
+        scrollHandler.postAtTime({ doSwipe(forward) }, runAt)
+        return true
+    }
+
+    private fun doSwipe(forward: Boolean) {
         val dm = resources.displayMetrics
         val cx = dm.widthPixels / 2f
-        val startY = if (forward) dm.heightPixels * 0.75f else dm.heightPixels * 0.25f
-        val endY = if (forward) dm.heightPixels * 0.25f else dm.heightPixels * 0.75f
+        val startY = if (forward) dm.heightPixels * 0.72f else dm.heightPixels * 0.28f
+        val endY   = if (forward) dm.heightPixels * 0.28f else dm.heightPixels * 0.72f
         val path = Path().apply { moveTo(cx, startY); lineTo(cx, endY) }
-        val stroke = GestureDescription.StrokeDescription(path, 0, 260)
-        return dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
+        val stroke = GestureDescription.StrokeDescription(path, 0, 350)
+        dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
     }
 
     private fun findScrollable(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
