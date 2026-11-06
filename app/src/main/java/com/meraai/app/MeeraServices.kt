@@ -38,6 +38,8 @@ class MeeraNotificationService : NotificationListenerService() {
         val recentNotifs = CopyOnWriteArrayList<NotifItem>()
         private val replyActions = java.util.concurrent.ConcurrentHashMap<String, NotifReplyAction>()
         @Volatile var lastAnnouncedTime = 0L
+        @Volatile private var lastNotifKey = ""
+        @Volatile private var lastSelfReplyText = ""
         @Volatile var onIncomingMessage: ((String, String, String) -> Unit)? = null
 
         fun getLatestSummary(): String {
@@ -68,6 +70,7 @@ class MeeraNotificationService : NotificationListenerService() {
                 for (ri in target.remoteInputs) {
                     bundle.putCharSequence(ri.resultKey, replyText)
                 }
+                lastSelfReplyText = replyText.trim().lowercase()
                 android.app.RemoteInput.addResultsToIntent(target.remoteInputs, fillIn, bundle)
                 target.actionIntent.send(ctx.applicationContext, 0, fillIn)
                 true to target.title
@@ -100,7 +103,12 @@ class MeeraNotificationService : NotificationListenerService() {
                         val item = NotifReplyAction(pkg, title, text, pi, ris, System.currentTimeMillis())
                         replyActions["latest"] = item
                         if (title.isNotBlank()) replyActions[title.lowercase()] = item
-                        if (pkg.contains("whatsapp")) onIncomingMessage?.invoke(pkg, title, text)
+                        val notifKey = "$pkg|$title|$text"
+                        val isSelfEcho = lastSelfReplyText.isNotEmpty() && text.trim().lowercase() == lastSelfReplyText
+                        if (pkg.contains("whatsapp") && notifKey != lastNotifKey && !isSelfEcho) {
+                            lastNotifKey = notifKey
+                            onIncomingMessage?.invoke(pkg, title, text)
+                        }
                         break
                     }
                 }
@@ -133,7 +141,7 @@ class MeeraAccessibilityService : AccessibilityService() {
         var stableCount = 0
         while (System.currentTimeMillis() < deadline) {
             val root = rootInActiveWindow
-            val currentFingerprint = root?.let { readScreenText(15) } ?: ""
+            val currentFingerprint = root?.let { readScreenElements(15, updateCache = false) } ?: ""
             if (currentFingerprint == lastFingerprint) {
                 stableCount++
                 if (stableCount >= 2) return true
@@ -175,7 +183,7 @@ class MeeraAccessibilityService : AccessibilityService() {
     }
 
     /** Maya UN.java style: Read screen elements with #id numbers */
-    fun readScreenElements(maxItems: Int = 200): String {
+    fun readScreenElements(maxItems: Int = 200, updateCache: Boolean = true): String {
         val root = rootInActiveWindow ?: return ""
         val pkg = root.packageName?.toString().orEmpty()
         val rawList = ArrayList<ScreenElement>()
@@ -184,8 +192,10 @@ class MeeraAccessibilityService : AccessibilityService() {
         val sorted = rawList
             .sortedWith(compareBy({ it.bounds.top / 40 }, { it.bounds.left }))
             .mapIndexed { i, e -> e.copy(id = i + 1) }
-        lastElements.clear()
-        lastElements.addAll(sorted)
+        if (updateCache) {
+            lastElements.clear()
+            lastElements.addAll(sorted)
+        }
         if (sorted.isEmpty()) return ""
         val dm = resources.displayMetrics
         val note = if (truncated)
@@ -564,7 +574,7 @@ class MeeraAccessibilityService : AccessibilityService() {
 
     // Reliable Multi-Scroll: Synchronous swipe + Accessibility node scroll fallback
     private fun scrollScreen(forward: Boolean): Boolean {
-        val before = readScreenElements(12)
+        val before = readScreenElements(12, updateCache = false)
         val mainLatch = java.util.concurrent.CountDownLatch(1)
         val dm = resources.displayMetrics
         val cx = dm.widthPixels / 2f
@@ -582,7 +592,7 @@ class MeeraAccessibilityService : AccessibilityService() {
         )
         try { mainLatch.await(500, java.util.concurrent.TimeUnit.MILLISECONDS) } catch (_: Exception) {}
         try { Thread.sleep(280) } catch (_: Exception) {}
-        val after = readScreenElements(12)
+        val after = readScreenElements(12, updateCache = false)
         if (after == before) {
             val action = if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
             findScrollable(rootInActiveWindow)?.performAction(action)

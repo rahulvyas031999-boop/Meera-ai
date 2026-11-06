@@ -473,7 +473,7 @@ object MeeraTools {
 
     private val SCREEN_AFTER_TOOLS = setOf(
         "open_app", "tap_element", "screen_action", "tap_coordinates",
-        "set_mission_plan",
+        "set_mission_plan", "wait_for_screen_text",
         "play_or_search", "youtube_search_and_play",
         "whatsapp_message", "whatsapp_send_in_open_chat"
     )
@@ -556,7 +556,7 @@ object MeeraTools {
                 } else {
                     val content = svc.readScreenElements()
                     val summary = if (content.isBlank()) "स्क्रीन पर अभी कोई टेक्स्ट नहीं दिख रहा है।" else content
-                    ToolExecutionResult(true, name, "", "CURRENT SCREEN ELEMENTS:\n$summary")
+                    ToolExecutionResult(true, name, "", "CURRENT SCREEN ELEMENTS:\n$summary" + MeeraMission.extraContext(svc.getActivePackage()))
                 }
             }
             "tap_element" -> {
@@ -1704,13 +1704,15 @@ object MeeraTools {
 
     private fun unlockPhoneScreenTool(ctx: Context): ToolExecutionResult {
         return try {
-            val pm = ctx.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
-            @Suppress("DEPRECATION")
-            val wl = pm.newWakeLock(
-                android.os.PowerManager.SCREEN_BRIGHT_WAKE_LOCK or android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP,
-                "meera:unlock_wake"
-            )
-            wl.acquire(3000L)
+            try {
+                val pm = ctx.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+                @Suppress("DEPRECATION")
+                val wl = pm.newWakeLock(
+                    android.os.PowerManager.SCREEN_BRIGHT_WAKE_LOCK or android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                    "meera:unlock_wake"
+                )
+                wl.acquire(3000L)
+            } catch (_: Throwable) {}
             val svc = MeeraAccessibilityService.instance
             val swiped = svc?.swipeUpUnlockScreen() == true
             ToolExecutionResult(

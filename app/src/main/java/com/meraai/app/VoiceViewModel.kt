@@ -335,9 +335,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
                     val rule = MeeraAutoReply.getRuleFor(sender)
                     if (rule != null) {
                         try {
-                            val prompt = "You are handling WhatsApp chat on behalf of Rahul (${prefs.persona}). Incoming message from '$sender': \"$msgText\". Instruction: $rule. Write ONLY a short, natural 1-sentence Hinglish reply (no quotes, no markdown)."
-                            val body = org.json.JSONObject().put("contents", org.json.JSONArray().put(org.json.JSONObject().put("role", "user").put("parts", org.json.JSONArray().put(org.json.JSONObject().put("text", prompt)))))
-                            val autoReply = rest.analyzeScreenVisually(android.graphics.Bitmap.createBitmap(16, 16, android.graphics.Bitmap.Config.ARGB_8888), prompt).lineSequence().firstOrNull()?.trim().orEmpty().ifBlank { "Abhi Rahul thode busy hain, main Meera AI bol rahi hoon—unhe bata dungi!" }
+                            val autoReply = rest.generateQuickAutoReply(sender, msgText, rule, prefs.persona)
                             val (ok, _) = MeeraNotificationService.replyToNotification(appCtx, sender, autoReply)
                             if (ok) {
                                 val info = "सुनो, WhatsApp पर $sender का मैसेज आया था: '$msgText' — मैंने हैंडल करके रिप्लाई भेज दिया है!"
@@ -351,6 +349,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
                         } catch (_: Exception) {}
                     } else if (st == VState.LISTENING && player?.busy != true && !turnOpen()) {
                         try {
+                            MeeraNotificationService.lastAnnouncedTime = System.currentTimeMillis()
                             val alertLine = "सुनो, WhatsApp पर $sender का मैसेज आया है: ${msgText.take(80)}। क्या मैं तुम्हारी तरफ से रिप्लाई कर दूँ?"
                             _ui.update { it.copy(ai = alertLine, lastToolStatus = "🔔 WhatsApp: $sender") }
                             appendChatLog("model", alertLine)
