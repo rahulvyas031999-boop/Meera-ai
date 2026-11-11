@@ -1,8 +1,10 @@
 name: Build APK
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, v2-test]
   workflow_dispatch:
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -17,7 +19,17 @@ jobs:
           gradle-version: 8.9
       - name: Build debug APK
         run: gradle assembleDebug --no-daemon --stacktrace
+      - name: Copy APK with clean name
+        run: cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/MeraAI-debug.apk
       - uses: actions/upload-artifact@v4
         with:
           name: MeraAI-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+      - name: Publish Direct Download APK Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest-${{ github.ref_name }}
+          name: "Meera AI Latest (${{ github.ref_name }} #${{ github.run_number }})"
+          body: "Build #${{ github.run_number }} (Version 2.${{ github.run_number }})"
+          files: app/build/outputs/apk/debug/MeraAI-debug.apk
+          prerelease: true

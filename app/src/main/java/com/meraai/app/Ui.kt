@@ -233,6 +233,16 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
                     )
 
                     val logCtx = LocalContext.current
+                    val curVerName = remember { runCatching { logCtx.packageManager.getPackageInfo(logCtx.packageName, 0).versionName ?: "2.0" }.getOrDefault("2.0") }
+                    NavigationDrawerItem(
+                        label = { Text("ऐप अपडेट करें (1-Tap Update)") },
+                        icon = { Text("🔄") },
+                        badge = { Text("v$curVerName", color = AccentCyan) },
+                        selected = false,
+                        onClick = { scope.launch { drawer.close() }; MeeraUpdater.checkAndInstallUpdate(logCtx) },
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    )
+
                     NavigationDrawerItem(
                         label = { Text("Debug log कॉपी करें") },
                         icon = { Text("📋") },
