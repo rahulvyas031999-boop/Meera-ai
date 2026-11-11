@@ -1,5 +1,7 @@
 package com.meraai.app
 
+import android.os.Handler
+import android.os.Looper
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -19,6 +21,9 @@ class GeminiLive(private val http: OkHttpClient, private val ev: Events) {
         fun onInterrupted()
         fun onTurnComplete()
         fun onError(msg: String)
+        fun onGoAway(timeLeftMs: Long) {}
+        fun onReconnecting(attempt: Int) {}
+        fun onResumed() {}
     }
 
     private var ws: WebSocket? = null
@@ -26,73 +31,248 @@ class GeminiLive(private val http: OkHttpClient, private val ev: Events) {
         private set
     @Volatile private var closedByUs = false
 
+    // ---- लंबे सेशन: कंप्रेशन + रिज़म्प्शन + बिना माइक बंद किए ऑटो-रीकनेक्ट ----
+    private val mainHandler = Handler(Looper.getMainLooper())
+    @Volatile private var socketGen = 0
+    @Volatile private var resumeHandle: String? = null
+    @Volatile private var reconnecting = false
+    @Volatile private var setupDoneOnce = false
+    @Volatile private var longSession = true
+    @Volatile private var lastSetupAt = 0L
+    @Volatile private var networkUp = true
+    @Volatile private var dropStartAt = 0L
+    private var dropAttempts = 0
+    private var cKey = ""
+    private var cModel = ""
+    private var cVoice = ""
+    private var cSystem = ""
+    private var cSilenceMs = 0
+
     fun connect(key: String, model: String, voice: String, system: String, silenceMs: Int) {
+        cKey = key
+        cModel = model
+        cVoice = voice
+        cSystem = system
+        cSilenceMs = silenceMs
         closedByUs = false
         ready = false
-        val url = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=$key"
-        val setup = JSONObject().put(
-            "setup", JSONObject()
-                .put("model", "models/$model")
-                .put(
-                    "generationConfig", JSONObject()
-                        .put("responseModalities", JSONArray().put("AUDIO"))
-                        .put(
-                            "speechConfig", JSONObject().put(
-                                "voiceConfig", JSONObject().put(
-                                    "prebuiltVoiceConfig", JSONObject().put("voiceName", voice)
-                                )
+        resumeHandle = null
+        reconnecting = false
+        setupDoneOnce = false
+        longSession = true
+        dropStartAt = 0L
+        dropAttempts = 0
+        mainHandler.removeCallbacksAndMessages(null)
+        openSocket()
+    }
+
+    /** बिना माइक बंद किए पर्सनैलिटी, आवाज़, मॉडल या सिस्टम प्रॉम्प्ट को तुरंत हॉट-स्विच करें */
+    fun updateSessionConfig(model: String, voice: String, system: String, silenceMs: Int) {
+        if (closedByUs) return
+        cModel = model
+        cVoice = voice
+        cSystem = system
+        cSilenceMs = silenceMs
+        resumeHandle = null // नया वॉइस और नई पर्सनैलिटी लागू करने के लिए नया सेशन हैंडशेक
+        ready = false
+        reconnecting = true
+        dropAttempts = 0
+        socketGen++
+        mainHandler.removeCallbacksAndMessages(null)
+        try { ws?.close(1000, "config_switch") } catch (_: Exception) {}
+        ws = null
+        openSocket()
+    }
+
+    private fun buildSetup(): JSONObject {
+        val s = JSONObject()
+            .put("model", "models/$cModel")
+            .put(
+                "generationConfig", JSONObject()
+                    .put("responseModalities", JSONArray().put("AUDIO"))
+                    .put(
+                        "speechConfig", JSONObject().put(
+                            "voiceConfig", JSONObject().put(
+                                "prebuiltVoiceConfig", JSONObject().put("voiceName", cVoice)
                             )
                         )
-                )
-                .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", system))))
-                .put("tools", MeeraTools.getGeminiToolsJson())
-                .put(
-                    "realtimeInputConfig", JSONObject().put(
-                        "automaticActivityDetection", JSONObject()
-                            .put("disabled", false)
-                            .put("startOfSpeechSensitivity", "START_SENSITIVITY_LOW")
-                            .put("endOfSpeechSensitivity", "END_SENSITIVITY_LOW")
-                            .put("prefixPaddingMs", 100)
-                            .put("silenceDurationMs", silenceMs)
                     )
+            )
+            .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", cSystem))))
+            .put("tools", MeeraTools.getGeminiToolsJson())
+            .put(
+                "realtimeInputConfig", JSONObject().put(
+                    "automaticActivityDetection", JSONObject()
+                        .put("disabled", false)
+                        .put("startOfSpeechSensitivity", "START_SENSITIVITY_LOW")
+                        .put("endOfSpeechSensitivity", "END_SENSITIVITY_LOW")
+                        .put("prefixPaddingMs", 100)
+                        .put("silenceDurationMs", cSilenceMs)
                 )
-                .put("inputAudioTranscription", JSONObject())
-                .put("outputAudioTranscription", JSONObject())
-        )
+            )
+            .put("inputAudioTranscription", JSONObject())
+            .put("outputAudioTranscription", JSONObject())
+        if (longSession) {
+            s.put("contextWindowCompression", JSONObject().put("slidingWindow", JSONObject()))
+            val sr = JSONObject()
+            resumeHandle?.let { sr.put("handle", it) }
+            s.put("sessionResumption", sr)
+        }
+        return JSONObject().put("setup", s)
+    }
+
+    private fun openSocket() {
+        if (closedByUs) return
+        val gen = ++socketGen
+        val url = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=$cKey"
+        val setup = buildSetup()
         ws = http.newWebSocket(Request.Builder().url(url).build(), object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                if (gen != socketGen || closedByUs) return
                 webSocket.send(setup.toString())
             }
 
-            override fun onMessage(webSocket: WebSocket, text: String) = handle(text)
-            override fun onMessage(webSocket: WebSocket, bytes: ByteString) = handle(bytes.utf8())
+            override fun onMessage(webSocket: WebSocket, text: String) = handle(gen, text)
+            override fun onMessage(webSocket: WebSocket, bytes: ByteString) = handle(gen, bytes.utf8())
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                webSocket.close(1000, null)
-                if (!closedByUs) ev.onError("Live सेशन बंद हुआ ($code) $reason".trim())
+                try { webSocket.close(1000, null) } catch (_: Exception) {}
+                if (gen != socketGen || closedByUs) return
+                handleDrop("Live सेशन बंद हुआ ($code) $reason".trim(), true)
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                if (closedByUs) return
+                if (gen != socketGen || closedByUs) return
                 val c = response?.code
-                ev.onError(
-                    when (c) {
-                        401, 403 -> "API Key सही नहीं है या Live की इजाज़त नहीं (HTTP $c)"
-                        null -> "कनेक्शन फेल: ${t.message ?: t.javaClass.simpleName}"
-                        else -> "Live कनेक्शन फेल (HTTP $c)"
-                    }
-                )
+                val msg = when (c) {
+                    401, 403 -> "API Key सही नहीं है या Live की इजाज़त नहीं (HTTP $c)"
+                    null -> "कनेक्शन फेल: ${t.message ?: t.javaClass.simpleName}"
+                    else -> "Live कनेक्शन फेल (HTTP $c)"
+                }
+                handleDrop(msg, c != 401 && c != 403)
             }
         })
     }
 
-    private fun handle(s: String) {
+    private fun handleDrop(msg: String, retryable: Boolean) {
+        ready = false
+        if (closedByUs) return
+        if (!retryable) {
+            ev.onError(msg)
+            return
+        }
+        // यदि शुरुआती कनेक्शन में longSession फ़ील्ड से दिक्कत हो, तो एक बार बिना longSession के आज़माएँ
+        if (!setupDoneOnce && longSession && dropAttempts == 0) {
+            longSession = false
+            dropAttempts++
+            MeeraDebugLog.log("LIVE", "लंबे-सेशन वाला सेटअप नहीं चला ($msg); बेसिक सेटअप से कोशिश")
+            scheduleReconnect(400L)
+            return
+        }
+        // जब तक यूज़र खुद माइक बंद नहीं करता, कभी हार न मानें (Flight mode में भी माइक चालू रहे)
+        val now = System.currentTimeMillis()
+        if (dropStartAt == 0L) dropStartAt = now
+        reconnecting = true
+        dropAttempts++
+        if (dropAttempts > 2) resumeHandle = null
+        ev.onReconnecting(dropAttempts)
+        val waitMs = when {
+            !networkUp -> 1500L
+            dropAttempts <= 2 -> 800L
+            dropAttempts <= 5 -> 1800L
+            else -> 3000L
+        }
+        MeeraDebugLog.log("LIVE", "कनेक्शन टूटा ($msg); कोशिश $dropAttempts, $waitMs ms बाद")
+        scheduleReconnect(waitMs)
+    }
+
+    private fun scheduleReconnect(delayMs: Long) {
+        mainHandler.removeCallbacksAndMessages(null)
+        mainHandler.postDelayed({ reconnectTick() }, delayMs)
+    }
+
+    private fun reconnectTick() {
+        if (closedByUs) return
+        if (!networkUp) {
+            // नेटवर्क आने का इंतज़ार करें, पर हर 2 सेकंड में चेक करते रहें
+            scheduleReconnect(2000L)
+            return
+        }
+        openSocket()
+    }
+
+    // VoiceViewModel का नेटवर्क कॉलबैक इसे बुलाता है (Flight Mode ON/OFF होने पर)
+    fun onNetworkChanged(up: Boolean) {
+        val was = networkUp
+        networkUp = up
+        MeeraDebugLog.log("LIVE", if (up) "नेटवर्क आया (Flight Mode OFF / Net ON)" else "नेटवर्क गया (Flight Mode ON / Net OFF)")
+        if (closedByUs) return
+        if (up) {
+            if (!ready || !was || reconnecting) {
+                reconnecting = true
+                dropAttempts = 0
+                ev.onReconnecting(1)
+                // Flight mode हटने के बाद DNS को तैयार होने के लिए 600ms दें, फेल होने पर handleDrop फिर से कोशिश करेगा
+                scheduleReconnect(600L)
+            }
+        } else {
+            if (ready) {
+                ready = false
+                reconnecting = true
+                socketGen++
+                try { ws?.cancel() } catch (_: Exception) {}
+                ws = null
+                ev.onReconnecting(1)
+                scheduleReconnect(1500L)
+            }
+        }
+    }
+
+    private fun parseMs(s: String): Long {
+        val v = s.trim().removeSuffix("s").toDoubleOrNull() ?: return -1L
+        return (v * 1000).toLong()
+    }
+
+    private fun handle(gen: Int, s: String) {
+        if (gen != socketGen || closedByUs) return
         try {
             val j = JSONObject(s)
-            if (j.has("setupComplete")) { ready = true; ev.onReady(); return }
-            j.optJSONObject("error")?.let { ev.onError(it.optString("message", "Live API error")); return }
+            if (j.has("setupComplete")) {
+                ready = true
+                val wasDone = setupDoneOnce
+                setupDoneOnce = true
+                longSession = true
+                lastSetupAt = System.currentTimeMillis()
+                dropStartAt = 0L
+                dropAttempts = 0
+                if (reconnecting && wasDone) {
+                    reconnecting = false
+                    MeeraDebugLog.log("LIVE", "सेशन दोबारा जुड़ गया")
+                    ev.onResumed()
+                } else {
+                    reconnecting = false
+                    ev.onReady()
+                }
+                return
+            }
+            j.optJSONObject("error")?.let { errObj ->
+                val code = errObj.optInt("code", 0)
+                val errMsg = errObj.optString("message", "Live API error")
+                handleDrop(errMsg, code != 401 && code != 403)
+                return
+            }
 
-            // Handle Live Tool Call (e.g., open_app, read_screen, whatsapp_message)
+            j.optJSONObject("sessionResumptionUpdate")?.let { u ->
+                val h = u.optString("newHandle", "")
+                if (u.optBoolean("resumable", false) && h.isNotEmpty()) resumeHandle = h
+            }
+            j.optJSONObject("goAway")?.let { g ->
+                val left = g.optString("timeLeft", "")
+                MeeraDebugLog.log("LIVE", "GoAway: कनेक्शन जल्द बंद होगा, बचा समय=$left")
+                ev.onGoAway(parseMs(left))
+            }
+
+            // Handle Live Tool Call
             j.optJSONObject("toolCall")?.optJSONArray("functionCalls")?.let { calls ->
                 for (i in 0 until calls.length()) {
                     val call = calls.optJSONObject(i) ?: continue
@@ -157,6 +337,9 @@ class GeminiLive(private val http: OkHttpClient, private val ev: Events) {
     fun close() {
         closedByUs = true
         ready = false
+        reconnecting = false
+        socketGen++
+        mainHandler.removeCallbacksAndMessages(null)
         try { ws?.close(1000, null) } catch (_: Exception) {}
         ws = null
     }

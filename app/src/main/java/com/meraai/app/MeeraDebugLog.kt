@@ -42,7 +42,7 @@ object MeeraDebugLog {
         if (hooked) return
         hooked = true
         app.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
-            override fun onActivityResumed(a: Activity) { if (dirty) copyNow(a) }
+            override fun onActivityResumed(a: Activity) {}
             override fun onActivityCreated(a: Activity, b: Bundle?) {}
             override fun onActivityStarted(a: Activity) {}
             override fun onActivityPaused(a: Activity) {}

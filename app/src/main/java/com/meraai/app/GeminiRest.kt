@@ -244,6 +244,18 @@ class GeminiRest(private val http: OkHttpClient, private val key: () -> String) 
         }
     }
 
+    suspend fun generateQuickAutoReply(sender: String, incomingMsg: String, rule: String, persona: String): String = withContext(Dispatchers.IO) {
+        val prompt = "You are handling WhatsApp chat on behalf of Rahul ($persona). Incoming message from '$sender': \"$incomingMsg\". Instruction: $rule. Write ONLY a short, natural 1-sentence Hinglish reply (no quotes, no markdown)."
+        val body = JSONObject().put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", JSONArray().put(JSONObject().put("text", prompt)))))
+        try {
+            val resp = http.newCall(request("gemini-flash-lite-latest", "generateContent", body)).await().okOrThrow()
+            resp.use { textOf(JSONObject(it.body!!.string())).lineSequence().firstOrNull()?.trim().orEmpty() }
+                .ifBlank { "Abhi Rahul thode busy hain, main Meera AI bol rahi hoon—unhe bata dungi!" }
+        } catch (_: Exception) {
+            "Abhi Rahul thode busy hain, main unhe aapka message bata dungi!"
+        }
+    }
+
     // ---------- 2.9 Vision Analysis ----------
     suspend fun analyzeScreenVisually(bitmap: android.graphics.Bitmap, prompt: String): String = withContext(Dispatchers.IO) {
         val bos = java.io.ByteArrayOutputStream()

@@ -3,6 +3,9 @@ package com.meraai.app
 import android.app.Application
 import android.content.Context
 import android.media.AudioManager
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
@@ -81,6 +84,121 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
     private val aiBuf = StringBuilder()
     private val history = ArrayList<Pair<String, String>>()
 
+    init {
+        installConfigBridge()
+    }
+
+    private fun buildFullSystemPrompt(): String =
+        SystemPrompt.build(prefs.persona, prefs.girlfriendMode, prefs.getMemories() + prefs.getSkills(), appCtx, prefs)
+
+    private fun installConfigBridge() {
+        MeeraConfigBridge.onStatusRequest = {
+            buildFullSystemPrompt()
+        }
+        MeeraConfigBridge.onConfigChange = { p, v, gf, m, mod ->
+            var targetPersona = prefs.persona
+            p?.let { reqP ->
+                val matched = Cfg.PERSONAS.find { it.first.equals(reqP, ignoreCase = true) }?.first
+                    ?: when {
+                        reqP.contains("जार", true) || reqP.contains("jarvis", true) -> "Jarvis"
+                        reqP.contains("रुद्र", true) || reqP.contains("rudra", true) -> "Rudra"
+                        reqP.contains("मीरा", true) || reqP.contains("meera", true) -> "Meera"
+                        else -> null
+                    }
+                if (matched != null) {
+                    targetPersona = matched
+                    prefs.persona = matched
+                    val defVoice = Cfg.PERSONAS.find { it.first == matched }?.third ?: prefs.voice
+                    prefs.voice = defVoice
+                }
+            }
+            v?.let { reqV ->
+                val matchedV = Cfg.VOICES.find { it.first.equals(reqV, ignoreCase = true) }?.first
+                if (matchedV != null) prefs.voice = matchedV
+            }
+            gf?.let { prefs.girlfriendMode = it }
+            m?.let { reqM ->
+                when {
+                    reqM.contains("MODULAR", true) || reqM.contains("मॉड्यूलर", true) -> prefs.mode = Mode.MODULAR
+                    reqM.contains("LIVE", true) || reqM.contains("लाइव", true) -> prefs.mode = Mode.LIVE
+                }
+            }
+            mod?.let { reqMod ->
+                if (Cfg.LIVE_MODELS.any { it.equals(reqMod, true) }) prefs.liveModel = reqMod
+                if (Cfg.CHAT_MODELS.any { it.equals(reqMod, true) }) prefs.chatModel = reqMod
+            }
+
+            val spokenConfirm = when (targetPersona) {
+                "Jarvis" -> "Jarvis online, Boss! Voice '${prefs.voice}' aur ${prefs.mode.name} mode active hai. Bataiye kya command hai?"
+                "Rudra" -> "रुद्रा हाज़िर है भाई! '${prefs.voice}' आवाज़ और ${prefs.mode.name} मोड चालू है। बोल क्या करना है?"
+                else -> "मैं मीरा आ गई हूँ! मेरी आवाज़ '${prefs.voice}' और ${prefs.mode.name} मोड चालू है। बताओ क्या बात करनी है?"
+            }
+
+            _ui.update {
+                it.copy(
+                    mode = prefs.mode,
+                    persona = prefs.persona,
+                    girlfriendMode = prefs.girlfriendMode,
+                    voice = prefs.voice,
+                    liveModel = prefs.liveModel,
+                    chatModel = prefs.chatModel,
+                    sttModel = prefs.sttModel,
+                    ttsModel = prefs.ttsModel,
+                    ai = spokenConfirm,
+                    lastToolStatus = "🎭 ${prefs.persona} • 🔊 ${prefs.voice}",
+                    error = null
+                )
+            }
+
+            if (active) {
+                hotReloadSession(spokenConfirm)
+            }
+            spokenConfirm
+        }
+    }
+
+    /** माइक बंद किए बिना Live/Modular सेशन और पर्सनैलिटी/आवाज़ को तुरंत रीलोड करें */
+    private fun hotReloadSession(announceText: String? = null) {
+        if (!active) return
+        pipeline?.cancel(); pipeline = null
+        requestInFlight.set(false)
+        player?.flush()
+        dropAudio = false
+        liveTurnOpen = false
+        newUserTurn = true
+        ensureMicStarted()
+
+        val sysPrompt = buildFullSystemPrompt()
+        if (prefs.mode == Mode.LIVE) {
+            val curLive = live
+            if (curLive != null) {
+                curLive.updateSessionConfig(prefs.liveModel, prefs.voice, sysPrompt, prefs.silenceMs)
+            } else {
+                live = GeminiLive(wsHttp, liveEvents).also {
+                    it.connect(prefs.apiKey, prefs.liveModel, prefs.voice, sysPrompt, prefs.silenceMs)
+                    MeeraLiveBridge.liveSession = it
+                }
+            }
+        } else {
+            MeeraLiveBridge.stopScreenWatch()
+            MeeraLiveBridge.liveSession = null
+            live?.close(); live = null
+            setState(VState.LISTENING)
+        }
+
+        if (!announceText.isNullOrBlank()) {
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    val pcm = rest.tts(announceText, prefs.voice, prefs.ttsModel, prefs.persona, prefs.girlfriendMode)
+                    if (active) {
+                        setState(VState.ASSISTANT_SPEAKING)
+                        player?.enqueue(pcm)
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
     private fun nowTime(): String = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
 
     private fun appendChatLog(role: String, text: String) {
@@ -97,6 +215,11 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
         _ui.update { it.copy(chatMessages = emptyList(), user = "", ai = "") }
     }
 
+    fun toggleMute() {
+        MicMute.toggle()
+        if (active) MeeraKeepAliveService.start(getApplication())
+    }
+
     fun isSetupDone(): Boolean = prefs.setupDone
     fun markSetupDone() { prefs.setupDone = true }
     fun getMemoriesList(): List<String> = prefs.getMemories()
@@ -109,6 +232,16 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
     fun clearAllMemories() {
         prefs.clearMemories()
         _ui.update { it.copy(memoryCount = 0) }
+    }
+
+    fun deleteMemory(fact: String) {
+        prefs.deleteMemory(fact)
+        _ui.update { it.copy(memoryCount = prefs.getMemories().size) }
+    }
+
+    fun editMemory(old: String, new: String) {
+        prefs.updateMemory(old, new)
+        _ui.update { it.copy(memoryCount = prefs.getMemories().size) }
     }
 
     private fun autoLearnFromUser(text: String) {
@@ -136,7 +269,6 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
             appendChatLog("user", clean)
             autoLearnFromUser(clean)
 
-            // 1. पहले चेक करें कि क्या यह सीधा फोन टूल कमांड है (जैसे WhatsApp खोलो, स्क्रीन पढ़ो)
             val toolRes = MeeraTools.tryDirectVoiceCommand(appCtx, clean).let { if (it.executed) it else routeViaLlm(clean) }
             if (toolRes.executed && toolRes.spokenReply.isNotBlank() && (toolRes.rawDataForAi.startsWith("VERIFIED_SUCCESS:") || toolRes.rawDataForAi.startsWith("SUCCESS:"))) {
                 _ui.update {
@@ -147,6 +279,13 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
                     )
                 }
                 appendChatLog("model", toolRes.spokenReply)
+                if (speakAloud && toolRes.toolName != "switch_system_config") {
+                    try {
+                        val pcm = rest.tts(toolRes.spokenReply, prefs.voice, prefs.ttsModel, prefs.persona, prefs.girlfriendMode)
+                        val tempPlayer = player ?: PcmPlayer().also { player = it }
+                        tempPlayer.enqueue(pcm)
+                    } catch (_: Exception) {}
+                }
                 return@launch
             }
 
@@ -155,7 +294,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
             } else clean
 
             history.add("user" to effectivePrompt)
-            val sysPrompt = SystemPrompt.build(prefs.persona, prefs.girlfriendMode, prefs.getMemories() + prefs.getSkills())
+            val sysPrompt = buildFullSystemPrompt()
             val full = StringBuilder()
             try {
                 rest.streamChat(history.takeLast(12), sysPrompt, prefs.chatModel) { s ->
@@ -184,96 +323,99 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
         }
     }
 
+    // ---- UI मेन्यू से बदलाव करने पर माइक बंद НЕ होगा, बल्कि सेशन लाइव हॉट-रीलोड होगा ----
     fun setMode(m: Mode) {
         if (m == prefs.mode) return
-        stop()
         prefs.mode = m
-        _ui.update { it.copy(mode = m, error = null) }
+        _ui.update { it.copy(mode = m, error = null, lastToolStatus = "🔄 Mode: ${m.name}") }
+        if (active) hotReloadSession()
     }
 
     fun setPersona(p: String) {
         if (p == prefs.persona) return
-        stop()
         prefs.persona = p
         val defaultVoice = Cfg.PERSONAS.find { it.first == p }?.third ?: prefs.voice
         prefs.voice = defaultVoice
-        _ui.update { it.copy(persona = p, voice = defaultVoice, error = null) }
+        val greet = when (p) {
+            "Jarvis" -> "Jarvis online, Boss! Bataiye kya command hai?"
+            "Rudra" -> "रुद्रा हाज़िर है भाई! बोल क्या करना है?"
+            else -> "मैं मीरा आ गई हूँ! बताओ क्या बात करनी है?"
+        }
+        _ui.update { it.copy(persona = p, voice = defaultVoice, ai = greet, lastToolStatus = "🎭 $p • 🔊 $defaultVoice", error = null) }
+        if (active) hotReloadSession(greet)
     }
 
     fun setGirlfriendMode(enabled: Boolean) {
-        stop()
         prefs.girlfriendMode = enabled
         _ui.update { it.copy(girlfriendMode = enabled, error = null) }
+        if (active) hotReloadSession()
     }
 
     fun setVoice(v: String) {
         if (v == prefs.voice) return
-        stop()
         prefs.voice = v
-        _ui.update { it.copy(voice = v, error = null) }
+        _ui.update { it.copy(voice = v, error = null, lastToolStatus = "🔊 Voice: $v") }
+        if (active) hotReloadSession()
     }
 
     fun setLiveModel(m: String) {
         if (m == prefs.liveModel) return
-        stop()
         prefs.liveModel = m
-        _ui.update { it.copy(liveModel = m, error = null) }
+        _ui.update { it.copy(liveModel = m, error = null, lastToolStatus = "⚡ $m") }
+        if (active && prefs.mode == Mode.LIVE) hotReloadSession()
     }
 
     fun setChatModel(m: String) {
         if (m == prefs.chatModel) return
-        stop()
         prefs.chatModel = m
-        _ui.update { it.copy(chatModel = m, error = null) }
+        _ui.update { it.copy(chatModel = m, error = null, lastToolStatus = "🧠 $m") }
     }
 
     fun setSttModel(m: String) {
         if (m == prefs.sttModel) return
-        stop()
         prefs.sttModel = m
-        _ui.update { it.copy(sttModel = m, error = null) }
+        _ui.update { it.copy(sttModel = m, error = null, lastToolStatus = "🎙️ $m") }
     }
 
     fun setTtsModel(m: String) {
         if (m == prefs.ttsModel) return
-        stop()
         prefs.ttsModel = m
-        _ui.update { it.copy(ttsModel = m, error = null) }
+        _ui.update { it.copy(ttsModel = m, error = null, lastToolStatus = "🔊 $m") }
     }
 
     fun saveKey(k: String) {
         prefs.apiKey = k
         _ui.update { it.copy(hasKey = k.isNotBlank(), error = null, askKey = false) }
+        if (active && k.isNotBlank()) hotReloadSession()
     }
 
     fun consumeAskKey() = _ui.update { it.copy(askKey = false) }
 
-    // Modular मोड में लोकल कमांड न मिले तो LLM-राउटर से फोन-टूल पहचानना
     private suspend fun routeViaLlm(text: String): ToolExecutionResult {
         if (!MeeraTools.looksLikeCommand(text)) return ToolExecutionResult(false)
         val svc = MeeraAccessibilityService.instance
         val currentScreen = svc?.readScreenText(10) ?: "Unknown"
         val plan = rest.generatePlan(text, currentScreen)
         if (plan.isEmpty()) return ToolExecutionResult(false)
-        
+
         var stepCount = 0
         var finalSpokenReply = ""
         var executedCount = 0
         var failed = false
         val maxSteps = 8
-        
+
         while (stepCount < plan.size && stepCount < maxSteps) {
             val step = plan[stepCount]
             stepCount++
             val r = rest.routeCommand(step) ?: continue
             if (r.first == "none" || r.first.isBlank()) continue
-            
+
             val res = MeeraTools.executeFunctionCall(appCtx, r.first, r.second)
             executedCount++
             finalSpokenReply += res.spokenReply + " "
-            
+
             if (res.rawDataForAi.startsWith("FAILED") || res.rawDataForAi.startsWith("NEEDS_USER_HELP") || res.rawDataForAi.startsWith("PARTIAL") || res.rawDataForAi.startsWith("ERROR") || res.rawDataForAi.startsWith("TIMEOUT")) {
-                finalSpokenReply = "Boss, step ${stepCount} par dikkat aayi: ${res.spokenReply}"
+                finalSpokenReply = "Boss, step $stepCount par dikkat aayi: ${res.spokenReply}"
                 failed = true
                 break
             }
@@ -306,30 +448,115 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
             _ui.update { it.copy(askKey = true, error = "पहले API Key डालें") }
             return
         }
+        installConfigBridge()
         active = true
         requestInFlight.set(false)
         userBuf.clear(); aiBuf.clear()
+        registerNetCallback()
         newUserTurn = true; dropAudio = false; liveTurnOpen = false
         detector.reset(); preRoll.clear(); utter.clear(); collecting = false; bargeFrames = 0; quietMs = 0
         _ui.update { it.copy(user = "", ai = "", error = null, latencyMs = null, memoryCount = prefs.getMemories().size) }
         MeeraKeepAliveService.start(getApplication())
+        MeeraNotificationService.onIncomingMessage = { _, sender, msgText ->
+            if (active && sender.isNotBlank() && msgText.isNotBlank()) {
+                val grpFlag = MeeraNotificationService.lastNotifIsGroup
+                viewModelScope.launch(Dispatchers.IO) {
+                    val rule0 = MeeraAutoReply.getRuleFor(sender)
+                    val rule = if (rule0 != null && !grpFlag && MeeraAutoReply.allowReply(sender)) rule0 else null
+                    if (rule != null) {
+                        try {
+                            val autoReply = rest.generateQuickAutoReply(sender, msgText, rule, prefs.persona)
+                            val (ok, _) = MeeraNotificationService.replyToNotification(appCtx, sender, autoReply)
+                            if (ok) {
+                                val info = "सुनो, WhatsApp पर $sender का मैसेज आया था: '$msgText' — मैंने हैंडल करके रिप्लाई भेज दिया है!"
+                                _ui.update { it.copy(ai = info, lastToolStatus = "🤖 Auto-Replied $sender") }
+                                appendChatLog("model", info)
+                                if (st == VState.LISTENING && player?.busy != true) {
+                                    val pcm = rest.tts(info, prefs.voice, prefs.ttsModel, prefs.persona, prefs.girlfriendMode)
+                                    player?.enqueue(pcm)
+                                }
+                            }
+                        } catch (_: Exception) {}
+                    } else if (st == VState.LISTENING && player?.busy != true && !turnOpen()) {
+                        try {
+                            MeeraNotificationService.lastAnnouncedTime = System.currentTimeMillis()
+                            val alertLine = "सुनो, WhatsApp पर $sender का मैसेज आया है: ${msgText.take(80)}। क्या मैं तुम्हारी तरफ से रिप्लाई कर दूँ?"
+                            _ui.update { it.copy(ai = alertLine, lastToolStatus = "🔔 WhatsApp: $sender") }
+                            appendChatLog("model", alertLine)
+                            val pcm = rest.tts(alertLine, prefs.voice, prefs.ttsModel, prefs.persona, prefs.girlfriendMode)
+                            setState(VState.ASSISTANT_SPEAKING)
+                            player?.enqueue(pcm)
+                        } catch (_: Exception) {}
+                    }
+                }
+            }
+        }
         MeeraOverlayService.start(getApplication())
         setState(VState.CONNECTING)
         am.mode = AudioManager.MODE_IN_COMMUNICATION
         am.isSpeakerphoneOn = true
-        val sysPrompt = SystemPrompt.build(prefs.persona, prefs.girlfriendMode, prefs.getMemories() + prefs.getSkills())
+        val sysPrompt = buildFullSystemPrompt()
         try {
             player = PcmPlayer()
+            // माइक को तुरंत चालू करें ताकि जब तक यूज़र खुद बंद न करे, माइक हमेशा ऑन रहे
+            ensureMicStarted()
             if (prefs.mode == Mode.LIVE) {
                 live = GeminiLive(wsHttp, liveEvents).also {
                     it.connect(prefs.apiKey, prefs.liveModel, prefs.voice, sysPrompt, prefs.silenceMs)
+                    MeeraLiveBridge.liveSession = it
                 }
             } else {
-                startMic()
+                setState(VState.LISTENING)
             }
         } catch (e: Exception) {
             fail(e.message ?: "शुरू नहीं हो पाया")
         }
+    }
+
+    private var netCb: ConnectivityManager.NetworkCallback? = null
+
+    private fun isInternetAvailable(cm: ConnectivityManager): Boolean {
+        val net = cm.activeNetwork ?: return false
+        val caps = cm.getNetworkCapabilities(net) ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    }
+
+    private fun registerNetCallback() {
+        unregisterNetCallback()
+        try {
+            val cm = getApplication<Application>().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val cb = object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
+                    if (!active) return
+                    live?.onNetworkChanged(true)
+                    if (prefs.mode == Mode.MODULAR) {
+                        ensureMicStarted()
+                        setState(VState.LISTENING)
+                        _ui.update { it.copy(error = null, lastToolStatus = "✅ इंटरनेट जुड़ गया — माइक चालू है") }
+                    }
+                }
+
+                override fun onLost(network: Network) {
+                    if (!active) return
+                    val stillUp = isInternetAvailable(cm)
+                    if (!stillUp) {
+                        live?.onNetworkChanged(false)
+                        _ui.update { it.copy(error = null, lastToolStatus = "📶 इंटरनेट बंद है — माइक चालू है, नेटवर्क आते ही जुड़ जाएगी...") }
+                    }
+                }
+            }
+            cm.registerDefaultNetworkCallback(cb)
+            netCb = cb
+        } catch (_: Exception) {}
+    }
+
+    private fun unregisterNetCallback() {
+        try {
+            val cb = netCb ?: return
+            val cm = getApplication<Application>().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            cm.unregisterNetworkCallback(cb)
+        } catch (_: Exception) {}
+        netCb = null
     }
 
     @Suppress("DEPRECATION")
@@ -338,12 +565,18 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
         active = false
         requestInFlight.set(false)
         pipeline?.cancel(); pipeline = null
+        MeeraLiveBridge.stopScreenWatch()
+        MeeraLiveBridge.liveSession = null
         live?.close(); live = null
         mic?.stop(); mic = null
+        unregisterNetCallback()
+        MicMute.set(false)
         player?.release(); player = null
         try { am.isSpeakerphoneOn = false; am.mode = AudioManager.MODE_NORMAL } catch (_: Exception) {}
         collecting = false
         _level.value = 0f
+        MeeraNotificationService.onIncomingMessage = null
+        MeeraSiren.stop()
         MeeraKeepAliveService.stop(getApplication())
         MeeraOverlayService.stop(getApplication())
         setState(VState.IDLE)
@@ -359,16 +592,18 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
         _ui.update { it.copy(state = s) }
     }
 
-    private fun startMic() {
-        mic = MicRecorder(::onFrame).also { it.start() }
-        setState(VState.LISTENING)
+    private fun ensureMicStarted() {
+        if (mic == null) {
+            mic = MicRecorder(::onFrame).also { it.start() }
+        }
     }
 
     private fun turnOpen(): Boolean =
         (prefs.mode == Mode.MODULAR && pipeline?.isActive == true) || liveTurnOpen
 
-    private fun onFrame(frame: ShortArray) {
+    private fun onFrame(frameIn: ShortArray) {
         if (!active) return
+        val frame = if (MicMute.muted) ShortArray(frameIn.size) else frameIn
         val rms = rmsOf(frame)
         val p = player
         val assistant = st == VState.ASSISTANT_SPEAKING || p?.busy == true
@@ -431,7 +666,15 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
 
     private val liveEvents = object : GeminiLive.Events {
         override fun onReady() {
-            try { startMic() } catch (e: Exception) { fail(e.message ?: "माइक शुरू नहीं हुआ") }
+            if (!active) return
+            try {
+                ensureMicStarted()
+                detector.reset()
+                setState(VState.LISTENING)
+                _ui.update { it.copy(error = null, lastToolStatus = "✅ Live (${prefs.persona})") }
+            } catch (e: Exception) {
+                fail(e.message ?: "माइक शुरू नहीं हुआ")
+            }
         }
 
         override fun onAudio(pcm: ByteArray) {
@@ -464,7 +707,9 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
         override fun onToolCall(id: String, name: String, args: JSONObject) {
             toolCalledThisTurn = true
             viewModelScope.launch(Dispatchers.IO) {
-                val res = MeeraTools.executeFunctionCall(appCtx, name, args).also { MeeraDebugLog.log("LIVE_TOOL", "$name args=$args -> ${it.rawDataForAi.take(100)}") }
+                val res = MeeraTools.executeFunctionCall(appCtx, name, args).also {
+                    MeeraDebugLog.log("LIVE_TOOL", "$name args=$args -> ${it.rawDataForAi.take(100)}")
+                }
                 _ui.update { it.copy(lastToolStatus = "⚡ $name") }
                 live?.sendToolResponse(id, name, res.rawDataForAi.ifBlank { res.spokenReply })
             }
@@ -485,8 +730,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
             if (finishedUserText.isNotBlank()) {
                 appendChatLog("user", finishedUserText)
                 autoLearnFromUser(finishedUserText)
-                // अगर मॉडल ने टूल कॉल किए बिना बोला हो लेकिन यूज़र ने ऐप खोलने कहा हो, तो बैकअप के तौर पर चलाएँ
-                if (!toolCalledThisTurn && finishedUserText.length < 45 && !finishedUserText.lowercase().contains("chatgpt")) {
+                if (!toolCalledThisTurn && finishedUserText.length < 55 && !finishedUserText.lowercase().contains("chatgpt")) {
                     val cmdText = finishedUserText
                     viewModelScope.launch(Dispatchers.IO) { MeeraTools.tryDirectVoiceCommand(appCtx, cmdText) }
                 }
@@ -497,7 +741,32 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
         }
 
         override fun onError(msg: String) {
-            if (active) fail(msg)
+            if (!active) return
+            // केवल API Key गलत होने (401/403) पर ही रोकें; बाकी किसी भी नेटवर्क एरर में माइक चालू रखें!
+            if (msg.contains("401") || msg.contains("403") || msg.contains("API Key")) {
+                fail(msg)
+            } else {
+                ensureMicStarted()
+                setState(VState.CONNECTING)
+                _ui.update { it.copy(error = null, lastToolStatus = "📶 माइक चालू है — रीकनेक्ट हो रहा है...") }
+            }
+        }
+
+        override fun onReconnecting(attempt: Int) {
+            if (!active) return
+            player?.flush()
+            ensureMicStarted()
+            liveTurnOpen = false; dropAudio = false; toolCalledThisTurn = false
+            if (st != VState.CONNECTING) setState(VState.CONNECTING)
+            _ui.update { it.copy(error = null, lastToolStatus = "📶 माइक चालू है — दोबारा जुड़ रही हूँ (#$attempt)...") }
+        }
+
+        override fun onResumed() {
+            if (!active) return
+            ensureMicStarted()
+            detector.reset()
+            setState(VState.LISTENING)
+            _ui.update { it.copy(error = null, lastToolStatus = "✅ दोबारा जुड़ गई (${prefs.persona})") }
         }
     }
 
@@ -546,7 +815,6 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
                 appendChatLog("user", text)
                 autoLearnFromUser(text)
 
-                // Modular डायरेक्ट कमांड चेक (जैसे "WhatsApp खोलो", "स्क्रीन पढ़ो")
                 MeeraDebugLog.log("MODULAR", "heard='$text'")
                 val directRes = MeeraTools.tryDirectVoiceCommand(appCtx, text)
                 MeeraDebugLog.log("DIRECT", "executed=${directRes.executed} tool=${directRes.toolName} raw=${directRes.rawDataForAi.take(90)}")
@@ -555,10 +823,14 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
                 if (toolRes.executed && toolRes.spokenReply.isNotBlank() && (toolRes.rawDataForAi.startsWith("VERIFIED_SUCCESS:") || toolRes.rawDataForAi.startsWith("SUCCESS:"))) {
                     _ui.update { it.copy(ai = toolRes.spokenReply, lastToolStatus = "⚡ ${toolRes.toolName}") }
                     appendChatLog("model", toolRes.spokenReply)
-                    val pcm = rest.tts(toolRes.spokenReply, prefs.voice, prefs.ttsModel, prefs.persona, prefs.girlfriendMode)
-                    _ui.update { it.copy(latencyMs = System.currentTimeMillis() - endAt) }
-                    setState(VState.ASSISTANT_SPEAKING)
-                    player?.enqueue(pcm)
+                    if (toolRes.toolName != "switch_system_config") {
+                        val pcm = rest.tts(toolRes.spokenReply, prefs.voice, prefs.ttsModel, prefs.persona, prefs.girlfriendMode)
+                        _ui.update { it.copy(latencyMs = System.currentTimeMillis() - endAt) }
+                        setState(VState.ASSISTANT_SPEAKING)
+                        player?.enqueue(pcm)
+                    } else {
+                        setState(VState.LISTENING)
+                    }
                     return@launch
                 }
 
@@ -568,7 +840,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
 
                 history.add("user" to effectiveUserMsg); userAdded = true
 
-                val sysPrompt = SystemPrompt.build(prefs.persona, prefs.girlfriendMode, prefs.getMemories() + prefs.getSkills())
+                val sysPrompt = buildFullSystemPrompt()
                 val ttsJobs = Channel<Deferred<ByteArray>>(capacity = 3)
                 val voice = prefs.voice
                 val selectedTts = prefs.ttsModel
@@ -607,7 +879,15 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                if (active) fail(friendly(e))
+                // Modular मोड में भी नेटवर्क या सर्वर एरर आने पर माइक बंद न करें!
+                val errMsg = friendly(e)
+                if (errMsg.contains("API Key")) {
+                    if (active) fail(errMsg)
+                } else if (active) {
+                    ensureMicStarted()
+                    setState(VState.LISTENING)
+                    _ui.update { it.copy(ai = errMsg, error = null, lastToolStatus = "📶 माइक चालू है — नेटवर्क का इंतज़ार") }
+                }
             } finally {
                 requestInFlight.set(false)
                 if (userAdded) {
@@ -626,9 +906,9 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
         val low = m.lowercase()
         return when {
             e is UnknownHostException || low.contains("unable to resolve host") || low.contains("network is unreachable") ->
-                "इंटरनेट कनेक्शन कमज़ोर या बंद है। एक बार Wi-Fi या मोबाइल डेटा चेक कर लो 🌐"
+                "इंटरनेट कनेक्शन बंद है, पर माइक चालू है। नेटवर्क आते ही मैं जवाब दूँगी 🌐"
             low.contains("429") || low.contains("quota") || low.contains("resource_exhausted") || low.contains("rate limit") ->
-                "अरे सुनो, अभी आपकी Gemini API Key की फ्री मिनट्स/कोटा लिमिट पूरी हो गई है 🥺 एक-दो मिनट रुककर फिर से बात करते हैं, या साइड मेन्यू में जाकर दूसरी Key डाल लो!"
+                "अरे सुनो, अभी आपकी Gemini API Key की फ्री मिनट्स/कोटा लिमिट पूरी हो गई है 🥺 एक-दो मिनट रुककर फिर से बात करते हैं!"
             low.contains("503") || low.contains("busy") || low.contains("overloaded") ->
                 "अभी Google का AI सर्वर थोड़ा व्यस्त (Busy) है, कुछ सेकंड बाद दोबारा बोलो!"
             low.contains("api key") || low.contains("401") || low.contains("403") ->

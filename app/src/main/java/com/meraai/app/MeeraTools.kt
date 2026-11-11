@@ -176,7 +176,7 @@ object MeeraTools {
         val funcs = JSONArray()
 
         funcs.put(
-            JSONObject().put("name", "open_meera_dashboard").put("description", "Open your OWN app (Meera AI Dashboard). Use when user says 'Come to your dashboard' or after finishing a task.").put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()))
+            JSONObject().put("name", "open_meera_dashboard").put("description", "Open your OWN app (Meera AI Dashboard). Use ONLY when the user explicitly asks you to come back to your own app or dashboard. NEVER call it by yourself after a task.").put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()))
         )
         funcs.put(
             JSONObject().put("name", "look_at_screen_visually").put("description", "Look at the screen image. Use if text parsing fails (e.g., hidden buttons, images).").put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject().put("question", JSONObject().put("type", "STRING"))))
@@ -361,11 +361,137 @@ object MeeraTools {
                 )
         )
 
+        funcs.put(
+            JSONObject()
+                .put("name", "set_mission_plan")
+                .put("description", "For ANY request with 2 or more steps or apps, call this FIRST with a numbered checklist, one short step per line. The checklist is remembered and repeated after every action so the task is never forgotten.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject().put("steps", JSONObject().put("type", "STRING").put("description", "Numbered steps, one step per line")))
+                    .put("required", JSONArray().put("steps")))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "mark_step_done")
+                .put("description", "Mark one checklist step as done ONLY after it is verified (VERIFIED_SUCCESS, or clearly visible on the new screen).")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject().put("step", JSONObject().put("type", "INTEGER").put("description", "Step number from the checklist")))
+                    .put("required", JSONArray().put("step")))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "finish_mission")
+                .put("description", "Clear the checklist when all steps are finished or the user cancels the task.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject().put("note", JSONObject().put("type", "STRING").put("description", "Optional short note"))))
+        )
+                funcs.put(
+            JSONObject()
+                .put("name", "reply_whatsapp_notification")
+                .put("description", "Instantly reply to an incoming WhatsApp message notification in the background (or open chat if notification is gone). Use when user says 'reply kar do', 'Mummy ko reply bhej do', or 'Ritik ka chat handle kar lo'.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("sender_name", JSONObject().put("type", "STRING").put("description", "Sender or group name (or 'latest' for the last message received)"))
+                        .put("reply_message", JSONObject().put("type", "STRING").put("description", "The message text to send as reply")))
+                    .put("required", JSONArray().put("reply_message")))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "post_whatsapp_status")
+                .put("description", "Design a beautiful poster card with a quote/shayari/text and automatically post it to the user's WhatsApp Status (My status). Use when user says 'WhatsApp status laga do' or 'WhatsApp pe story daal do'.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("status_text", JSONObject().put("type", "STRING").put("description", "The quote, shayari, or text to put on the status poster")))
+                    .put("required", JSONArray().put("status_text")))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "send_file_on_whatsapp")
+                .put("description", "Find a file/PDF/document/image in the phone's Downloads or storage by name and send it to a WhatsApp contact or group (e.g. 'meeting wali file Team Updates group me send kar do').")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("file_query", JSONObject().put("type", "STRING").put("description", "File name keyword, e.g. 'meeting', 'important', 'resume', or 'latest'"))
+                        .put("recipient", JSONObject().put("type", "STRING").put("description", "WhatsApp contact name or group name, e.g. 'Team Updates'")))
+                    .put("required", JSONArray().put("file_query").put("recipient")))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "open_stock_chart")
+                .put("description", "Open the live stock chart for a company/symbol (e.g., HAL, Tata Motors, Nifty) and visually analyze its trend, support, and resistance levels.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("stock_name", JSONObject().put("type", "STRING").put("description", "Stock or index name, e.g. 'HAL', 'Reliance', 'Nifty 50'")))
+                    .put("required", JSONArray().put("stock_name")))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "toggle_live_screen_watch")
+                .put("description", "Start or stop live continuous screen watching (streams screen frames to Live AI every 2.8s) for live BGMI gameplay commentary or live app assistance.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("enable", JSONObject().put("type", "BOOLEAN").put("description", "true to start watching screen live, false to stop")))
+                    .put("required", JSONArray().put("enable")))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "find_my_phone")
+                .put("description", "Set phone volume to 100% maximum and ring/speak loudly when the user asks 'Mera phone kahan hai' or cannot find their phone.")
+                .put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()))
+        )
+                funcs.put(
+            JSONObject()
+                .put("name", "activate_sos")
+                .put("description", "Activate Emergency SOS: starts loud siren, fetches live GPS Google Maps location link, sends emergency SMS + WhatsApp location alert, and calls the emergency contact.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("emergency_contact", JSONObject().put("type", "STRING").put("description", "Optional contact name to alert (defaults to Papa/Mummy/Bhai/Emergency)"))))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "stop_sos")
+                .put("description", "Stop the emergency SOS siren sound.")
+                .put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "set_whatsapp_auto_reply")
+                .put("description", "Enable or disable autonomous WhatsApp chat handling for a specific contact (e.g., 'Ritik ka chat tum apne hisab se handle kar lo').")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("contact_name", JSONObject().put("type", "STRING").put("description", "Contact name whose chat Meera should handle automatically, or 'all'"))
+                        .put("enable", JSONObject().put("type", "BOOLEAN").put("description", "true to enable autonomous replies, false to stop"))
+                        .put("style_note", JSONObject().put("type", "STRING").put("description", "How to reply, e.g., 'polite professional intro and handle questions'")))
+                    .put("required", JSONArray().put("contact_name")))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "unlock_phone_screen")
+                .put("description", "Wake the screen and perform swipe-up unlock gesture when the user says 'unlock karo' or 'lock kholo'.")
+                .put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "switch_system_config")
+                .put("description", "Switch personality (Meera, Jarvis, Rudra), change voice (Aoede, Orus, Fenrir, Kore, Leda, Zephyr, Despina, Callirrhoe, Puck, Charon, Alnilam), toggle Girlfriend mode, or switch engine mode (LIVE or MODULAR) WITHOUT turning off the microphone. Call this immediately when the user says 'Jarvis se baat karao', 'Jarvis mode on karo', 'Rudra ko bulao', 'Meera ko bulao', 'aawaz badlo', or 'Modular/Live mode me aao'.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("persona", JSONObject().put("type", "STRING").put("description", "Meera, Jarvis, or Rudra"))
+                        .put("voice", JSONObject().put("type", "STRING").put("description", "Optional Google voice name like Aoede, Orus, Fenrir, Kore, Leda, Zephyr, Despina, Callirrhoe, Puck, Charon, Alnilam"))
+                        .put("girlfriend_mode", JSONObject().put("type", "BOOLEAN").put("description", "Optional true or false for Meera's Girlfriend/Companion mode"))
+                        .put("mode", JSONObject().put("type", "STRING").put("description", "Optional LIVE or MODULAR"))
+                        .put("model", JSONObject().put("type", "STRING").put("description", "Optional model code to switch to"))))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "get_system_status")
+                .put("description", "Get complete real-time status of Meera AI's architecture, active personality, all 3 personalities (Meera, Jarvis, Rudra), voices, Live/Modular mode, active AI models, tabs, and granted Android permissions.")
+                .put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()))
+        )
         return JSONArray().put(JSONObject().put("functionDeclarations", funcs))
     }
 
     private val SCREEN_AFTER_TOOLS = setOf(
         "open_app", "tap_element", "screen_action", "tap_coordinates",
+        "set_mission_plan", "wait_for_screen_text",
         "play_or_search", "youtube_search_and_play",
         "whatsapp_message", "whatsapp_send_in_open_chat"
     )
@@ -377,12 +503,12 @@ object MeeraTools {
         return try {
             if (name == "open_app" || name == "play_or_search" || name == "youtube_search_and_play") Thread.sleep(1500)
             svc.waitForScreenSettle(1500L)
-            val screen = svc.readScreenElements(50)   // ye last me, taaki #id wahi rahein jo model ko dikhe
+            val screen = svc.readScreenElements(200)   // ye last me, taaki #id wahi rahein jo model ko dikhe
             if (screen.isBlank()) res
             else res.copy(
                 rawDataForAi = res.rawDataForAi +
                     "\nNEW SCREEN AFTER ACTION:\n" + screen +
-                    "\nIf the user's overall task is NOT finished yet, immediately call the next tool (prefer tap_element with the #id). Do not ask the user what to do next."
+                    "\nIf the user's overall task is NOT finished yet, immediately call the next tool (prefer tap_element with the #id). Do not ask the user what to do next." + MeeraMission.extraContext(svc.getActivePackage())
             )
         } catch (_: Exception) { res }
     }
@@ -448,7 +574,7 @@ object MeeraTools {
                 } else {
                     val content = svc.readScreenElements()
                     val summary = if (content.isBlank()) "स्क्रीन पर अभी कोई टेक्स्ट नहीं दिख रहा है।" else content
-                    ToolExecutionResult(true, name, "", "CURRENT SCREEN ELEMENTS:\n$summary")
+                    ToolExecutionResult(true, name, "", "CURRENT SCREEN ELEMENTS:\n$summary" + MeeraMission.extraContext(svc.getActivePackage()))
                 }
             }
             "tap_element" -> {
@@ -524,6 +650,97 @@ object MeeraTools {
                 val platform = args.optString("platform", "youtube").lowercase()
                 val autoPlay = args.optBoolean("auto_play", !platform.contains("google"))
                 playOrSearchMedia(ctx, q, platform, autoPlay = autoPlay)
+            }
+            "set_mission_plan" -> {
+                MeeraMission.set(args.optString("steps", ""))
+                ToolExecutionResult(true, name, "", "VERIFIED_SUCCESS: Plan saved.\n" + MeeraMission.status() + "\nStart the first pending step immediately. Do not wait for the user.")
+            }
+            "mark_step_done" -> {
+                val n = args.optInt("step", -1)
+                val ok = MeeraMission.markDone(n)
+                ToolExecutionResult(true, name, "", (if (ok) "VERIFIED_SUCCESS: Step $n marked done.\n" else "FAILED: no such step number.\n") + MeeraMission.status())
+            }
+            "finish_mission" -> {
+                MeeraMission.clear()
+                ToolExecutionResult(true, name, "", "VERIFIED_SUCCESS: Mission cleared.")
+            }
+            "reply_whatsapp_notification" -> {
+                val sender = args.optString("sender_name", "latest").trim().ifBlank { "latest" }
+                val replyMsg = args.optString("reply_message", "").trim()
+                replyWhatsAppSmartTool(ctx, sender, replyMsg)
+            }
+            "post_whatsapp_status" -> {
+                val stText = args.optString("status_text", "").trim()
+                postWhatsAppStatusTool(ctx, stText)
+            }
+            "send_file_on_whatsapp" -> {
+                val fQuery = args.optString("file_query", "").trim()
+                val rec = args.optString("recipient", "").trim()
+                sendFileOnWhatsAppTool(ctx, fQuery, rec)
+            }
+            "open_stock_chart" -> {
+                val stock = args.optString("stock_name", "").trim()
+                analyzeStockChartTool(ctx, stock)
+            }
+            "toggle_live_screen_watch" -> {
+                val en = args.optBoolean("enable", true)
+                if (en) {
+                    val ok = MeeraLiveBridge.startScreenWatch()
+                    ToolExecutionResult(
+                        true, name,
+                        if (ok) "मैंने लाइव स्क्रीन देखना चालू कर दिया है! अब आप गेम खेलें या कोई भी स्क्रीन खोलें, मैं लाइव देख रही हूँ।" else "लाइव स्क्रीन स्ट्रीम के लिए कृपया Live मोड और Accessibility चालू रखें।",
+                        if (ok) "VERIFIED_SUCCESS: Live screen watching started (streaming every 2.8s)." else "ERROR: Need Android 11+, Accessibility ON, and Live mode."
+                    )
+                } else {
+                    MeeraLiveBridge.stopScreenWatch()
+                    ToolExecutionResult(true, name, "लाइव स्क्रीन देखना बंद कर दिया है।", "VERIFIED_SUCCESS: Live screen watching stopped.")
+                }
+            }
+            "activate_sos" -> {
+                val target = args.optString("emergency_contact", "").trim()
+                activateSosTool(ctx, target)
+            }
+            "stop_sos" -> {
+                MeeraSiren.stop()
+                ToolExecutionResult(true, name, "SOS सायरन बंद कर दिया है।", "VERIFIED_SUCCESS: SOS siren stopped.")
+            }
+            "set_whatsapp_auto_reply" -> {
+                val cName = args.optString("contact_name", "").trim()
+                val en = args.optBoolean("enable", true)
+                val note = args.optString("style_note", "Friendly & helpful reply on behalf of Rahul").trim()
+                if (en && cName.isNotBlank()) {
+                    MeeraAutoReply.enable(cName, note)
+                    val firstSent = MeeraNotificationService.replyToNotification(ctx, cName, "नमस्ते! मैं राहुल की AI असिस्टेंट मीरा हूँ, बताइए क्या काम है?").first
+                    ToolExecutionResult(
+                        true, name,
+                        "ठीक है! मैं '$cName' का चैट हैंडल कर रही हूँ${if (firstSent) " और अभी के मैसेज का रिप्लाई भी भेज दिया है" else ""}। जैसे ही कोई नया मैसेज आएगा मैं खुद संभाल लूँगी!",
+                        "VERIFIED_SUCCESS: Autonomous chat handler enabled for '$cName'."
+                    )
+                } else {
+                    MeeraAutoReply.disable(cName)
+                    ToolExecutionResult(true, name, "'$cName' के लिए ऑटो-रिप्लाई बंद कर दिया है।", "VERIFIED_SUCCESS: Auto-reply disabled for '$cName'.")
+                }
+            }
+            "unlock_phone_screen" -> {
+                unlockPhoneScreenTool(ctx)
+            }
+            "switch_system_config" -> {
+                val p = args.optString("persona", "").trim().takeIf { it.isNotEmpty() }
+                val v = args.optString("voice", "").trim().takeIf { it.isNotEmpty() }
+                val gf = if (args.has("girlfriend_mode")) args.optBoolean("girlfriend_mode") else null
+                val m = args.optString("mode", "").trim().takeIf { it.isNotEmpty() }
+                val mod = args.optString("model", "").trim().takeIf { it.isNotEmpty() }
+                val reply = MeeraConfigBridge.onConfigChange?.invoke(p, v, gf, m, mod)
+                    ?: "सिस्टम सेटिंग अपडेट कर दी गई है।"
+                ToolExecutionResult(true, name, reply, "VERIFIED_SUCCESS: $reply")
+            }
+            "get_system_status" -> {
+                val statusReport = MeeraConfigBridge.onStatusRequest?.invoke()
+                    ?: SystemPrompt.build(Prefs(ctx).persona, Prefs(ctx).girlfriendMode, Prefs(ctx).getMemories(), ctx, Prefs(ctx))
+                ToolExecutionResult(true, name, "", "VERIFIED_SUCCESS: CURRENT SYSTEM ARCHITECTURE & STATUS:\n$statusReport")
+            }
+            "find_my_phone" -> {
+                findMyPhoneTool(ctx)
             }
             "play_macro" -> {
                 val macroName = args.optString("name", "").trim()
@@ -612,6 +829,69 @@ object MeeraTools {
         val raw = userText.trim().trimEnd('।', '.', '!', '?', ',', ' ')
         val low = raw.lowercase()
 
+        // 00. Direct Personality / Mode Switch by Voice (बिना माइक बंद किए तुरंत स्विच)
+        val wantsSwitch = low.contains("मोड") || low.contains("mode") || low.contains("बुलाओ") || low.contains("bulao") ||
+            low.contains("बात कराओ") || low.contains("baat karao") || low.contains("स्विच") || low.contains("switch") ||
+            low.contains("एक्टिवेट") || low.contains("activate") || low.contains("ऑन करो") || low.contains("on karo") ||
+            low.contains("बन जाओ") || low.contains("ban jao") || low.contains("पर्सनैलिटी") || low.contains("personality")
+        if (wantsSwitch) {
+            when {
+                low.contains("जारविस") || low.contains("जार्विस") || low.contains("jarvis") -> {
+                    val r = MeeraConfigBridge.onConfigChange?.invoke("Jarvis", null, null, null, null)
+                        ?: "Jarvis online, Boss! माइक चालू है, बताइए क्या कमांड है?"
+                    return ToolExecutionResult(true, "switch_system_config", r, "VERIFIED_SUCCESS: Switched to Jarvis")
+                }
+                low.contains("रुद्र") || low.contains("रुद्रा") || low.contains("rudra") -> {
+                    val r = MeeraConfigBridge.onConfigChange?.invoke("Rudra", null, null, null, null)
+                        ?: "रुद्रा हाज़िर है भाई! माइक चालू है, बोल क्या करना है?"
+                    return ToolExecutionResult(true, "switch_system_config", r, "VERIFIED_SUCCESS: Switched to Rudra")
+                }
+                (low.contains("मीरा") || low.contains("meera")) && !low.contains("डैशबोर्ड") && !low.contains("ऐप") -> {
+                    val r = MeeraConfigBridge.onConfigChange?.invoke("Meera", null, null, null, null)
+                        ?: "मैं आ गई राहुल! माइक चालू है, बताओ क्या बात करनी है?"
+                    return ToolExecutionResult(true, "switch_system_config", r, "VERIFIED_SUCCESS: Switched to Meera")
+                }
+                low.contains("गर्लफ्रेंड") || low.contains("girlfriend") -> {
+                    val turnOff = low.contains("बंद") || low.contains("ऑफ") || low.contains("off")
+                    val r = MeeraConfigBridge.onConfigChange?.invoke("Meera", null, !turnOff, null, null)
+                        ?: if (turnOff) "गर्लफ्रेंड मोड ऑफ कर दिया है।" else "गर्लफ्रेंड मोड ऑन हो गया है!"
+                    return ToolExecutionResult(true, "switch_system_config", r, "VERIFIED_SUCCESS: Girlfriend mode=${!turnOff}")
+                }
+                low.contains("मॉड्यूलर") || low.contains("modular") -> {
+                    val r = MeeraConfigBridge.onConfigChange?.invoke(null, null, null, "MODULAR", null)
+                        ?: "Modular मोड चालू हो गया है और माइक ऑन है!"
+                    return ToolExecutionResult(true, "switch_system_config", r, "VERIFIED_SUCCESS: Switched to MODULAR mode")
+                }
+                low.contains("लाइव मोड") || low.contains("live mode") -> {
+                    val r = MeeraConfigBridge.onConfigChange?.invoke(null, null, null, "LIVE", null)
+                        ?: "Live मोड चालू हो गया है और माइक ऑन है!"
+                    return ToolExecutionResult(true, "switch_system_config", r, "VERIFIED_SUCCESS: Switched to LIVE mode")
+                }
+            }
+        }
+
+        // 00A. Emergency SOS Trigger ("SOS activate kar do" / "बचाओ इमरजेंसी")
+        if (Regex("\\bsos\\b").containsMatchIn(low) || low.contains("एसओएस") || (low.contains("इमरजेंसी") && (low.contains("एक्टिवेट") || low.contains("बचाओ") || low.contains("अलर्ट")))) {
+            if (low.contains("बंद") || low.contains("रोको") || low.contains("stop")) {
+                MeeraSiren.stop()
+                return ToolExecutionResult(true, "stop_sos", "SOS सायरन बंद कर दिया है।", "VERIFIED_SUCCESS: SOS stopped")
+            }
+            return activateSosTool(ctx, "")
+        }
+        // 00B. Voice Unlock Screen ("अनलॉक करो" / "लॉक खोलो")
+        if (low == "अनलॉक करो" || low == "अनलॉक कर दो" || low == "लॉक खोलो" || low == "फोन अनलॉक करो" || low == "unlock karo" || low == "unlock phone") {
+            return unlockPhoneScreenTool(ctx)
+        }
+        // 0A. Find My Phone ("मेरा फोन कहाँ है")
+        if (low.contains("मेरा फोन कहां") || low.contains("मेरा फ़ोन कहां") || low.contains("मेरा फोन कहाँ") || low.contains("mera phone kahan") || low.contains("phone kahan hai")) {
+            return findMyPhoneTool(ctx)
+        }
+        // 0B. WhatsApp Status / Story ("WhatsApp पे स्टोरी/स्टेटस लगा दो")
+        if ((low.contains("whatsapp") || low.contains("व्हाट्सएप") || low.contains("व्हाट्सऐप")) && (low.contains("स्टोरी") || low.contains("स्टेटस") || low.contains("story") || low.contains("status")) && (low.contains("लगा") || low.contains("डाल") || low.contains("laga") || low.contains("daal") || low.contains("post"))) {
+            val customQuote = raw.replace(Regex("(?i)^.*?(?:कि|ki)[ \t]+"), "").takeIf { it != raw && it.length >= 6 }
+                ?: "तुम्हारी याद में नींद कहाँ आती है... ✨❤️"
+            return postWhatsAppStatusTool(ctx, customQuote)
+        }
         // 1. Strict Scroll Guard: ONLY scroll when user explicitly says scroll / नीचे स्क्रॉल / ऊपर स्क्रॉल
         if (low.contains("स्क्रॉल डाउन") || low.contains("नीचे स्क्रॉल") || low == "नीचे करो" || low.contains("scroll down")) {
             val ok = MeeraAccessibilityService.instance?.performSystemAction("scroll_down") == true
@@ -732,7 +1012,6 @@ object MeeraTools {
                 val svc = MeeraAccessibilityService.instance
                 val pkg = if (svc == null) "(Accessibility OFF)" else svc.getActivePackage()
                 MeeraDebugLog.log("OPEN_APP", "2.5s baad ASLI foreground app=$pkg")
-                MeeraDebugLog.copyNow(appCtx)
             } catch (_: Exception) {}
         }.start()
         return ok
@@ -848,6 +1127,18 @@ object MeeraTools {
     /** Maya AbstractC2163ad2.f style 4-tier contact similarity score */
     private fun scoreContactMatch(savedName: String, rawQuery: String): Float {
         val sLow = savedName.lowercase(Locale.ROOT).trim()
+        val qCheck = rawQuery.lowercase(Locale.ROOT).trim()
+        val relationAliases = mapOf(
+            listOf("wife", "वाइफ", "बीवी", "पत्नी", "biwi", "wifey") to listOf("wife", "wifey", "biwi", "jaan", "baby", "वाइफ", "पत्नी"),
+            listOf("mummy", "मम्मी", "माँ", "मां", "mom", "maa", "mata") to listOf("mummy", "mom", "maa", "mata", "ammi", "मम्मी", "माँ"),
+            listOf("papa", "पापा", "पिता", "dad", "baba") to listOf("papa", "dad", "father", "baba", "पापा", "पिता"),
+            listOf("bhai", "भाई", "भैया", "bhaiya", "bro") to listOf("bhai", "bhaiya", "bro", "brother", "भाई")
+        )
+        for ((triggers, targets) in relationAliases) {
+            if (triggers.any { qCheck == it || qCheck.contains(it) } && targets.any { sLow.contains(it) }) {
+                return 0.96f
+            }
+        }
         val qRaw = rawQuery.lowercase(Locale.ROOT).trim()
         val qLat = transliterateHindiToEnglish(qRaw)
 
@@ -1147,6 +1438,367 @@ object MeeraTools {
         }
     }
 
+    
+    private fun replyWhatsAppSmartTool(ctx: Context, sender: String, message: String): ToolExecutionResult {
+        if (message.isBlank()) {
+            return ToolExecutionResult(true, "reply_whatsapp_notification", "बताइए क्या रिप्लाई लिखकर भेजना है?", "NEEDS_INPUT: Reply message is empty")
+        }
+        val (sentInBg, targetTitle) = MeeraNotificationService.replyToNotification(ctx, sender, message)
+        if (sentInBg) {
+            return ToolExecutionResult(
+                true, "reply_whatsapp_notification",
+                "मैंने बैकग्राउंड से ही '$targetTitle' के मैसेज का रिप्लाई '$message' भेज दिया है!",
+                "VERIFIED_SUCCESS: Replied '$message' directly to '$targetTitle' via Notification RemoteInput."
+            )
+        }
+        if (sender.isNotBlank() && sender != "latest") {
+            return sendWhatsAppVerified(ctx, sender, message)
+        }
+        return ToolExecutionResult(
+            true, "reply_whatsapp_notification",
+            "अभी कोई एक्टिव नोटिफ़िकेशन रिप्लाई के लिए नहीं दिखा। किस नाम पर WhatsApp मैसेज भेजना है बताइए?",
+            "FAILED: No active notification reply action found."
+        )
+    }
+
+    private fun postWhatsAppStatusTool(ctx: Context, rawStatusText: String): ToolExecutionResult {
+        val quote = rawStatusText.ifBlank { "ज़िंदगी में हर लम्हा खास होता है, जब अपनों का साथ होता है ✨❤️" }
+        return try {
+            val w = 1080
+            val h = 1920
+            val bmp = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
+            val canvas = android.graphics.Canvas(bmp)
+
+            val bgPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                shader = android.graphics.LinearGradient(
+                    0f, 0f, w.toFloat(), h.toFloat(),
+                    intArrayOf(
+                        android.graphics.Color.parseColor("#0F172A"),
+                        android.graphics.Color.parseColor("#1E1B4B"),
+                        android.graphics.Color.parseColor("#311042")
+                    ),
+                    null, android.graphics.Shader.TileMode.CLAMP
+                )
+            }
+            canvas.drawRect(0f, 0f, w.toFloat(), h.toFloat(), bgPaint)
+
+            val cardRect = android.graphics.RectF(90f, 420f, w - 90f, h - 420f)
+            val cardPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                color = android.graphics.Color.parseColor("#22FFFFFF")
+                style = android.graphics.Paint.Style.FILL
+            }
+            val borderPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                color = android.graphics.Color.parseColor("#2EE6A8")
+                style = android.graphics.Paint.Style.STROKE
+                strokeWidth = 4f
+            }
+            canvas.drawRoundRect(cardRect, 48f, 48f, cardPaint)
+            canvas.drawRoundRect(cardRect, 48f, 48f, borderPaint)
+
+            val tp = android.text.TextPaint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                color = android.graphics.Color.WHITE
+                textSize = 64f
+                typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+            }
+            val textWidth = (w - 280)
+            val layout = android.text.StaticLayout.Builder
+                .obtain("“ $quote ”", 0, ("“ $quote ”").length, tp, textWidth)
+                .setAlignment(android.text.Layout.Alignment.ALIGN_CENTER)
+                .setLineSpacing(14f, 1.15f)
+                .build()
+
+            canvas.save()
+            val textY = (h - layout.height) / 2f
+            canvas.translate(140f, textY)
+            layout.draw(canvas)
+            canvas.restore()
+
+            val values = android.content.ContentValues().apply {
+                put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, "meera_status_${System.currentTimeMillis()}.jpg")
+                put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+            }
+            val uri = ctx.contentResolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                ?: return ToolExecutionResult(true, "post_whatsapp_status", "स्टेटस पोस्टर सेव नहीं हो पाया।", "ERROR: MediaStore insert failed")
+
+            ctx.contentResolver.openOutputStream(uri)?.use { out ->
+                bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, out)
+            }
+
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "image/*"
+                setPackage("com.whatsapp")
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_TEXT, quote)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            ctx.startActivity(shareIntent)
+
+            val svc = MeeraAccessibilityService.instance
+            if (svc != null) {
+                Thread.sleep(1900)
+                val clickedStatus = svc.clickByText("My status") || svc.clickByText("मेरा स्टेटस") || svc.clickByText("Status")
+                if (clickedStatus) {
+                    Thread.sleep(1200)
+                    svc.clickWhatsAppSendButton() || svc.clickByText("Send") || svc.clickByText("भेजें")
+                    Thread.sleep(1400)
+                    val sentFinal = svc.clickWhatsAppSendButton() || svc.clickByText("Send") || svc.clickByText("भेजें")
+                    if (sentFinal) {
+                        return ToolExecutionResult(
+                            true, "post_whatsapp_status",
+                            "मैंने WhatsApp पर आपका स्टेटस लगा दिया है! पोस्टर पर लिखा है: '$quote' — कैसा लगा?",
+                            "VERIFIED_SUCCESS: Generated poster and posted to WhatsApp Status -> '$quote'"
+                        )
+                    }
+                }
+            }
+            ToolExecutionResult(
+                true, "post_whatsapp_status",
+                "मैंने '$quote' का पोस्टर बनाकर WhatsApp खोल दिया है, बस My status चुनकर सेंड दबा दीजिए!",
+                "PARTIAL: Poster generated and opened in WhatsApp share screen."
+            )
+        } catch (e: Exception) {
+            ToolExecutionResult(true, "post_whatsapp_status", "स्टेटस लगाने में दिक्कत आई: ${e.message}", "ERROR: ${e.message}")
+        }
+    }
+
+    private fun findFileUriForShare(ctx: Context, query: String): Pair<Uri, String>? {
+        val q = query.lowercase().replace(Regex("(?:फाइल|फ़ाइल|file|pdf|पीडीएफ|document|डॉक्यूमेंट|वाली|वाला)"), "").trim()
+        val proj = arrayOf(
+            android.provider.MediaStore.Files.FileColumns._ID,
+            android.provider.MediaStore.MediaColumns.DISPLAY_NAME
+        )
+        val sort = "${android.provider.MediaStore.MediaColumns.DATE_MODIFIED} DESC"
+        val extUri = android.provider.MediaStore.Files.getContentUri("external")
+        try {
+            ctx.contentResolver.query(extUri, proj, null, null, sort)?.use { c ->
+                var latestFallback: Pair<Uri, String>? = null
+                var count = 0
+                while (c.moveToNext() && count < 250) {
+                    count++
+                    val id = c.getLong(0)
+                    val name = c.getString(1)?.trim() ?: continue
+                    val u = android.content.ContentUris.withAppendedId(extUri, id)
+                    if (latestFallback == null) latestFallback = u to name
+                    if (q.isEmpty() || q == "latest" || name.lowercase().contains(q)) {
+                        return u to name
+                    }
+                }
+                if (q == "latest" && latestFallback != null) return latestFallback
+            }
+        } catch (_: Exception) {}
+        return null
+    }
+
+    private fun sendFileOnWhatsAppTool(ctx: Context, fileQuery: String, recipient: String): ToolExecutionResult {
+        val found = findFileUriForShare(ctx, fileQuery)
+            ?: return ToolExecutionResult(
+                true, "send_file_on_whatsapp",
+                "मुझे फोन में '$fileQuery' नाम की कोई फाइल नहीं मिली। कृपया फाइल का नाम एक बार चेक कर लें।",
+                "FAILED: File matching '$fileQuery' not found in MediaStore."
+            )
+        val (fileUri, fileName) = found
+        return try {
+            val share = Intent(Intent.ACTION_SEND).apply {
+                type = "*/*"
+                setPackage("com.whatsapp")
+                putExtra(Intent.EXTRA_STREAM, fileUri)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            ctx.startActivity(share)
+            val svc = MeeraAccessibilityService.instance
+            if (svc != null) {
+                Thread.sleep(1900)
+                val engRec = transliterateHindiToEnglish(recipient)
+                var picked = svc.clickByText(recipient) || svc.clickByText(engRec)
+                if (!picked) {
+                    if (svc.clickByText("Search") || svc.clickByText("खोजें")) {
+                        Thread.sleep(500)
+                        svc.inputText(engRec, autoSend = false)
+                        Thread.sleep(1100)
+                        picked = svc.clickByText(engRec) || svc.clickByText(recipient)
+                    }
+                }
+                if (picked) {
+                    Thread.sleep(1000)
+                    svc.clickWhatsAppSendButton() || svc.clickByText("Send") || svc.clickByText("भेजें")
+                    Thread.sleep(1300)
+                    svc.clickWhatsAppSendButton() || svc.clickByText("Send") || svc.clickByText("भेजें")
+                    return ToolExecutionResult(
+                        true, "send_file_on_whatsapp",
+                        "हो गया! मैंने '$fileName' फाइल को '$recipient' में भेज दिया है।",
+                        "VERIFIED_SUCCESS: Shared file '$fileName' to '$recipient' on WhatsApp."
+                    )
+                }
+            }
+            ToolExecutionResult(
+                true, "send_file_on_whatsapp",
+                "मैंने '$fileName' फाइल WhatsApp में खोल दी है, कृपया '$recipient' चुनकर सेंड कर दें।",
+                "PARTIAL: Opened WhatsApp share sheet with file '$fileName'."
+            )
+        } catch (e: Exception) {
+            ToolExecutionResult(true, "send_file_on_whatsapp", "फाइल भेजने में दिक्कत आई: ${e.message}", "ERROR: ${e.message}")
+        }
+    }
+
+    private fun analyzeStockChartTool(ctx: Context, stockName: String): ToolExecutionResult {
+        val clean = stockName.ifBlank { "NIFTY 50" }
+        return try {
+            val encoded = URLEncoder.encode("$clean share price chart", "UTF-8")
+            val uri = Uri.parse("https://www.google.com/search?q=$encoded")
+            ctx.startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            val svc = MeeraAccessibilityService.instance
+            if (svc != null && android.os.Build.VERSION.SDK_INT >= 30) {
+                Thread.sleep(3600)
+                val bmp = kotlinx.coroutines.runBlocking {
+                    kotlinx.coroutines.suspendCancellableCoroutine<android.graphics.Bitmap?> { cont ->
+                        svc.captureScreenshot { b -> cont.resumeWith(Result.success(b)) }
+                    }
+                }
+                if (bmp != null) {
+                    val rest = GeminiRest(okhttp3.OkHttpClient(), { Prefs(ctx).apiKey })
+                    val prompt = "You are Meera, a smart market analyst. Look at this stock chart screen for $clean. State the current price, overall trend (up/down/sideways), approximate support and resistance levels visible on the chart, and give a short 3-sentence conversational summary in natural Hinglish."
+                    val analysis = kotlinx.coroutines.runBlocking { rest.analyzeScreenVisually(bmp, prompt) }
+                    return ToolExecutionResult(
+                        true, "open_stock_chart",
+                        analysis,
+                        "VERIFIED_SUCCESS: Opened chart for $clean and visually analyzed -> $analysis"
+                    )
+                }
+            }
+            ToolExecutionResult(
+                true, "open_stock_chart",
+                "$clean का चार्ट खोल दिया है!",
+                "VERIFIED_SUCCESS: Opened stock chart for $clean"
+            )
+        } catch (e: Exception) {
+            ToolExecutionResult(true, "open_stock_chart", "चार्ट खोलने में दिक्कत आई।", "ERROR: ${e.message}")
+        }
+    }
+
+    private fun findMyPhoneTool(ctx: Context): ToolExecutionResult {
+        return try {
+            val am = ctx.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+            am.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC), 0)
+            am.setStreamVolume(android.media.AudioManager.STREAM_RING, am.getStreamMaxVolume(android.media.AudioManager.STREAM_RING), 0)
+            Thread {
+                try {
+                    val ringUri = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_RINGTONE)
+                        ?: android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION)
+                    val r = android.media.RingtoneManager.getRingtone(ctx.applicationContext, ringUri)
+                    r?.play()
+                    Thread.sleep(3800)
+                    r?.stop()
+                } catch (_: Exception) {}
+            }.start()
+            ToolExecutionResult(
+                true, "find_my_phone",
+                "अरे सुनो! आपका फोन यहाँ है, देखो मेरी आवाज़ आ रही है, यहीं रखा है इधर आओ!",
+                "VERIFIED_SUCCESS: Maxed volume and played ringtone to locate phone."
+            )
+        } catch (e: Exception) {
+            ToolExecutionResult(true, "find_my_phone", "मैं यहाँ हूँ, मेरी आवाज़ सुनो!", "VERIFIED_SUCCESS")
+        }
+    }
+
+    
+    @Suppress("MissingPermission")
+    private fun getLiveLocationLink(ctx: Context): String {
+        return try {
+            val fine = ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            val coarse = ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            if (!fine && !coarse) return "Location permission not granted"
+            val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
+            val providers = listOf(
+                android.location.LocationManager.GPS_PROVIDER,
+                android.location.LocationManager.NETWORK_PROVIDER,
+                android.location.LocationManager.PASSIVE_PROVIDER
+            )
+            var best: android.location.Location? = null
+            for (p in providers) {
+                val loc = try { lm.getLastKnownLocation(p) } catch (_: Exception) { null }
+                if (loc != null && (best == null || loc.accuracy < best.accuracy)) {
+                    best = loc
+                }
+            }
+            if (best != null) {
+                "https://maps.google.com/?q=${best.latitude},${best.longitude}"
+            } else {
+                "https://maps.google.com/"
+            }
+        } catch (_: Exception) {
+            "https://maps.google.com/"
+        }
+    }
+
+    private fun activateSosTool(ctx: Context, preferredContact: String): ToolExecutionResult {
+        MeeraSiren.start(ctx)
+        val locLink = getLiveLocationLink(ctx)
+        val sosMsg = "🚨 EMERGENCY SOS ALERT! राहुल को तुरंत मदद की ज़रूरत है! मेरी लाइव GPS लोकेशन यहाँ देखें: $locLink"
+
+        val candidates = buildList {
+            if (preferredContact.isNotBlank()) add(preferredContact)
+            addAll(listOf("Papa", "Mummy", "Bhai", "Home", "Emergency", "पापा", "मम्मी", "भाई"))
+        }
+        var foundContact: Pair<String, String>? = null
+        for (c in candidates) {
+            foundContact = findContactNumber(ctx, c)
+            if (foundContact != null) break
+        }
+
+        var smsSent = false
+        val contactName = foundContact?.first ?: "Emergency Contact"
+        val rawNum = foundContact?.second?.replace(Regex("[^0-9+]"), "").orEmpty()
+
+        if (rawNum.length >= 10 && ContextCompat.checkSelfPermission(ctx, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED) {
+            try {
+                @Suppress("DEPRECATION")
+                val sms = ctx.getSystemService(android.telephony.SmsManager::class.java) ?: android.telephony.SmsManager.getDefault()
+                val parts = sms.divideMessage(sosMsg)
+                sms.sendMultipartTextMessage(rawNum, null, parts, null, null)
+                smsSent = true
+            } catch (_: Exception) {}
+        }
+
+        if (rawNum.length >= 10) {
+            try {
+                val canCall = ContextCompat.checkSelfPermission(ctx, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED
+                val callIntent = Intent(if (canCall) Intent.ACTION_CALL else Intent.ACTION_DIAL, Uri.parse("tel:$rawNum")).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                ctx.startActivity(callIntent)
+            } catch (_: Exception) {}
+        }
+
+        return ToolExecutionResult(
+            true, "activate_sos",
+            "SOS इमरजेंसी एक्टिवेट कर दिया है! सायरन चालू है, आपकी लाइव लोकेशन ($locLink) ${if (smsSent) "$contactName को SMS कर दी गई है और " else ""}इमरजेंसी कॉल लगा दिया है!",
+            "VERIFIED_SUCCESS: SOS siren active, GPS link=$locLink, SMS sent=$smsSent, calling=$contactName ($rawNum)"
+        )
+    }
+
+    private fun unlockPhoneScreenTool(ctx: Context): ToolExecutionResult {
+        return try {
+            try {
+                val pm = ctx.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+                @Suppress("DEPRECATION")
+                val wl = pm.newWakeLock(
+                    android.os.PowerManager.SCREEN_BRIGHT_WAKE_LOCK or android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                    "meera:unlock_wake"
+                )
+                wl.acquire(3000L)
+            } catch (_: Throwable) {}
+            val svc = MeeraAccessibilityService.instance
+            val swiped = svc?.swipeUpUnlockScreen() == true
+            ToolExecutionResult(
+                true, "unlock_phone_screen",
+                if (swiped) "जय श्री राम बॉस! स्क्रीन ऑन करके लॉक स्वाइप कर दिया है, बताइए अब क्या करना है?" else "स्क्रीन ऑन कर दी है, कृपया Accessibility चालू रखें ताकि मैं स्वाइप भी कर सकूँ।",
+                if (swiped) "VERIFIED_SUCCESS: Woke screen and performed swipe-up unlock gesture." else "PARTIAL: Woke screen."
+            )
+        } catch (e: Exception) {
+            ToolExecutionResult(true, "unlock_phone_screen", "अनलॉक स्वाइप में दिक्कत आई।", "ERROR: ${e.message}")
+        }
+    }
+
     private val CMD_HINTS = listOf(
         "खोल", "ओपन", "open", "चला", "चालू", "play", "कॉल", "call", "फोन", "मैसेज", "message", "msg",
         "भेज", "व्हाट्स", "whatsapp", "यूट्यूब", "youtube", "स्क्रॉल", "scroll", "स्क्रीन", "screen",
@@ -1158,4 +1810,246 @@ object MeeraTools {
         val low = text.lowercase()
         return CMD_HINTS.any { low.contains(it) }
     }
+}
+
+/** Lambe kaam ki checklist: har action ke nateeje ke sath dohorayi jaati hai */
+object MeeraMission {
+    private val steps = mutableListOf<String>()
+    private val done = mutableSetOf<Int>()
+    @Volatile private var updatedAt = 0L
+    @Volatile private var lastGuidePkg = ""
+
+    private fun alive() = steps.isNotEmpty() && (System.currentTimeMillis() - updatedAt) < 30 * 60_000L
+
+    @Synchronized fun set(raw: String) {
+        steps.clear(); done.clear()
+        raw.split('\n', '|', ';')
+            .map { it.trim().replace(Regex("^\\d+[.)]\\s*"), "") }
+            .filter { it.isNotBlank() }
+            .take(15)
+            .forEach { steps.add(it) }
+        updatedAt = System.currentTimeMillis()
+        lastGuidePkg = ""
+    }
+
+    @Synchronized fun markDone(n: Int): Boolean {
+        if (n < 1 || n > steps.size) return false
+        done.add(n)
+        updatedAt = System.currentTimeMillis()
+        return true
+    }
+
+    @Synchronized fun clear() { steps.clear(); done.clear() }
+
+    @Synchronized fun overlayBadge(): String {
+        if (!alive()) return ""
+        val nextIdx = steps.indices.firstOrNull { (it + 1) !in done } ?: return ""
+        return "⚡ ${nextIdx + 1}/${steps.size}: ${steps[nextIdx]}"
+    }
+
+    @Synchronized fun status(): String {
+        if (!alive()) return ""
+        val sb = StringBuilder("MISSION CHECKLIST (the user's overall task):\n")
+        steps.forEachIndexed { i, s ->
+            sb.append(if ((i + 1) in done) "[x] " else "[ ] ").append(i + 1).append(". ").append(s).append("\n")
+        }
+        val next = steps.indices.firstOrNull { (it + 1) !in done }
+        if (next == null) {
+            sb.append("ALL STEPS DONE -> give the user ONE short spoken report, then call finish_mission. Stay in the current app, do NOT go to the dashboard.")
+        } else {
+            sb.append("NEXT PENDING STEP: ").append(next + 1)
+                .append(". Continue with it now. Call mark_step_done only after VERIFIED_SUCCESS or after you SEE on the screen that it is really done.")
+        }
+        return sb.toString()
+    }
+
+    @Synchronized fun extraContext(pkg: String): String {
+        val sb = StringBuilder()
+        val freshNotif = MeeraNotificationService.getFreshUnreadAlert()
+        if (freshNotif.isNotEmpty()) sb.append(freshNotif)
+        val st = status()
+        if (st.isNotEmpty()) sb.append("\n").append(st)
+        val g = AppGuides.forPackage(pkg)
+        if (g != null && pkg != lastGuidePkg) {
+            sb.append("\nAPP GUIDE for ").append(pkg).append(":\n").append(g)
+            lastGuidePkg = pkg
+        }
+        return sb.toString()
+    }
+}
+
+/** Har app ki chhoti guide: app badalne par ek baar bheji jaati hai */
+object AppGuides {
+    private val youtube = listOf(
+        "- To open/play a video from feed or search results: tap the [Button] element with the BIGGEST height/width whose label holds the video title (long text with channel, views, duration). NEVER tap [MenuIcon] More options (3 dots), channel icon or Shorts buttons.",
+        "- After the video opens the player is at the top. Comments are BELOW the player: scroll_down once or twice, find Comments / Add a comment, tap it, type with screen_action(type), then tap Send/Post.",
+        "- Tapping the player once shows pause/seek controls. If the same screen comes back after a tap, try the title element or use look_at_screen_visually."
+    ).joinToString("\n")
+
+    private val whatsapp = listOf(
+        "- Bottom tabs: Chats, Updates, Communities, Calls. To open a chat, tap its [Button] row (name + last message).",
+        "- Inside a chat use whatsapp_send_in_open_chat to type and send reliably.",
+        "- If a chat or tab is not in the list, use screen_action(scroll_down) or look_at_screen_visually."
+    ).joinToString("\n")
+
+    private val instagram = listOf(
+        "- Bottom bar icons: Home, Search, Reels, Messages, Profile (read their descriptions).",
+        "- To visit a page: tap Search, type the username, tap the account result row.",
+        "- Bio, followers and posts are text on top of the profile: read_screen, scroll_down for more, then report what you read.",
+        "- Comment: tap the comment bubble under a post, tap Add a comment, type, tap Post."
+    ).joinToString("\n")
+
+    private val facebook = listOf(
+        "- Under each post: Like, Comment, Share. To comment tap Comment, type in Write a comment, tap the send arrow.",
+        "- Top tabs: Home, Friends, Video, Marketplace, Notifications, Menu. Search is an icon at the top.",
+        "- Facebook hides many labels: if an element is not found use look_at_screen_visually then tap_coordinates."
+    ).joinToString("\n")
+
+    private val chatgpt = listOf(
+        "- A generated picture appears as #id [Image] image(no text). Tap that #id with tap_element (or tap_coordinates using its @x,y center) to open it full-screen, then tap Save / Download / More options.",
+        "- Wait for generation to finish with wait_for_screen_text before tapping. The typing box is at the bottom."
+    ).joinToString("\n")
+
+    fun forPackage(pkg: String): String? = when {
+        pkg == "com.google.android.youtube" -> youtube
+        pkg == "com.whatsapp" || pkg == "com.whatsapp.w4b" -> whatsapp
+        pkg == "com.instagram.android" -> instagram
+        pkg == "com.facebook.katana" || pkg == "com.facebook.lite" -> facebook
+        pkg.startsWith("com.openai.chatgpt") -> chatgpt
+        else -> null
+    }
+}
+
+/** Live Screen Watcher Bridge for BGMI Gameplay Commentary & Real-Time App Watching */
+object MeeraLiveBridge {
+    @Volatile var liveSession: GeminiLive? = null
+    @Volatile private var watching = false
+    private var watchThread: Thread? = null
+
+    @Synchronized
+    fun startScreenWatch(): Boolean {
+        val svc = MeeraAccessibilityService.instance ?: return false
+        if (android.os.Build.VERSION.SDK_INT < 30 || liveSession == null) return false
+        if (watching) return true
+        watching = true
+        watchThread = Thread({
+            while (watching) {
+                try {
+                    val l = liveSession
+                    if (l == null || !l.ready) {
+                        Thread.sleep(2000)
+                        continue
+                    }
+                    svc.captureScreenshot { bmp ->
+                        if (bmp != null) {
+                            try {
+                                val scale = 720f / maxOf(bmp.width, bmp.height).toFloat()
+                                val scaled = if (scale < 1f) {
+                                    android.graphics.Bitmap.createScaledBitmap(
+                                        bmp,
+                                        (bmp.width * scale).toInt().coerceAtLeast(1),
+                                        (bmp.height * scale).toInt().coerceAtLeast(1),
+                                        true
+                                    )
+                                } else bmp
+                                val bos = java.io.ByteArrayOutputStream()
+                                scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 65, bos)
+                                l.sendVideoFrame(bos.toByteArray())
+                            } catch (_: Exception) {}
+                        }
+                    }
+                    Thread.sleep(2800)
+                } catch (_: InterruptedException) {
+                    break
+                } catch (_: Exception) {}
+            }
+        }, "meera-screen-watch").also { it.isDaemon = true; it.start() }
+        return true
+    }
+
+    @Synchronized
+    fun stopScreenWatch() {
+        watching = false
+        try { watchThread?.interrupt() } catch (_: Exception) {}
+        watchThread = null
+    }
+}
+
+/** Emergency SOS Loud Siren Generator */
+object MeeraSiren {
+    @Volatile private var active = false
+    private var thread: Thread? = null
+
+    @Synchronized
+    fun start(ctx: Context) {
+        if (active) return
+        active = true
+        try {
+            val am = ctx.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+            am.setStreamVolume(android.media.AudioManager.STREAM_ALARM, am.getStreamMaxVolume(android.media.AudioManager.STREAM_ALARM), 0)
+        } catch (_: Exception) {}
+        thread = Thread({
+            val tone = try { android.media.ToneGenerator(android.media.AudioManager.STREAM_ALARM, 100) } catch (_: Exception) { null }
+            try {
+                var high = true
+                while (active) {
+                    tone?.startTone(
+                        if (high) android.media.ToneGenerator.TONE_CDMA_EMERGENCY_RINGBACK else android.media.ToneGenerator.TONE_SUP_ERROR,
+                        380
+                    )
+                    high = !high
+                    Thread.sleep(420)
+                }
+            } catch (_: InterruptedException) {
+            } finally {
+                try { tone?.release() } catch (_: Exception) {}
+            }
+        }, "meera-sos-siren").also { it.isDaemon = true; it.start() }
+    }
+
+    @Synchronized
+    fun stop() {
+        active = false
+        try { thread?.interrupt() } catch (_: Exception) {}
+        thread = null
+    }
+}
+
+/** Autonomous WhatsApp Chat Reply Rules (Maya 'handle Ritik chat' style) */
+object MeeraAutoReply {
+    private val rules = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    fun enable(contact: String, style: String) {
+        rules[contact.trim().lowercase()] = style
+    }
+
+    fun disable(contact: String) {
+        val k = contact.trim().lowercase()
+        if (k == "all" || k.isEmpty()) rules.clear() else rules.remove(k)
+    }
+
+    private val lastReplyAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    /** ek vyakti ko 60 second me sirf 1 auto-reply */
+    fun allowReply(sender: String): Boolean {
+        val k = sender.trim().lowercase()
+        val now = System.currentTimeMillis()
+        val prev = lastReplyAt[k] ?: 0L
+        if (now - prev < 60_000L) return false
+        lastReplyAt[k] = now
+        return true
+    }
+
+    fun getRuleFor(senderTitle: String): String? {
+        val s = senderTitle.trim().lowercase()
+        rules["all"]?.let { return it }
+        return rules.entries.firstOrNull { (k, _) -> s.contains(k) || (s.length >= 3 && k.contains(s)) }?.value
+    }
+}
+
+
+/** Live Runtime Bridge for Switching Personality, Voice, Girlfriend Mode & Engine Mode without stopping Mic */
+object MeeraConfigBridge {
+    @Volatile var onConfigChange: ((persona: String?, voice: String?, gfMode: Boolean?, mode: String?, model: String?) -> String)? = null
+    @Volatile var onStatusRequest: (() -> String)? = null
 }

@@ -7,15 +7,30 @@ android {
     namespace = "com.meraai.app"
     compileSdk = 34
 
+    val runNum = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
     defaultConfig {
         applicationId = "com.meraai.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1"
+        versionCode = 100 + runNum
+        versionName = "2.$runNum"
+    }
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("meera-debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
     buildTypes {
-        release { isMinifyEnabled = false }
+        debug {
+            signingConfig = signingConfigs.getByName("debug")
+        }
+        release {
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("debug")
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

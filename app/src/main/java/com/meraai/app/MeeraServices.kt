@@ -23,14 +23,61 @@ import android.accessibilityservice.AccessibilityService.TakeScreenshotCallback
 import java.util.concurrent.CopyOnWriteArrayList
 
 data class NotifItem(val pkg: String, val title: String, val text: String, val time: Long)
+data class NotifReplyAction(
+    val pkg: String,
+    val title: String,
+    val text: String,
+    val actionIntent: android.app.PendingIntent,
+    val remoteInputs: Array<android.app.RemoteInput>,
+    val time: Long
+)
 data class ScreenElement(val id: Int, val label: String, val kind: String, val bounds: Rect)
 
 class MeeraNotificationService : NotificationListenerService() {
     companion object {
         val recentNotifs = CopyOnWriteArrayList<NotifItem>()
+        private val replyActions = java.util.concurrent.ConcurrentHashMap<String, NotifReplyAction>()
+        @Volatile var lastAnnouncedTime = 0L
+        @Volatile var lastNotifIsGroup = false
+        @Volatile private var lastNotifKey = ""
+        @Volatile private var lastSelfReplyText = ""
+        @Volatile var onIncomingMessage: ((String, String, String) -> Unit)? = null
+
         fun getLatestSummary(): String {
             if (recentNotifs.isEmpty()) return "Abhi koi naya notification nahi hai."
             return recentNotifs.takeLast(8).reversed().joinToString("\n") { "• [${it.title}]: ${it.text}" }
+        }
+
+        fun getFreshUnreadAlert(): String {
+            val latest = recentNotifs.lastOrNull() ?: return ""
+            if (System.currentTimeMillis() - latest.time > 45_000L || latest.time <= lastAnnouncedTime) return ""
+            lastAnnouncedTime = latest.time
+            return "\n[NEW INCOMING NOTIFICATION just arrived from '${latest.title}': \"${latest.text}\". If appropriate, inform the user and ask if they want to reply using reply_whatsapp_notification.]"
+        }
+
+        fun replyToNotification(ctx: Context, senderQuery: String, replyText: String): Pair<Boolean, String> {
+            val q = senderQuery.trim().lowercase()
+            val target = if (q.isEmpty() || q == "latest" || q == "last" || q.contains("आखिरी") || q.contains("अभी")) {
+                replyActions["latest"]
+            } else {
+                replyActions.entries.firstOrNull { (k, v) ->
+                    k != "latest" && (k.contains(q) || q.contains(k) || v.title.lowercase().contains(q))
+                }?.value
+            } ?: return false to "Is naam ka koi active notification reply button nahi mila."
+
+            return try {
+                val fillIn = Intent().addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
+                val bundle = Bundle()
+                for (ri in target.remoteInputs) {
+                    bundle.putCharSequence(ri.resultKey, replyText)
+                }
+                lastSelfReplyText = replyText.trim().lowercase()
+                android.app.RemoteInput.addResultsToIntent(target.remoteInputs, fillIn, bundle)
+                target.actionIntent.send(ctx.applicationContext, 0, fillIn)
+                true to target.title
+            } catch (e: Exception) {
+                false to (e.message ?: "Reply intent fail hua")
+            }
         }
     }
 
@@ -41,9 +88,33 @@ class MeeraNotificationService : NotificationListenerService() {
         val ex = n.extras ?: return
         val title = ex.getCharSequence("android.title")?.toString()?.trim().orEmpty()
         val text = ex.getCharSequence("android.text")?.toString()?.trim().orEmpty()
+        val lowText = text.lowercase()
+        if (lowText.contains("checking for new messages") || lowText.contains("messages from")) return
+
         if (title.isNotBlank() || text.isNotBlank()) {
             recentNotifs.add(NotifItem(pkg, title, text, System.currentTimeMillis()))
             while (recentNotifs.size > 25) recentNotifs.removeAt(0)
+
+            val actions = n.actions
+            if (actions != null) {
+                for (act in actions) {
+                    val ris = act.remoteInputs
+                    val pi = act.actionIntent
+                    if (!ris.isNullOrEmpty() && pi != null) {
+                        val item = NotifReplyAction(pkg, title, text, pi, ris, System.currentTimeMillis())
+                        replyActions["latest"] = item
+                        if (title.isNotBlank()) replyActions[title.lowercase()] = item
+                        val notifKey = "$pkg|$title|$text"
+                        val isSelfEcho = lastSelfReplyText.isNotEmpty() && text.trim().lowercase() == lastSelfReplyText
+                        if (pkg.contains("whatsapp") && notifKey != lastNotifKey && !isSelfEcho) {
+                            lastNotifKey = notifKey
+                            lastNotifIsGroup = ex.getBoolean("android.isGroupConversation", false)
+                            onIncomingMessage?.invoke(pkg, title, text)
+                        }
+                        break
+                    }
+                }
+            }
         }
     }
 
@@ -72,7 +143,7 @@ class MeeraAccessibilityService : AccessibilityService() {
         var stableCount = 0
         while (System.currentTimeMillis() < deadline) {
             val root = rootInActiveWindow
-            val currentFingerprint = root?.let { readScreenText(15) } ?: ""
+            val currentFingerprint = root?.let { readScreenElements(15, updateCache = false) } ?: ""
             if (currentFingerprint == lastFingerprint) {
                 stableCount++
                 if (stableCount >= 2) return true
@@ -114,18 +185,46 @@ class MeeraAccessibilityService : AccessibilityService() {
     }
 
     /** Maya UN.java style: Read screen elements with #id numbers */
-    fun readScreenElements(maxItems: Int = 50): String {
+    fun readScreenElements(maxItems: Int = 200, updateCache: Boolean = true): String {
         val root = rootInActiveWindow ?: return ""
         val pkg = root.packageName?.toString().orEmpty()
         val rawList = ArrayList<ScreenElement>()
         collectElements(root, rawList, maxItems)
-        lastElements.clear()
-        lastElements.addAll(rawList)
-        if (rawList.isEmpty()) return ""
-        return "Active App: $pkg\n" + rawList.joinToString("\n") { "#${it.id} [${it.kind}] ${it.label}" }
+        val truncated = rawList.size >= maxItems
+        val sorted = rawList
+            .sortedWith(compareBy({ it.bounds.top / 40 }, { it.bounds.left }))
+            .mapIndexed { i, e -> e.copy(id = i + 1) }
+        if (updateCache) {
+            lastElements.clear()
+            lastElements.addAll(sorted)
+        }
+        if (sorted.isEmpty()) return ""
+        val dm = resources.displayMetrics
+        val note = if (truncated)
+            "\n[NOTE: list cut at $maxItems items, more elements may exist. Scroll or use look_at_screen_visually if something is missing.]"
+        else ""
+        return "Active App: $pkg\nScreen: ${dm.widthPixels}x${dm.heightPixels} px\n" +
+            sorted.joinToString("\n") {
+                "#${it.id} [${it.kind}] ${it.label} @${it.bounds.centerX()},${it.bounds.centerY()} ${it.bounds.width()}x${it.bounds.height()}"
+            } + note
     }
 
-    fun readScreenText(maxItems: Int = 50): String = readScreenElements(maxItems)
+    fun readScreenText(maxItems: Int = 200): String = readScreenElements(maxItems)
+
+    /** Bina text wali badi image (jaise ChatGPT ki banayi image, full-screen background ko chhodkar) */
+    private fun isBigImage(node: AccessibilityNodeInfo): Boolean {
+        if (node.childCount > 0) return false
+        val r = Rect()
+        node.getBoundsInScreen(r)
+        val dm = resources.displayMetrics
+        val notFullScreen = r.height() < (dm.heightPixels * 0.85).toInt()
+        return r.width() >= 280 && r.height() >= 280 && notFullScreen
+    }
+
+    private fun isMenuDots(label: String, resId: String): Boolean {
+        val low = label.lowercase()
+        return low == "more options" || low.contains("अधिक विकल्प") || resId.contains("overflow") || resId.contains("contextual_menu")
+    }
 
     private fun collectElements(node: AccessibilityNodeInfo?, out: MutableList<ScreenElement>, limit: Int) {
         if (node == null || out.size >= limit) return
@@ -141,12 +240,14 @@ class MeeraAccessibilityService : AccessibilityService() {
                 hint.isNotBlank() -> hint
                 node.isClickable && resId.isNotBlank() -> "icon:$resId"
                 node.isClickable -> "clickable_area"
-                else -> ""
+                else -> if (isBigImage(node)) "image(no text)" else ""
             }
             if (label.length in 1..180) {
                 val kind = when {
+                    label == "image(no text)" -> "Image"
                     node.isEditable -> "Input"
-                    node.isClickable -> "Button"
+                    isMenuDots(label, resId) -> "MenuIcon"
+                    node.isClickable || node.parent?.isClickable == true -> "Button"
                     else -> "Text"
                 }
                 val rect = Rect()
@@ -173,13 +274,41 @@ class MeeraAccessibilityService : AccessibilityService() {
         return clickByText(el.label)
     }
 
+    // SAFETY: पेमेंट ऐप्स में Meera के प्रोग्रामैटिक क्लिक/टैप बंद
+    private val blockedPayPackages = setOf(
+        "net.one97.paytm",
+        "com.phonepe.app",
+        "com.google.android.apps.nbu.paisa.user",
+        "in.org.npci.upiapp",
+        "com.dreamplug.androidapp"
+    )
+
+    private fun isPaymentAppActive(): Boolean {
+        val pkg = getActivePackage()
+        val blocked = pkg in blockedPayPackages
+        if (blocked) MeeraDebugLog.log("SAFETY", "Click blocked in payment app: $pkg")
+        return blocked
+    }
+
     fun tapCoordinates(x: Float, y: Float): Boolean {
+        if (isPaymentAppActive()) return false
         val path = Path().apply { moveTo(x, y) }
         val stroke = GestureDescription.StrokeDescription(path, 0, 95)
         return dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
     }
 
     /** Tap center of screen (used for tapping generated images in ChatGPT/Gemini to reveal Save/Download bar) */
+    /** Wake & Swipe Up Lock Screen (Maya Voice Unlock Style) */
+    fun swipeUpUnlockScreen(): Boolean {
+        val dm = resources.displayMetrics
+        val cx = dm.widthPixels * 0.5f
+        val startY = dm.heightPixels * 0.82f
+        val endY = dm.heightPixels * 0.18f
+        val path = Path().apply { moveTo(cx, startY); lineTo(cx, endY) }
+        val stroke = GestureDescription.StrokeDescription(path, 0, 280)
+        return dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
+    }
+
     fun tapCenterImage(): Boolean {
         val dm = resources.displayMetrics
         return tapCoordinates(dm.widthPixels * 0.5f, dm.heightPixels * 0.44f)
@@ -376,6 +505,7 @@ class MeeraAccessibilityService : AccessibilityService() {
     }
 
     private fun performClickOnNode(node: AccessibilityNodeInfo): Boolean {
+        if (isPaymentAppActive()) return false
         var cur: AccessibilityNodeInfo? = node
         while (cur != null) {
             if (cur.isClickable && cur.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
@@ -462,20 +592,33 @@ class MeeraAccessibilityService : AccessibilityService() {
         }
     }
 
+    // Reliable Multi-Scroll: Synchronous swipe + Accessibility node scroll fallback
     private fun scrollScreen(forward: Boolean): Boolean {
-        val root = rootInActiveWindow ?: return false
-        val scrollable = findScrollable(root)
-        if (scrollable != null) {
-            val act = if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
-            if (scrollable.performAction(act)) return true
-        }
+        val before = readScreenElements(12, updateCache = false)
+        val mainLatch = java.util.concurrent.CountDownLatch(1)
         val dm = resources.displayMetrics
         val cx = dm.widthPixels / 2f
         val startY = if (forward) dm.heightPixels * 0.75f else dm.heightPixels * 0.25f
-        val endY = if (forward) dm.heightPixels * 0.25f else dm.heightPixels * 0.75f
+        val endY   = if (forward) dm.heightPixels * 0.22f else dm.heightPixels * 0.78f
         val path = Path().apply { moveTo(cx, startY); lineTo(cx, endY) }
-        val stroke = GestureDescription.StrokeDescription(path, 0, 260)
-        return dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
+        val stroke = GestureDescription.StrokeDescription(path, 0, 320)
+        dispatchGesture(
+            GestureDescription.Builder().addStroke(stroke).build(),
+            object : GestureResultCallback() {
+                override fun onCompleted(gestureDescription: GestureDescription?) { mainLatch.countDown() }
+                override fun onCancelled(gestureDescription: GestureDescription?) { mainLatch.countDown() }
+            },
+            null
+        )
+        try { mainLatch.await(500, java.util.concurrent.TimeUnit.MILLISECONDS) } catch (_: Exception) {}
+        try { Thread.sleep(280) } catch (_: Exception) {}
+        val after = readScreenElements(12, updateCache = false)
+        if (after == before) {
+            val action = if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+            findScrollable(rootInActiveWindow)?.performAction(action)
+            try { Thread.sleep(250) } catch (_: Exception) {}
+        }
+        return true
     }
 
     private fun findScrollable(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
@@ -504,6 +647,7 @@ class MeeraKeepAliveService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == MicMute.ACTION) MicMute.toggle()
         try {
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             if (Build.VERSION.SDK_INT >= 26) {
@@ -512,9 +656,18 @@ class MeeraKeepAliveService : Service() {
             val notif = if (Build.VERSION.SDK_INT >= 26) {
                 Notification.Builder(this, CH_ID)
                     .setContentTitle("Meera AI चालू है 🎙️")
-                    .setContentText("आप किसी भी ऐप में बोलकर कमांड दे सकते हैं")
+                    .setContentText(if (MicMute.muted) "🔇 म्यूट है — बाहर की आवाज़ नहीं सुन रही" else "आप किसी भी ऐप में बोलकर कमांड दे सकते हैं")
                     .setSmallIcon(android.R.drawable.ic_btn_speak_now)
                     .setOngoing(true)
+                    .addAction(
+                        android.R.drawable.ic_lock_silent_mode,
+                        if (MicMute.muted) "🔊 अनम्यूट" else "🔇 म्यूट",
+                        android.app.PendingIntent.getService(
+                            this, 7,
+                            Intent(this, MeeraKeepAliveService::class.java).setAction(MicMute.ACTION),
+                            android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT
+                        )
+                    )
                     .build()
             } else Notification()
 
@@ -529,3 +682,21 @@ class MeeraKeepAliveService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 }
+
+
+object MicMute {
+    const val ACTION = "com.meraai.app.TOGGLE_MUTE"
+    val flow = kotlinx.coroutines.flow.MutableStateFlow(false)
+    val muted: Boolean get() = flow.value
+    fun toggle() { flow.value = !flow.value }
+    fun set(v: Boolean) { flow.value = v }
+}
+
+class MeeraUpgradeReceiver : android.content.BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent?) {
+        if (intent?.action == Intent.ACTION_MY_PACKAGE_REPLACED) {
+            MeeraDebugLog.log("UPGRADE", "New APK update installed seamless! Services refreshed.")
+        }
+    }
+}
+
