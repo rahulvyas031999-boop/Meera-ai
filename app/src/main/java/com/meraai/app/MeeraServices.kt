@@ -335,6 +335,47 @@ class MeeraAccessibilityService : AccessibilityService() {
         return findBestNodeByText(root, query.trim()) != null
     }
 
+    /** Self-Reflection के लिए स्क्रीन का तेज़ फ़िंगरप्रिंट ताकि पता चले कि एक्शन के बाद स्क्रीन बदली या नहीं */
+    fun getScreenSignature(): String {
+        val pkg = getActivePackage()
+        val snap = readScreenElements(25, updateCache = false)
+            .lineSequence()
+            .filter { it.startsWith("#") }
+            .joinToString("|") { it.substringAfter("]").trim().take(40) }
+        return "$pkg::$snap"
+    }
+
+    /** Error Recovery Level 1: अचानक आए पॉपअप (Allow, Skip, Not now, Close, Later) को हटाना */
+    fun dismissBlockingPopup(): String? {
+        val root = rootInActiveWindow ?: return null
+        val dismissLabels = listOf(
+            "Not now", "Skip", "Close", "Dismiss", "No thanks", "Later", "Got it", "Cancel",
+            "अभी नहीं", "छोड़ें", "बंद करें", "हटाएँ", "बाद में", "ठीक है"
+        )
+        for (label in dismissLabels) {
+            val node = findExactNode(root, label, requireClickable = true)
+                ?: findExactNode(root, label, requireClickable = false)
+            if (node != null && performClickOnNode(node)) {
+                try { Thread.sleep(450) } catch (_: Exception) {}
+                return label
+            }
+        }
+        return null
+    }
+
+    /** Error Recovery Level 2: अगर बटन स्क्रीन पर न दिखे तो 2 बार नीचे स्क्रॉल करके ढूँढना और टैप करना */
+    fun clickByTextWithScrollFallback(query: String, maxScrolls: Int = 2): Boolean {
+        val q = query.trim()
+        if (q.isEmpty()) return false
+        if (clickByText(q)) return true
+        for (i in 0 until maxScrolls) {
+            if (!performSystemAction("scroll_down")) break
+            try { Thread.sleep(400) } catch (_: Exception) {}
+            if (clickByText(q)) return true
+        }
+        return false
+    }
+
     fun clickByText(query: String): Boolean {
         val root = rootInActiveWindow ?: return false
         val target = findBestNodeByText(root, query.trim()) ?: return false

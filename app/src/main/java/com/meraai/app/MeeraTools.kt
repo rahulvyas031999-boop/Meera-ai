@@ -384,6 +384,25 @@ object MeeraTools {
                 .put("parameters", JSONObject().put("type", "OBJECT")
                     .put("properties", JSONObject().put("note", JSONObject().put("type", "STRING").put("description", "Optional short note"))))
         )
+        funcs.put(
+            JSONObject()
+                .put("name", "replan_mission")
+                .put("description", "Dynamically update the remaining steps of the active mission checklist when the screen layout is unexpected, a step fails, or a better path is found.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("new_remaining_steps", JSONObject().put("type", "STRING").put("description", "Updated remaining steps, one short step per line"))
+                        .put("reason", JSONObject().put("type", "STRING").put("description", "Why the plan was adjusted")))
+                    .put("required", JSONArray().put("new_remaining_steps")))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "recover_stuck_step")
+                .put("description", "Run 3-level automatic error recovery when a tap fails or the screen does not change: 1) dismiss blocking popups, 2) scroll and search for target_text, 3) use Vision AI to locate and tap coordinates.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("target_text", JSONObject().put("type", "STRING").put("description", "The button, icon, or item we are trying to find and tap")))
+                    .put("required", JSONArray().put("target_text")))
+        )
                 funcs.put(
             JSONObject()
                 .put("name", "reply_whatsapp_notification")
@@ -491,32 +510,38 @@ object MeeraTools {
 
     private val SCREEN_AFTER_TOOLS = setOf(
         "open_app", "tap_element", "screen_action", "tap_coordinates",
-        "set_mission_plan", "wait_for_screen_text",
+        "set_mission_plan", "replan_mission", "recover_stuck_step", "wait_for_screen_text",
         "play_or_search", "youtube_search_and_play",
         "whatsapp_message", "whatsapp_send_in_open_chat"
     )
 
-    /** Action ke baad nayi screen padhkar result me jodo, taaki model agla step dekh kar chun sake */
-    private fun withScreenState(name: String, res: ToolExecutionResult): ToolExecutionResult {
+    /** Action ke baad nayi screen padhkar Self-Reflection report aur mission status jodo */
+    private fun withScreenState(name: String, beforeSig: String, targetDesc: String, res: ToolExecutionResult): ToolExecutionResult {
         if (name !in SCREEN_AFTER_TOOLS || !res.executed) return res
         val svc = MeeraAccessibilityService.instance ?: return res
         return try {
             if (name == "open_app" || name == "play_or_search" || name == "youtube_search_and_play") Thread.sleep(1500)
             svc.waitForScreenSettle(1500L)
-            val screen = svc.readScreenElements(200)   // ye last me, taaki #id wahi rahein jo model ko dikhe
+            val afterSig = svc.getScreenSignature()
+            val reflectionNote = MeeraMission.recordScreenTransition(name, targetDesc, beforeSig, afterSig, res.rawDataForAi)
+            val screen = svc.readScreenElements(200)
             if (screen.isBlank()) res
             else res.copy(
                 rawDataForAi = res.rawDataForAi +
+                    reflectionNote +
                     "\nNEW SCREEN AFTER ACTION:\n" + screen +
                     "\nIf the user's overall task is NOT finished yet, immediately call the next tool (prefer tap_element with the #id). Do not ask the user what to do next." + MeeraMission.extraContext(svc.getActivePackage())
             )
         } catch (_: Exception) { res }
     }
 
-    /** Koi bhi tool fail ho to app crash na kare, bas Meera bol de */
+    /** Koi bhi tool fail ho to app crash na kare, aur before/after screen signature track ho */
     fun executeFunctionCall(ctx: Context, name: String, args: JSONObject): ToolExecutionResult {
         return try {
-            withScreenState(name, executeFunctionCallInner(ctx, name, args))
+            val svc = MeeraAccessibilityService.instance
+            val beforeSig = svc?.getScreenSignature().orEmpty()
+            val targetDesc = args.optString("text", args.optString("target_or_text", args.optString("id", ""))).trim()
+            withScreenState(name, beforeSig, targetDesc, executeFunctionCallInner(ctx, name, args))
         } catch (e: Exception) {
             val m = e.message ?: e.javaClass.simpleName
             val busy = m.contains("503") || m.contains("429") || m.contains("UNAVAILABLE")
@@ -663,6 +688,19 @@ object MeeraTools {
             "finish_mission" -> {
                 MeeraMission.clear()
                 ToolExecutionResult(true, name, "", "VERIFIED_SUCCESS: Mission cleared.")
+            }
+            "replan_mission" -> {
+                val newSteps = args.optString("new_remaining_steps", "")
+                val reason = args.optString("reason", "Adapted to current screen")
+                MeeraMission.replanRemaining(newSteps, reason)
+                ToolExecutionResult(
+                    true, name, "",
+                    "VERIFIED_SUCCESS: Mission replanned ($reason).\n" + MeeraMission.status() + "\nProceed with the next pending step now."
+                )
+            }
+            "recover_stuck_step" -> {
+                val target = args.optString("target_text", "").trim()
+                recoverStuckStepTool(ctx, target)
             }
             "reply_whatsapp_notification" -> {
                 val sender = args.optString("sender_name", "latest").trim().ifBlank { "latest" }
@@ -1812,17 +1850,87 @@ object MeeraTools {
     }
 }
 
-/** Lambe kaam ki checklist: har action ke nateeje ke sath dohorayi jaati hai */
+    /** 3-Level Autonomous Error Recovery Cascade (Popup Dismiss -> Scroll & Tap -> Vision Coordinate Tap) */
+    private fun recoverStuckStepTool(ctx: Context, targetText: String): ToolExecutionResult {
+        val svc = MeeraAccessibilityService.instance
+            ?: return ToolExecutionResult(true, "recover_stuck_step", "Accessibility बंद है।", "ERROR: Accessibility OFF")
+
+        // Level 1: Dismiss blocking popup if any
+        val dismissed = svc.dismissBlockingPopup()
+        if (dismissed != null) {
+            if (targetText.isNotBlank() && svc.clickByText(targetText)) {
+                return ToolExecutionResult(
+                    true, "recover_stuck_step",
+                    "पॉपअप ('$dismissed') हटाकर '$targetText' पर टैप कर दिया है।",
+                    "VERIFIED_SUCCESS: Dismissed popup '$dismissed' and tapped '$targetText'."
+                )
+            }
+            return ToolExecutionResult(
+                true, "recover_stuck_step",
+                "अटका हुआ पॉपअप ('$dismissed') हटा दिया है।",
+                "VERIFIED_SUCCESS: Dismissed blocking popup '$dismissed'."
+            )
+        }
+
+        // Level 2: Scroll & Search Fallback
+        if (targetText.isNotBlank() && svc.clickByTextWithScrollFallback(targetText, maxScrolls = 2)) {
+            return ToolExecutionResult(
+                true, "recover_stuck_step",
+                "स्क्रीन स्क्रॉल करके '$targetText' ढूँढ लिया और टैप कर दिया है!",
+                "VERIFIED_SUCCESS: Found '$targetText' via scroll recovery and tapped it."
+            )
+        }
+
+        // Level 3: Vision Coordinates Fallback (Android 11+)
+        if (android.os.Build.VERSION.SDK_INT >= 30 && targetText.isNotBlank()) {
+            val bmp = kotlinx.coroutines.runBlocking {
+                kotlinx.coroutines.suspendCancellableCoroutine<android.graphics.Bitmap?> { cont ->
+                    svc.captureScreenshot { b -> cont.resumeWith(Result.success(b)) }
+                }
+            }
+            if (bmp != null) {
+                val dm = ctx.resources.displayMetrics
+                val vPrompt = "Screen size is ${dm.widthPixels}x${dm.heightPixels} px. Find the UI element or icon for '$targetText'. Reply with ONLY compact JSON: {"found":true,"x":540,"y":1200} or {"found":false}."
+                val rest = GeminiRest(okhttp3.OkHttpClient(), { Prefs(ctx).apiKey })
+                val ans = try { kotlinx.coroutines.runBlocking { rest.analyzeScreenVisually(bmp, vPrompt) } } catch (_: Exception) { "" }
+                val cleanJson = ans.removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
+                val j = try { JSONObject(cleanJson) } catch (_: Exception) { null }
+                if (j != null && j.optBoolean("found", false)) {
+                    val x = j.optInt("x", -1).toFloat()
+                    val y = j.optInt("y", -1).toFloat()
+                    if (x > 0 && y > 0 && svc.tapCoordinates(x, y)) {
+                        return ToolExecutionResult(
+                            true, "recover_stuck_step",
+                            "मैंने स्क्रीन को विज़ुअली देखकर '$targetText' ($x,$y) पर टैप कर दिया है!",
+                            "VERIFIED_SUCCESS: Vision fallback located '$targetText' at ($x,$y) and tapped."
+                        )
+                    }
+                }
+            }
+        }
+
+        return ToolExecutionResult(
+            true, "recover_stuck_step",
+            "मैंने पॉपअप चेक किया, स्क्रॉल किया और स्क्रीन देखी, पर '$targetText' अभी नहीं मिला।",
+            "FAILED_RECOVERY: Could not locate '$targetText' after 3-level recovery. Consider calling replan_mission."
+        )
+    }
+
+/** Lambe kaam ki checklist + Self-Reflection & Error Recovery State Machine */
 object MeeraMission {
     private val steps = mutableListOf<String>()
     private val done = mutableSetOf<Int>()
+    private val failedTargets = mutableSetOf<String>()
+    @Volatile private var stuckCount = 0
+    @Volatile private var lastReplanReason = ""
     @Volatile private var updatedAt = 0L
     @Volatile private var lastGuidePkg = ""
 
     private fun alive() = steps.isNotEmpty() && (System.currentTimeMillis() - updatedAt) < 30 * 60_000L
 
     @Synchronized fun set(raw: String) {
-        steps.clear(); done.clear()
+        steps.clear(); done.clear(); failedTargets.clear()
+        stuckCount = 0; lastReplanReason = ""
         raw.split('\n', '|', ';')
             .map { it.trim().replace(Regex("^\\d+[.)]\\s*"), "") }
             .filter { it.isNotBlank() }
@@ -1832,19 +1940,65 @@ object MeeraMission {
         lastGuidePkg = ""
     }
 
+    @Synchronized fun replanRemaining(newStepsRaw: String, reason: String = "") {
+        val completed = steps.filterIndexed { idx, _ -> (idx + 1) in done }
+        val newPending = newStepsRaw.split('\n', '|', ';')
+            .map { it.trim().replace(Regex("^\\d+[.)]\\s*"), "") }
+            .filter { it.isNotBlank() }
+            .take(12)
+        steps.clear(); done.clear()
+        completed.forEachIndexed { i, s ->
+            steps.add(s)
+            done.add(i + 1)
+        }
+        newPending.forEach { steps.add(it) }
+        stuckCount = 0
+        lastReplanReason = reason.take(60)
+        updatedAt = System.currentTimeMillis()
+    }
+
+    @Synchronized fun recordScreenTransition(
+        toolName: String,
+        targetDesc: String,
+        beforeSig: String,
+        afterSig: String,
+        rawResult: String
+    ): String {
+        val isTapOrAction = toolName in setOf("tap_element", "screen_action", "tap_coordinates")
+        val failed = rawResult.startsWith("FAILED") || rawResult.startsWith("ERROR") || rawResult.startsWith("TIMEOUT")
+        val unchanged = isTapOrAction && beforeSig.isNotBlank() && beforeSig == afterSig
+
+        if (failed || unchanged) {
+            stuckCount++
+            if (targetDesc.isNotBlank()) failedTargets.add("$toolName($targetDesc)")
+            val reason = if (unchanged) "SCREEN_UNCHANGED (the tap had no effect on screen)" else "ACTION_FAILED"
+            return "\n[SELF-REFLECTION MONITOR: ⚠️ $reason (stuckCount=$stuckCount). Avoid repeating: ${failedTargets.takeLast(4).joinToString(", ")}. Call recover_stuck_step, scroll, or replan_mission!]"
+        } else {
+            if (isTapOrAction || toolName == "open_app" || toolName == "recover_stuck_step") {
+                stuckCount = 0
+            }
+            return "\n[SELF-REFLECTION MONITOR: ✅ Screen state progressed successfully.]"
+        }
+    }
+
     @Synchronized fun markDone(n: Int): Boolean {
         if (n < 1 || n > steps.size) return false
         done.add(n)
+        stuckCount = 0
         updatedAt = System.currentTimeMillis()
         return true
     }
 
-    @Synchronized fun clear() { steps.clear(); done.clear() }
+    @Synchronized fun clear() {
+        steps.clear(); done.clear(); failedTargets.clear()
+        stuckCount = 0; lastReplanReason = ""
+    }
 
     @Synchronized fun overlayBadge(): String {
         if (!alive()) return ""
         val nextIdx = steps.indices.firstOrNull { (it + 1) !in done } ?: return ""
-        return "⚡ ${nextIdx + 1}/${steps.size}: ${steps[nextIdx]}"
+        val prefix = if (stuckCount > 0) "⚠️ Retry(${stuckCount}) " else "⚡ "
+        return "$prefix${nextIdx + 1}/${steps.size}:${steps[nextIdx]}"
     }
 
     @Synchronized fun status(): String {
@@ -1853,12 +2007,15 @@ object MeeraMission {
         steps.forEachIndexed { i, s ->
             sb.append(if ((i + 1) in done) "[x] " else "[ ] ").append(i + 1).append(". ").append(s).append("\n")
         }
+        if (failedTargets.isNotEmpty()) {
+            sb.append("BLACKLISTED FAILED ACTIONS (Do NOT repeat these): ").append(failedTargets.takeLast(5).joinToString(", ")).append("\n")
+        }
         val next = steps.indices.firstOrNull { (it + 1) !in done }
         if (next == null) {
             sb.append("ALL STEPS DONE -> give the user ONE short spoken report, then call finish_mission. Stay in the current app, do NOT go to the dashboard.")
         } else {
             sb.append("NEXT PENDING STEP: ").append(next + 1)
-                .append(". Continue with it now. Call mark_step_done only after VERIFIED_SUCCESS or after you SEE on the screen that it is really done.")
+                .append(". Continue with it now. If stuck or screen unchanged, call recover_stuck_step or replan_mission.")
         }
         return sb.toString()
     }
