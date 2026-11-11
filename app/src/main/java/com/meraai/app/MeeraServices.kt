@@ -335,10 +335,151 @@ class MeeraAccessibilityService : AccessibilityService() {
         return findBestNodeByText(root, query.trim()) != null
     }
 
+    /** Self-Reflection के लिए स्क्रीन का तेज़ फ़िंगरप्रिंट ताकि पता चले कि एक्शन के बाद स्क्रीन बदली या नहीं */
+    fun getScreenSignature(): String {
+        val pkg = getActivePackage()
+        val snap = readScreenElements(25, updateCache = false)
+            .lineSequence()
+            .filter { it.startsWith("#") }
+            .joinToString("|") { it.substringAfter("]").trim().take(40) }
+        return "$pkg::$snap"
+    }
+
+    /** Error Recovery Level 1: अचानक आए पॉपअप (Allow, Skip, Not now, Close, Later) को हटाना */
+    fun dismissBlockingPopup(): String? {
+        val root = rootInActiveWindow ?: return null
+        val dismissLabels = listOf(
+            "Not now", "Skip", "Close", "Dismiss", "No thanks", "Later", "Got it", "Cancel",
+            "अभी नहीं", "छोड़ें", "बंद करें", "हटाएँ", "बाद में", "ठीक है"
+        )
+        for (label in dismissLabels) {
+            val node = findExactNode(root, label, requireClickable = true)
+                ?: findExactNode(root, label, requireClickable = false)
+            if (node != null && performClickOnNode(node)) {
+                try { Thread.sleep(450) } catch (_: Exception) {}
+                return label
+            }
+        }
+        return null
+    }
+
+    /** आम सेटिंग्स और ऐप ऑप्शन्स के पर्यायवाची (Synonyms) ताकि अलग-अलग मोबाइल में सही ऑप्शन मिले */
+    private fun expandQuerySynonyms(query: String): List<String> {
+        val q = query.trim()
+        val low = q.lowercase()
+        val extras = when {
+            low.contains("app management") || low.contains("manage apps") || low == "apps" || low.contains("ऐप मैनेजमेंट") ->
+                listOf(q, "App management", "Apps", "Manage apps", "App list", "All apps", "Installed apps", "ऐप्स")
+            low.contains("search") || low.contains("खोज") || low.contains("सर्च") ->
+                listOf(q, "Search", "Search & Explore", "Explore", "Find", "खोजें")
+            low.contains("home") || low.contains("main") || low.contains("dashboard") || low.contains("होम") ->
+                listOf(q, "Home", "Home tab", "Feed", "होम")
+            low.contains("comment") || low.contains("कमेंट") ->
+                listOf(q, "Comment", "Comments", "Add a comment", "Write a comment", "कमेंट")
+            else -> listOf(q)
+        }
+        return extras.distinct()
+    }
+
+    /** ऊपर बाएँ कोने में दिखने वाला Back / Navigate Up / Close तीर ढूँढकर दबाना */
+    fun clickTopBackOrCloseIcon(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val backLabels = listOf("Navigate up", "Back", "Close", "Dismiss", "पीछे जाएँ", "वापस जाएँ", "बंद करें")
+        for (lbl in backLabels) {
+            val n = findExactNode(root, lbl, requireClickable = true) ?: findContainsNode(root, lbl, requireClickable = true)
+            if (n != null && performClickOnNode(n)) return true
+        }
+        // Top-left clickable icon fallback (x < 220, y in 60..280)
+        if (lastElements.isEmpty()) readScreenElements(60)
+        val topLeftBtn = lastElements.firstOrNull {
+            it.kind == "Button" && it.bounds.centerX() < 220 && it.bounds.centerY() in 60..290 && it.bounds.width() < 180
+        }
+        if (topLeftBtn != null) {
+            return tapCoordinates(topLeftBtn.bounds.exactCenterX(), topLeftBtn.bounds.exactCenterY())
+        }
+        return false
+    }
+
+    /**
+     * किसी भी ऐप (Instagram, Hotstar, YouTube, WhatsApp, Settings) में पुरानी सब-स्क्रीन/रील/चैट से निकलकर
+     * उसके मुख्य डैशबोर्ड (Main Home Screen) तक स्मार्ट तरीके से वापस आना (अधिकतम 4 स्टेप्स, ऐप से बाहर निकले बिना)
+     */
+    fun navigateToAppMainScreen(wantSearchReady: Boolean = false): String {
+        val startPkg = getActivePackage()
+        if (startPkg.isBlank()) return "NO_ACTIVE_APP"
+
+        for (step in 1..4) {
+            val root = rootInActiveWindow ?: break
+            val curPkg = getActivePackage()
+            if (curPkg.isNotBlank() && curPkg != startPkg) {
+                // अगर गलती से ऐप के बाहर आ गए तो तुरंत उस ऐप को वापस खोलें
+                break
+            }
+
+            // 1. अगर हम सिर्फ़ Search चाहते हैं और Search पहले से स्क्रीन पर मौजूद है, तो बैक जाने की ज़रूरत नहीं!
+            if (wantSearchReady) {
+                val hasSearch = findBestNodeByText(root, "Search") != null ||
+                    findBestNodeByText(root, "Search & Explore") != null ||
+                    findBestNodeByText(root, "खोजें") != null
+                if (hasSearch) return "READY_FOR_SEARCH_ON_CURRENT_SCREEN"
+            }
+
+            // 2. कोई पॉपअप अटका हो तो पहले उसे बंद करें
+            dismissBlockingPopup()
+
+            // 3. अगर नीचे की बार में 'Home' या 'Chats' टैब दिख रहा है तो सीधे उसे टैप करें
+            val homeTab = findExactNode(root, "Home", requireClickable = true)
+                ?: findExactNode(root, "Home tab", requireClickable = true)
+                ?: (if (startPkg.contains("whatsapp")) findExactNode(root, "Chats", requireClickable = true) else null)
+
+            val beforeSig = getScreenSignature()
+            if (homeTab != null && performClickOnNode(homeTab)) {
+                waitForScreenSettle(900L)
+                val afterHomeSig = getScreenSignature()
+                if (afterHomeSig != beforeSig) return "REACHED_HOME_VIA_TAB (step $step)"
+            }
+
+            // 4. वरना ऊपर का Back/Close आइकॉन दबाएँ या सिस्टम Back करें
+            if (!clickTopBackOrCloseIcon()) {
+                performGlobalAction(GLOBAL_ACTION_BACK)
+            }
+            waitForScreenSettle(950L)
+            val afterBackSig = getScreenSignature()
+            if (afterBackSig == beforeSig) {
+                // स्क्रीन अब और पीछे नहीं जा रही यानी हम मुख्य स्क्रीन पर हैं
+                return "AT_ROOT_SCREEN"
+            }
+        }
+        return "UNWOUND_TO_MAIN_SCREEN"
+    }
+
+    /** Error Recovery Level 2: पर्यायवाची (Synonyms) + 3 बार नीचे स्क्रॉल करके ऑप्शन ढूँढना और टैप करना */
+    fun clickByTextWithScrollFallback(query: String, maxScrolls: Int = 3): Boolean {
+        val q = query.trim()
+        if (q.isEmpty()) return false
+        val candidates = expandQuerySynonyms(q)
+        for (c in candidates) {
+            if (clickByText(c)) return true
+        }
+        for (i in 0 until maxScrolls) {
+            val before = getScreenSignature()
+            if (!performSystemAction("scroll_down")) break
+            try { Thread.sleep(450) } catch (_: Exception) {}
+            for (c in candidates) {
+                if (clickByText(c)) return true
+            }
+            if (getScreenSignature() == before) break // लिस्ट के सबसे नीचे पहुँच गए
+        }
+        return false
+    }
+
     fun clickByText(query: String): Boolean {
         val root = rootInActiveWindow ?: return false
-        val target = findBestNodeByText(root, query.trim()) ?: return false
-        return performClickOnNode(target)
+        for (candidate in expandQuerySynonyms(query)) {
+            val target = findBestNodeByText(root, candidate)
+            if (target != null && performClickOnNode(target)) return true
+        }
+        return false
     }
 
     /** WhatsApp Dedicated Send Button Clicker (by #id com.whatsapp:id/send or exact contentDescription) */

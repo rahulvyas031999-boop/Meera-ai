@@ -222,6 +222,60 @@ class GeminiRest(private val http: OkHttpClient, private val key: () -> String) 
         }
     }
 
+    // ---------- 2.75 Closed-Loop Agent Step Decider (Observe -> Reflect -> Act) ----------
+    suspend fun decideNextAgentAction(
+        overallGoal: String,
+        missionStatus: String,
+        currentScreen: String,
+        lastReflection: String
+    ): Pair<String, JSONObject>? = withContext(Dispatchers.IO) {
+        val sys = """
+You are Meera AI's autonomous Android agent controller with Self-Reflection and Error Recovery.
+Given the user's OVERALL GOAL, CURRENT MISSION CHECKLIST, LAST ACTION REFLECTION, and CURRENT SCREEN ELEMENTS:
+1. If the overall goal is completely achieved on screen, reply {"tool":"done","args":{"summary":"Short Hinglish confirmation of what was completed"}}.
+2. PRE-FLIGHT APP RESET: If the target app is already open on screen, check if the required Search bar, Home tab, or target section is visible right now:
+   - If Search or the target button IS visible on the current screen, tap it directly (do NOT go back unnecessarily).
+   - If the app is stuck inside an old reel, comment box, video player, or irrelevant sub-page where Search/Home is NOT visible, choose `navigate_to_app_home` {"want_search":true}.
+   - If the user asked to come to the app's main dashboard/home screen, choose `navigate_to_app_home` {"want_search":false}.
+3. ANTI-PING-PONG & SCROLL RULE: Never pick any element listed in BLACKLISTED FAILED ACTIONS! If looking for a setting/option (like 'App management' or 'Apps') that is not visible in CURRENT SCREEN, choose `screen_action` {"action_type":"scroll_down","target_or_text":""} instead of tapping random items!
+4. Otherwise pick the single best next tool from:
+   - open_app {"app_name":"..."}
+   - navigate_to_app_home {"want_search":true}
+   - tap_element {"id":12, "text":"..."}
+   - screen_action {"action_type":"click|type|scroll_down|scroll_up|back", "target_or_text":"..."}
+   - recover_stuck_step {"target_text":"..."}
+   - wait_for_screen_text {"text":"...", "mode":"appear", "timeout_seconds":15}
+   - whatsapp_message {"contact_name":"...", "message":"..."}
+   - whatsapp_send_in_open_chat {"message":"..."}
+   - youtube_search_and_play {"query":"..."}
+Reply with ONLY valid compact JSON: {"tool":"...","args":{...},"mark_done_step":0}
+""".trimIndent()
+        val userPayload = "OVERALL GOAL: $overallGoal\n$missionStatus\nLAST REFLECTION: $lastReflection\nCURRENT SCREEN:\n${currentScreen.take(3500)}"
+        val body = JSONObject()
+            .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", sys))))
+            .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", JSONArray().put(JSONObject().put("text", userPayload)))))
+            .put("generationConfig", JSONObject().put("responseMimeType", "application/json").put("temperature", 0.1))
+        kotlinx.coroutines.withTimeoutOrNull(8000L) {
+            for (m in listOf("gemini-3.8-flash", Cfg.CHAT_MODELS.first()).distinct()) {
+                try {
+                    val resp = http.newCall(request(m, "generateContent", body)).await().okOrThrow()
+                    val txt = resp.use { textOf(JSONObject(it.body!!.string())).trim() }
+                        .removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
+                    val o = JSONObject(txt)
+                    val doneStep = o.optInt("mark_done_step", 0)
+                    if (doneStep > 0) MeeraMission.markDone(doneStep)
+                    val tool = o.optString("tool", "none")
+                    if (tool.isNotBlank() && tool != "none") {
+                        return@withTimeoutOrNull Pair(tool, o.optJSONObject("args") ?: JSONObject())
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {}
+            }
+            null
+        }
+    }
+
     // ---------- 2.8 Task Planner ----------
     suspend fun generatePlan(task: String, currentScreen: String): List<String> = withContext(Dispatchers.IO) {
         val prompt = """

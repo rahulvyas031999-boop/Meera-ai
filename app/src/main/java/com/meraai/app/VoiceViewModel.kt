@@ -91,10 +91,33 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
     private fun buildFullSystemPrompt(): String =
         SystemPrompt.build(prefs.persona, prefs.girlfriendMode, prefs.getMemories() + prefs.getSkills(), appCtx, prefs)
 
+    private val sleepRequested = AtomicBoolean(false)
+
+    /** मीरा का अलविदा पूरा होने तक रुककर माइक सेशन बंद करता है (दो बार नहीं चलता) */
+    private fun sleepAfterGoodbye() {
+        if (!active) return
+        if (!sleepRequested.compareAndSet(false, true)) return
+        viewModelScope.launch(Dispatchers.IO) {
+            _ui.update { it.copy(lastToolStatus = "😴 सो रही हूँ...") }
+            try {
+                // अलविदा की आवाज़ शुरू होने का समय दें, फिर उसके खत्म होने तक रुकें (अधिकतम 7 सेकंड)
+                kotlinx.coroutines.delay(2500L)
+                var waited = 0L
+                while (player?.busy == true && waited < 7000L) {
+                    kotlinx.coroutines.delay(250L)
+                    waited += 250L
+                }
+                kotlinx.coroutines.delay(400L)
+            } catch (_: Exception) {}
+            android.os.Handler(android.os.Looper.getMainLooper()).post { stop() }
+        }
+    }
+
     private fun installConfigBridge() {
         MeeraConfigBridge.onStatusRequest = {
             buildFullSystemPrompt()
         }
+        MeeraConfigBridge.onSleepRequest = { sleepAfterGoodbye() }
         MeeraConfigBridge.onConfigChange = { p, v, gf, m, mod ->
             var targetPersona = prefs.persona
             p?.let { reqP ->
@@ -394,40 +417,86 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
     private suspend fun routeViaLlm(text: String): ToolExecutionResult {
         if (!MeeraTools.looksLikeCommand(text)) return ToolExecutionResult(false)
         val svc = MeeraAccessibilityService.instance
-        val currentScreen = svc?.readScreenText(10) ?: "Unknown"
-        val plan = rest.generatePlan(text, currentScreen)
+        val initialScreen = svc?.readScreenElements(40) ?: "Unknown"
+        val plan = rest.generatePlan(text, initialScreen)
         if (plan.isEmpty()) return ToolExecutionResult(false)
 
-        var stepCount = 0
-        var finalSpokenReply = ""
+        MeeraMission.set(plan.joinToString("\n"))
+        var stepIdx = 0
         var executedCount = 0
-        var failed = false
-        val maxSteps = 8
+        var consecutiveFailures = 0
+        var lastReflection = "Mission started."
+        var lastSpoken = ""
+        val maxLoopTurns = 12
 
-        while (stepCount < plan.size && stepCount < maxSteps) {
-            val step = plan[stepCount]
-            stepCount++
-            val r = rest.routeCommand(step) ?: continue
-            if (r.first == "none" || r.first.isBlank()) continue
+        while (stepIdx < maxLoopTurns) {
+            stepIdx++
+            val liveScreen = svc?.readScreenElements(80) ?: "Accessibility OFF"
+            val decision = rest.decideNextAgentAction(
+                overallGoal = text,
+                missionStatus = MeeraMission.status(),
+                currentScreen = liveScreen,
+                lastReflection = lastReflection
+            ) ?: rest.routeCommand(plan.getOrNull(stepIdx - 1) ?: text)
 
-            val res = MeeraTools.executeFunctionCall(appCtx, r.first, r.second)
-            executedCount++
-            finalSpokenReply += res.spokenReply + " "
-
-            if (res.rawDataForAi.startsWith("FAILED") || res.rawDataForAi.startsWith("NEEDS_USER_HELP") || res.rawDataForAi.startsWith("PARTIAL") || res.rawDataForAi.startsWith("ERROR") || res.rawDataForAi.startsWith("TIMEOUT")) {
-                finalSpokenReply = "Boss, step $stepCount par dikkat aayi: ${res.spokenReply}"
-                failed = true
-                break
+            if (decision == null || decision.first == "none" || decision.first.isBlank()) break
+            if (decision.first == "done") {
+                val summary = decision.second.optString("summary", lastSpoken.ifBlank { "काम पूरा हो गया है!" })
+                MeeraMission.clear()
+                return ToolExecutionResult(true, "AgentLoop", summary, "VERIFIED_SUCCESS: $summary")
             }
-            if (r.first == "tap_element" || r.first == "screen_action" || r.first == "tap_text") {
-                svc?.waitForScreenSettle(1200L)
+
+            _ui.update { it.copy(lastToolStatus = "⚡ Step $stepIdx: ${decision.first}") }
+            val res = MeeraTools.executeFunctionCall(appCtx, decision.first, decision.second)
+            executedCount++
+            if (res.spokenReply.isNotBlank()) lastSpoken = res.spokenReply
+
+            val isHardFail = res.rawDataForAi.startsWith("FAILED") ||
+                res.rawDataForAi.startsWith("ERROR") ||
+                res.rawDataForAi.startsWith("BLOCKED_REPEAT_TAP") ||
+                res.rawDataForAi.contains("SCREEN_UNCHANGED") ||
+                res.rawDataForAi.contains("PING_PONG_LOOP_DETECTED")
+
+            if (isHardFail) {
+                consecutiveFailures++
+                lastReflection = "Last tool ${decision.first}(${decision.second}) failed or screen did not change: ${res.rawDataForAi.take(220)}"
+                // Auto trigger recovery if stuck twice
+                if (consecutiveFailures == 2 && svc != null) {
+                    val targetHint = decision.second.optString("text", decision.second.optString("target_or_text", ""))
+                    val recRes = MeeraTools.executeFunctionCall(appCtx, "recover_stuck_step", JSONObject().put("target_text", targetHint))
+                    lastReflection = "Auto-Recovery result: ${recRes.rawDataForAi.take(200)}"
+                    if (recRes.rawDataForAi.startsWith("VERIFIED_SUCCESS")) consecutiveFailures = 0
+                }
+                if (consecutiveFailures >= 3) {
+                    MeeraMission.clear()
+                    return ToolExecutionResult(
+                        true, "AgentLoop",
+                        "मैंने कई बार कोशिश की और रिकवरी भी चलाई, पर स्टेप $stepIdx पर स्क्रीन आगे नहीं बढ़ रही: ${res.spokenReply}",
+                        "PARTIAL_NEEDS_HELP: Stopped after 3 recovery attempts at step $stepIdx"
+                    )
+                }
             } else {
-                kotlinx.coroutines.delay(1000)
+                consecutiveFailures = 0
+                MeeraMission.markDone(stepIdx.coerceAtMost(plan.size))
+                lastReflection = "Step $stepIdx (${decision.first}) succeeded."
+            }
+
+            if (svc != null) {
+                svc.waitForScreenSettle(1100L)
+            } else {
+                kotlinx.coroutines.delay(900)
             }
         }
-        if (executedCount == 0) return ToolExecutionResult(true, "AgentLoop", "मैं यह काम नहीं कर पाई, एक बार फिर से बोलिए।", "FAILED: no step could be executed")
-        if (failed) return ToolExecutionResult(true, "AgentLoop", finalSpokenReply.trim(), "FAILED: step $stepCount failed")
-        return ToolExecutionResult(true, "AgentLoop", finalSpokenReply.trim(), "SUCCESS: Completed $executedCount of ${plan.size} steps.")
+
+        MeeraMission.clear()
+        if (executedCount == 0) {
+            return ToolExecutionResult(true, "AgentLoop", "मैं यह काम नहीं कर पाई, एक बार फिर से बोलिए।", "FAILED: no step executed")
+        }
+        return ToolExecutionResult(
+            true, "AgentLoop",
+            lastSpoken.ifBlank { "मैंने आपका बताया हुआ काम पूरा कर दिया है!" },
+            "VERIFIED_SUCCESS: Completed $executedCount agentic steps."
+        )
     }
 
     fun sendCameraFrame(jpeg: ByteArray) {
@@ -448,6 +517,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
             _ui.update { it.copy(askKey = true, error = "पहले API Key डालें") }
             return
         }
+        sleepRequested.set(false)
         installConfigBridge()
         active = true
         requestInFlight.set(false)
