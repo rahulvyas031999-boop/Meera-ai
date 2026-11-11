@@ -1890,7 +1890,7 @@ object MeeraTools {
             }
             if (bmp != null) {
                 val dm = ctx.resources.displayMetrics
-                val vPrompt = "Screen size is ${dm.widthPixels}x${dm.heightPixels} px. Find the UI element or icon for '$targetText'. Reply with ONLY compact JSON: {"found":true,"x":540,"y":1200} or {"found":false}."
+                val vPrompt = "Screen size is ${dm.widthPixels}x${dm.heightPixels} px. Find the UI element or icon for '$targetText'. Reply with ONLY compact JSON: {\"found\":true,\"x\":540,\"y\":1200} or {\"found\":false}."
                 val rest = GeminiRest(okhttp3.OkHttpClient(), { Prefs(ctx).apiKey })
                 val ans = try { kotlinx.coroutines.runBlocking { rest.analyzeScreenVisually(bmp, vPrompt) } } catch (_: Exception) { "" }
                 val cleanJson = ans.removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
@@ -1972,7 +1972,7 @@ object MeeraMission {
             stuckCount++
             if (targetDesc.isNotBlank()) failedTargets.add("$toolName($targetDesc)")
             val reason = if (unchanged) "SCREEN_UNCHANGED (the tap had no effect on screen)" else "ACTION_FAILED"
-            return "\n[SELF-REFLECTION MONITOR: ⚠️ $reason (stuckCount=$stuckCount). Avoid repeating: ${failedTargets.takeLast(4).joinToString(", ")}. Call recover_stuck_step, scroll, or replan_mission!]"
+            return "\n[SELF-REFLECTION MONITOR: ⚠️ $reason (stuckCount=$stuckCount). Avoid repeating: ${failedTargets.toList().takeLast(4).joinToString(", ")}. Call recover_stuck_step, scroll, or replan_mission!]"
         } else {
             if (isTapOrAction || toolName == "open_app" || toolName == "recover_stuck_step") {
                 stuckCount = 0
@@ -2008,7 +2008,7 @@ object MeeraMission {
             sb.append(if ((i + 1) in done) "[x] " else "[ ] ").append(i + 1).append(". ").append(s).append("\n")
         }
         if (failedTargets.isNotEmpty()) {
-            sb.append("BLACKLISTED FAILED ACTIONS (Do NOT repeat these): ").append(failedTargets.takeLast(5).joinToString(", ")).append("\n")
+            sb.append("BLACKLISTED FAILED ACTIONS (Do NOT repeat these): ").append(failedTargets.toList().takeLast(5).joinToString(", ")).append("\n")
         }
         val next = steps.indices.firstOrNull { (it + 1) !in done }
         if (next == null) {
