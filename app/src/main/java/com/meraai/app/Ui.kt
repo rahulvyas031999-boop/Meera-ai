@@ -241,9 +241,11 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
                     )
 
                     HorizontalDivider(Modifier.padding(vertical = 10.dp), color = Color(0xFF232C52))
-                    Text("पर्सनैलिटी चुनें (Meera / Jarvis / Rudra)", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
-                    Cfg.PERSONAS.forEach { (pCode, pDesc, _) ->
-                        ModeRow("🎭 $pCode", pDesc, ui.persona == pCode) { vm.setPersona(pCode) }
+                    var openSec by remember { mutableStateOf("") }
+                    DropSection("पर्सनैलिटी चुनें", "🎭 ${ui.persona}", openSec == "persona", { openSec = if (openSec == "persona") "" else "persona" }) {
+                        Cfg.PERSONAS.forEach { (pCode, pDesc, _) ->
+                            ModeRow("🎭 $pCode", pDesc, ui.persona == pCode) { vm.setPersona(pCode); openSec = "" }
+                        }
                     }
 
                     if (ui.persona == "Meera") {
@@ -266,35 +268,41 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
                     ModeRow("🧩 Modular", "Fast STT → Brain + Tools → Expressive TTS", ui.mode == Mode.MODULAR) { vm.setMode(Mode.MODULAR) }
 
                     if (ui.mode == Mode.LIVE) {
-                        HorizontalDivider(Modifier.padding(vertical = 10.dp), color = Color(0xFF232C52))
-                        Text("Live मॉडल चुनें", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
-                        Cfg.LIVE_MODELS.forEach { m ->
-                            ModeRow(m, "WebSocket Bidi Audio + Function Calling", ui.liveModel == m) { vm.setLiveModel(m) }
+                        DropSection("Live मॉडल", ui.liveModel, openSec == "live", { openSec = if (openSec == "live") "" else "live" }) {
+                            Cfg.LIVE_MODELS.forEach { m ->
+                                ModeRow(m, "WebSocket Bidi Audio + Function Calling", ui.liveModel == m) { vm.setLiveModel(m); openSec = "" }
+                            }
                         }
                     } else {
-                        HorizontalDivider(Modifier.padding(vertical = 10.dp), color = Color(0xFF232C52))
-                        Text("Modular चैट ब्रेन (LLM / Reasoning)", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
-                        Cfg.CHAT_BRAIN_OPTIONS.forEach { (mCode, mDesc) ->
-                            ModeRow(mCode, mDesc, ui.chatModel == mCode) { vm.setChatModel(mCode) }
+                        DropSection("चैट ब्रेन (LLM / Reasoning)", ui.chatModel, openSec == "chat", { openSec = if (openSec == "chat") "" else "chat" }) {
+                            Cfg.CHAT_BRAIN_OPTIONS.forEach { (mCode, mDesc) ->
+                                ModeRow(mCode, mDesc, ui.chatModel == mCode) { vm.setChatModel(mCode); openSec = "" }
+                            }
                         }
-
-                        HorizontalDivider(Modifier.padding(vertical = 10.dp), color = Color(0xFF232C52))
-                        Text("Modular सुनने का इंजन (STT)", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
-                        Cfg.STT_ENGINE_OPTIONS.forEach { (sCode, sDesc) ->
-                            ModeRow(sCode, sDesc, ui.sttModel == sCode) { vm.setSttModel(sCode) }
+                        DropSection("सुनने का इंजन (STT)", ui.sttModel, openSec == "stt", { openSec = if (openSec == "stt") "" else "stt" }) {
+                            Cfg.STT_ENGINE_OPTIONS.forEach { (sCode, sDesc) ->
+                                ModeRow(sCode, sDesc, ui.sttModel == sCode) { vm.setSttModel(sCode); openSec = "" }
+                            }
                         }
-
-                        HorizontalDivider(Modifier.padding(vertical = 10.dp), color = Color(0xFF232C52))
-                        Text("Modular आवाज़ इंजन (TTS)", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
-                        Cfg.TTS_ENGINE_OPTIONS.forEach { (tCode, tDesc) ->
-                            ModeRow(tCode, tDesc, ui.ttsModel == tCode) { vm.setTtsModel(tCode) }
+                        DropSection("आवाज़ इंजन (TTS)", ui.ttsModel, openSec == "tts", { openSec = if (openSec == "tts") "" else "tts" }) {
+                            Cfg.TTS_ENGINE_OPTIONS.forEach { (tCode, tDesc) ->
+                                ModeRow(tCode, tDesc, ui.ttsModel == tCode) { vm.setTtsModel(tCode); openSec = "" }
+                            }
                         }
                     }
 
-                    HorizontalDivider(Modifier.padding(vertical = 10.dp), color = Color(0xFF232C52))
-                    Text("आवाज़ चुनें (Google Voices)", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
-                    Cfg.VOICES.forEach { (vCode, vLabel) ->
-                        ModeRow("🔊 $vCode", vLabel, ui.voice == vCode) { vm.setVoice(vCode) }
+                    val vTag = Cfg.VOICES.firstOrNull { it.first == ui.voice }?.second?.substringAfter("(")?.substringBefore(" —") ?: ""
+                    val vWarn = if (vTag.isNotEmpty() && !vTag.split("/").contains(ui.persona)) "  ⚠️ $vTag की आवाज़" else ""
+                    DropSection("आवाज़ चुनें (Google Voices)", "🔊 ${ui.voice}$vWarn", openSec == "voice", { openSec = if (openSec == "voice") "" else "voice" }) {
+                        listOf("Meera" to "Meera की आवाज़ें", "Jarvis" to "Jarvis की आवाज़ें", "Jarvis/Rudra" to "Jarvis / Rudra दोनों की आवाज़", "Rudra" to "Rudra की आवाज़ें").forEach { (tag, heading) ->
+                            val group = Cfg.VOICES.filter { it.second.substringAfter("(").substringBefore(" —") == tag }
+                            if (group.isNotEmpty()) {
+                                Text("— $heading —", color = AccentCyan, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 24.dp, vertical = 6.dp))
+                                group.forEach { (vCode, vLabel) ->
+                                    ModeRow("🔊 $vCode", vLabel, ui.voice == vCode) { vm.setVoice(vCode); openSec = "" }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1073,6 +1081,32 @@ private fun DockTabItem(icon: String, label: String, selected: Boolean, onClick:
             fontSize = 11.5.sp,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
         )
+    }
+}
+
+@Composable
+private fun DropSection(
+    title: String,
+    current: String,
+    open: Boolean,
+    onToggle: () -> Unit,
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit
+) {
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier.fillMaxWidth().clickable(onClick = onToggle).padding(horizontal = 24.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(title, color = Muted, fontSize = 12.sp)
+                Text(current, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            }
+            Text(if (open) "▲" else "▼", color = AccentCyan, fontSize = 14.sp)
+        }
+        if (open) {
+            Column(Modifier.fillMaxWidth().background(Color(0xFF10172F)).padding(vertical = 4.dp)) { content() }
+        }
+        HorizontalDivider(color = Color(0xFF232C52))
     }
 }
 
