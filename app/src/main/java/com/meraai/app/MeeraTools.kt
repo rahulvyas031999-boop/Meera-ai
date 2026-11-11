@@ -508,6 +508,14 @@ object MeeraTools {
         )
         funcs.put(
             JSONObject()
+                .put("name", "stop_or_sleep_meera")
+                .put("description", "Close Meera's microphone session and put her to sleep. Call ONLY when the user clearly tells Meera to go to sleep, stop listening or says goodbye for now (so jao, band ho jao, mic band kar do, baad me baat karte hain, bye Meera). Never use tap_element for this.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("farewell_message", JSONObject().put("type", "STRING").put("description", "Short warm goodbye line in Hinglish"))))
+        )
+        funcs.put(
+            JSONObject()
                 .put("name", "get_system_status")
                 .put("description", "Get complete real-time status of Meera AI's architecture, active personality, all 3 personalities (Meera, Jarvis, Rudra), voices, Live/Modular mode, active AI models, tabs, and granted Android permissions.")
                 .put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()))
@@ -814,6 +822,19 @@ object MeeraTools {
                     ?: "सिस्टम सेटिंग अपडेट कर दी गई है।"
                 ToolExecutionResult(true, name, reply, "VERIFIED_SUCCESS: $reply")
             }
+            "stop_or_sleep_meera" -> {
+                val defaultBye = when (Prefs(ctx).persona) {
+                    "Jarvis" -> "Standby mode activated, Boss. Jab zaroorat ho mic button dabakar bula lijiyega."
+                    "Rudra" -> "ठीक है भाई, अभी आराम कर रहा हूँ। ज़रूरत हो तो माइक दबाकर बुला लेना!"
+                    else -> "अच्छा ठीक है राहुल, मैं अभी सो जाती हूँ। जब बात करनी हो तो माइक दबाकर बुला लेना, बाय!"
+                }
+                val bye = args.optString("farewell_message", "").trim().ifBlank { defaultBye }
+                MeeraConfigBridge.onSleepRequest?.invoke()
+                ToolExecutionResult(
+                    true, name, bye,
+                    "VERIFIED_SUCCESS: Meera will close the mic session in a few seconds."
+                )
+            }
             "get_system_status" -> {
                 val statusReport = MeeraConfigBridge.onStatusRequest?.invoke()
                     ?: SystemPrompt.build(Prefs(ctx).persona, Prefs(ctx).girlfriendMode, Prefs(ctx).getMemories(), ctx, Prefs(ctx))
@@ -908,6 +929,21 @@ object MeeraTools {
     fun tryDirectVoiceCommand(ctx: Context, userText: String): ToolExecutionResult {
         val raw = userText.trim().trimEnd('।', '.', '!', '?', ',', ' ')
         val low = raw.lowercase()
+
+        // 000. Direct Voice Sleep: सिर्फ़ छोटे और साफ़ आदेश पर (सवाल/मनाही वाले वाक्य पर नहीं)
+        val sleepPhrases = listOf(
+            "सो जाओ", "बंद हो जाओ", "बाद में बात करते हैं", "बाद में बात करेंगे", "बाद में मिलते हैं",
+            "माइक बंद कर", "माइक बटन को बंद", "माइक बटन बंद", "चुप हो जाओ", "बाय मीरा", "गुड नाइट",
+            "go to sleep", "sleep now", "turn off mic", "stop listening", "bye meera", "good night",
+            "so jao", "band ho jao", "mic band kar", "baad me baat karte", "baad mein baat karte"
+        )
+        val sleepBlockers = listOf(
+            "?", "क्या", "kya", "मत ", "mat ", "नहीं", "nahi", "कैसे", "kaise", "क्यों", "kyu",
+            "कहाँ", "कहां", "kahan", "कब", "kab"
+        )
+        if (low.length <= 50 && sleepPhrases.any { low.contains(it) } && sleepBlockers.none { low.contains(it) }) {
+            return executeFunctionCallInner(ctx, "stop_or_sleep_meera", JSONObject())
+        }
 
         // 00. Direct Personality / Mode Switch by Voice (बिना माइक बंद किए तुरंत स्विच)
         val wantsSwitch = low.contains("मोड") || low.contains("mode") || low.contains("बुलाओ") || low.contains("bulao") ||
@@ -2287,4 +2323,5 @@ object MeeraAutoReply {
 object MeeraConfigBridge {
     @Volatile var onConfigChange: ((persona: String?, voice: String?, gfMode: Boolean?, mode: String?, model: String?) -> String)? = null
     @Volatile var onStatusRequest: (() -> String)? = null
+    @Volatile var onSleepRequest: (() -> Unit)? = null
 }

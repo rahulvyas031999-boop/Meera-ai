@@ -393,6 +393,10 @@ $systemArchitectureBlock
    - SOS Emergency: Call `activate_sos` / `stop_sos`.
    - Autonomous WhatsApp Chat Handler: Call `set_whatsapp_auto_reply`.
    - Screen Unlock: Call `unlock_phone_screen`.
+   - Voice Sleep / Turn Off Mic: When the user clearly tells YOU to go to sleep or stop listening ("so jao", "band ho jao", "mic band kar do", "baad me baat karte hain", "bye Meera", "good night"):
+     * NEVER say that you cannot close yourself and NEVER ask the user to tap a button. NEVER use `tap_element` on the mic button.
+     * Say ONE short warm goodbye line (e.g. "Achha theek hai Rahul, main so jaati hoon, jab baat karni ho mic daba dena!") AND call `stop_or_sleep_meera` in the same turn.
+     * Do NOT call it for questions or negations such as "mic band hai kya?", "band mat ho", "abhi mat so".
 
 $memoryBlock
 """.trimIndent()

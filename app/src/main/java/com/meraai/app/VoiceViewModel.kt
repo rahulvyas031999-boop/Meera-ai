@@ -91,10 +91,33 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
     private fun buildFullSystemPrompt(): String =
         SystemPrompt.build(prefs.persona, prefs.girlfriendMode, prefs.getMemories() + prefs.getSkills(), appCtx, prefs)
 
+    private val sleepRequested = AtomicBoolean(false)
+
+    /** मीरा का अलविदा पूरा होने तक रुककर माइक सेशन बंद करता है (दो बार नहीं चलता) */
+    private fun sleepAfterGoodbye() {
+        if (!active) return
+        if (!sleepRequested.compareAndSet(false, true)) return
+        viewModelScope.launch(Dispatchers.IO) {
+            _ui.update { it.copy(lastToolStatus = "😴 सो रही हूँ...") }
+            try {
+                // अलविदा की आवाज़ शुरू होने का समय दें, फिर उसके खत्म होने तक रुकें (अधिकतम 7 सेकंड)
+                kotlinx.coroutines.delay(2500L)
+                var waited = 0L
+                while (player?.busy == true && waited < 7000L) {
+                    kotlinx.coroutines.delay(250L)
+                    waited += 250L
+                }
+                kotlinx.coroutines.delay(400L)
+            } catch (_: Exception) {}
+            android.os.Handler(android.os.Looper.getMainLooper()).post { stop() }
+        }
+    }
+
     private fun installConfigBridge() {
         MeeraConfigBridge.onStatusRequest = {
             buildFullSystemPrompt()
         }
+        MeeraConfigBridge.onSleepRequest = { sleepAfterGoodbye() }
         MeeraConfigBridge.onConfigChange = { p, v, gf, m, mod ->
             var targetPersona = prefs.persona
             p?.let { reqP ->
@@ -494,6 +517,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
             _ui.update { it.copy(askKey = true, error = "पहले API Key डालें") }
             return
         }
+        sleepRequested.set(false)
         installConfigBridge()
         active = true
         requestInFlight.set(false)
