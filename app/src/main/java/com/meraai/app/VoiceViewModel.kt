@@ -325,6 +325,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
         active = true
         requestInFlight.set(false)
         userBuf.clear(); aiBuf.clear()
+        registerNetCallback()
         newUserTurn = true; dropAudio = false; liveTurnOpen = false
         detector.reset(); preRoll.clear(); utter.clear(); collecting = false; bargeFrames = 0; quietMs = 0
         _ui.update { it.copy(user = "", ai = "", error = null, latencyMs = null, memoryCount = prefs.getMemories().size) }
@@ -383,6 +384,40 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
         }
     }
 
+    private var netCb: android.net.ConnectivityManager.NetworkCallback? = null
+    private var curNet: android.net.Network? = null
+
+    private fun registerNetCallback() {
+        try {
+            val cm = getApplication<android.app.Application>().getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            val cb = object : android.net.ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: android.net.Network) {
+                    curNet = network
+                    live?.onNetworkChanged(true)
+                }
+
+                override fun onLost(network: android.net.Network) {
+                    if (network == curNet) {
+                        curNet = null
+                        live?.onNetworkChanged(false)
+                    }
+                }
+            }
+            cm.registerDefaultNetworkCallback(cb)
+            netCb = cb
+        } catch (_: Exception) {}
+    }
+
+    private fun unregisterNetCallback() {
+        try {
+            val cb = netCb ?: return
+            val cm = getApplication<android.app.Application>().getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            cm.unregisterNetworkCallback(cb)
+        } catch (_: Exception) {}
+        netCb = null
+        curNet = null
+    }
+
     @Suppress("DEPRECATION")
     fun stop() {
         if (!active && st == VState.IDLE) return
@@ -393,6 +428,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
         MeeraLiveBridge.liveSession = null
         live?.close(); live = null
         mic?.stop(); mic = null
+        unregisterNetCallback()
         MicMute.set(false)
         player?.release(); player = null
         try { am.isSpeakerphoneOn = false; am.mode = AudioManager.MODE_NORMAL } catch (_: Exception) {}
@@ -555,6 +591,21 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
 
         override fun onError(msg: String) {
             if (active) fail(msg)
+        }
+
+        override fun onReconnecting(attempt: Int) {
+            if (!active) return
+            player?.flush()
+            liveTurnOpen = false; dropAudio = false; toolCalledThisTurn = false
+            if (st != VState.CONNECTING) setState(VState.CONNECTING)
+            _ui.update { it.copy(error = null, lastToolStatus = "📶 कनेक्शन टूटा, दोबारा जुड़ रही हूँ...") }
+        }
+
+        override fun onResumed() {
+            if (!active) return
+            detector.reset()
+            setState(VState.LISTENING)
+            _ui.update { it.copy(lastToolStatus = "✅ दोबारा जुड़ गई") }
         }
     }
 

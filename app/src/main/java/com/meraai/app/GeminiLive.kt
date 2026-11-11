@@ -22,6 +22,8 @@ class GeminiLive(private val http: OkHttpClient, private val ev: Events) {
         fun onTurnComplete()
         fun onError(msg: String)
         fun onGoAway(timeLeftMs: Long) {}
+        fun onReconnecting(attempt: Int) {}
+        fun onResumed() {}
     }
 
     private var ws: WebSocket? = null
@@ -37,7 +39,10 @@ class GeminiLive(private val http: OkHttpClient, private val ev: Events) {
     @Volatile private var setupDoneOnce = false
     @Volatile private var longSession = true
     @Volatile private var lastSetupAt = 0L
-    private var reconnectAttempts = 0
+    private val reconnectWindowMs = 120_000L
+    @Volatile private var networkUp = true
+    @Volatile private var dropStartAt = 0L
+    private var dropAttempts = 0
     private var cKey = ""
     private var cModel = ""
     private var cVoice = ""
@@ -56,7 +61,9 @@ class GeminiLive(private val http: OkHttpClient, private val ev: Events) {
         reconnecting = false
         setupDoneOnce = false
         longSession = true
-        reconnectAttempts = 0
+        dropStartAt = 0L
+        dropAttempts = 0
+        networkUp = true
         openSocket()
     }
 
@@ -131,28 +138,66 @@ class GeminiLive(private val http: OkHttpClient, private val ev: Events) {
 
     private fun handleDrop(msg: String, retryable: Boolean) {
         ready = false
-        val now = System.currentTimeMillis()
-        if (setupDoneOnce && lastSetupAt > 0 && now - lastSetupAt > 60_000) reconnectAttempts = 0
         // चरण 1: सेटअप पूरा होने से पहले ही गिरा. हो सकता है मॉडल नए फ़ील्ड न समझे, तो पुराने सेटअप से एक बार कोशिश
         if (retryable && !setupDoneOnce && longSession) {
             longSession = false
             MeeraDebugLog.log("LIVE", "लंबे-सेशन वाला सेटअप नहीं चला ($msg); पुराने सेटअप से दोबारा कोशिश")
-            scheduleReopen(300L)
+            scheduleReconnect(300L)
             return
         }
-        // चरण 2: चलता सेशन टूटा और टोकन है, तो रिज़म्प्शन से अधिकतम 3 बार जुड़ो
-        if (retryable && setupDoneOnce && resumeHandle != null && reconnectAttempts < 3) {
-            reconnectAttempts++
+        // चरण 2: चलता सेशन टूटा. 2 मिनट तक हार नहीं मानते, माइक चालू रहता है
+        if (retryable && setupDoneOnce) {
+            val now = System.currentTimeMillis()
+            if (dropStartAt == 0L) dropStartAt = now
+            if (now - dropStartAt > reconnectWindowMs) {
+                ev.onError(msg)
+                return
+            }
             reconnecting = true
-            MeeraDebugLog.log("LIVE", "कनेक्शन टूटा ($msg); रिज़म्प्शन से दोबारा जुड़ रहा है, कोशिश $reconnectAttempts")
-            scheduleReopen(500L * reconnectAttempts)
+            dropAttempts++
+            // पहली 2 कोशिशें रिज़म्प्शन टोकन से, उसके बाद नया सेशन
+            if (dropAttempts > 2) resumeHandle = null
+            ev.onReconnecting(dropAttempts)
+            val waitMs = 1000L * (1 shl minOf(dropAttempts - 1, 3))
+            MeeraDebugLog.log("LIVE", "कनेक्शन टूटा ($msg); कोशिश $dropAttempts, $waitMs ms बाद")
+            scheduleReconnect(waitMs)
             return
         }
         ev.onError(msg)
     }
 
-    private fun scheduleReopen(delayMs: Long) {
-        mainHandler.postDelayed({ if (!closedByUs) openSocket() }, delayMs)
+    private fun scheduleReconnect(delayMs: Long) {
+        mainHandler.postDelayed({ reconnectTick() }, delayMs)
+    }
+
+    private fun reconnectTick() {
+        if (closedByUs) return
+        if (setupDoneOnce && dropStartAt > 0L && System.currentTimeMillis() - dropStartAt > reconnectWindowMs) {
+            ev.onError("इंटरनेट वापस नहीं आया, सेशन बंद कर दिया")
+            return
+        }
+        if (!networkUp) {
+            scheduleReconnect(1000L)
+            return
+        }
+        openSocket()
+    }
+
+    // VoiceViewModel का नेटवर्क कॉलबैक इसे बुलाता है
+    fun onNetworkChanged(up: Boolean) {
+        val was = networkUp
+        networkUp = up
+        MeeraDebugLog.log("LIVE", if (up) "नेटवर्क आया" else "नेटवर्क गया")
+        if (closedByUs) return
+        if (up && !was && reconnecting) {
+            mainHandler.removeCallbacksAndMessages(null)
+            scheduleReconnect(300L)
+        }
+        if (!up && setupDoneOnce && ready) {
+            socketGen++
+            try { ws?.cancel() } catch (_: Exception) {}
+            handleDrop("इंटरनेट चला गया", true)
+        }
     }
 
     private fun parseMs(s: String): Long {
@@ -168,9 +213,12 @@ class GeminiLive(private val http: OkHttpClient, private val ev: Events) {
                 ready = true
                 setupDoneOnce = true
                 lastSetupAt = System.currentTimeMillis()
+                dropStartAt = 0L
+                dropAttempts = 0
                 if (reconnecting) {
                     reconnecting = false
-                    MeeraDebugLog.log("LIVE", "सेशन रिज़म्प्शन से दोबारा जुड़ गया")
+                    MeeraDebugLog.log("LIVE", "सेशन दोबारा जुड़ गया")
+                    ev.onResumed()
                 } else {
                     ev.onReady()
                 }

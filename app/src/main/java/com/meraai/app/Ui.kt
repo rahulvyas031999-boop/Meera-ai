@@ -231,6 +231,15 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
                         modifier = Modifier.padding(horizontal = 12.dp)
                     )
 
+                    val logCtx = LocalContext.current
+                    NavigationDrawerItem(
+                        label = { Text("Debug log कॉपी करें") },
+                        icon = { Text("📋") },
+                        selected = false,
+                        onClick = { scope.launch { drawer.close() }; MeeraDebugLog.copyNow(logCtx) },
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    )
+
                     HorizontalDivider(Modifier.padding(vertical = 10.dp), color = Color(0xFF232C52))
                     Text("पर्सनैलिटी चुनें (Meera / Jarvis / Rudra)", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
                     Cfg.PERSONAS.forEach { (pCode, pDesc, _) ->
