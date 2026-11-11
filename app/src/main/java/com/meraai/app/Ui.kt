@@ -194,7 +194,8 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
                     ) {
                         Column {
                             Text("Meera AI", color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.ExtraBold)
-                            Text("Smart Agentic Voice Companion", color = AccentCyan, fontSize = 11.sp)
+                            val pkgInfo = remember { runCatching { view.context.packageManager.getPackageInfo(view.context.packageName, 0) }.getOrNull() }
+                            Text("Smart Agentic Voice Companion • v${pkgInfo?.versionName ?: "2.0"}", color = AccentCyan, fontSize = 11.sp)
                         }
                         TextButton(onClick = { scope.launch { drawer.close() } }) {
                             Text("✕ बंद करें", color = Muted, fontSize = 14.sp, fontWeight = FontWeight.Bold)

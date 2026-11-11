@@ -691,3 +691,12 @@ object MicMute {
     fun toggle() { flow.value = !flow.value }
     fun set(v: Boolean) { flow.value = v }
 }
+
+class MeeraUpgradeReceiver : android.content.BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent?) {
+        if (intent?.action == Intent.ACTION_MY_PACKAGE_REPLACED) {
+            MeeraDebugLog.log("UPGRADE", "New APK update installed seamless! Services refreshed.")
+        }
+    }
+}
+

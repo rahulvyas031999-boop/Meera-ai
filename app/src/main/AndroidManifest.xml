@@ -121,5 +121,13 @@
             <service
             android:name=".MeeraOverlayService"
             android:exported="false" />
+
+        <receiver
+            android:name=".MeeraUpgradeReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>
