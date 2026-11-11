@@ -1,7 +1,7 @@
 name: Build APK
 on:
   push:
-    branches: [main, master, v2-test]
+    branches: [main, master]
   workflow_dispatch:
 jobs:
   build:

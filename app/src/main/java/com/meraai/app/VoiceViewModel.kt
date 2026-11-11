@@ -290,10 +290,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
             }
 
             val effectivePrompt = if (toolRes.executed && toolRes.rawDataForAi.isNotBlank()) {
-                "$clean
-
-[TOOL OUTPUT]:
-${toolRes.rawDataForAi}"
+                "$clean\n\n[TOOL OUTPUT]:\n${toolRes.rawDataForAi}"
             } else clean
 
             history.add("user" to effectivePrompt)
@@ -838,10 +835,7 @@ ${toolRes.rawDataForAi}"
                 }
 
                 val effectiveUserMsg = if (toolRes.executed && toolRes.rawDataForAi.isNotBlank()) {
-                    "$text
-
-[SCREEN / TOOL DATA]:
-${toolRes.rawDataForAi}"
+                    "$text\n\n[SCREEN / TOOL DATA]:\n${toolRes.rawDataForAi}"
                 } else text
 
                 history.add("user" to effectiveUserMsg); userAdded = true

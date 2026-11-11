@@ -330,14 +330,10 @@ $permSummary
 """.trimIndent()
 
         val memoryBlock = if (memories.isNotEmpty()) {
-            "[SESSION CONTEXT]
-[MEMORY & LEARNED SKILLS] (User ke baare me ye baatein aur skills tumhe pehle se yaad hain):
-" +
-                memories.joinToString("
-") { "- $it" }
+            "[SESSION CONTEXT]\n[MEMORY & LEARNED SKILLS] (User ke baare me ye baatein aur skills tumhe pehle se yaad hain):\n" +
+                memories.joinToString("\n") { "- $it" }
         } else {
-            "[SESSION CONTEXT]
-[MEMORY]: Abhi user ke baare me koi purani memory save nahi hai."
+            "[SESSION CONTEXT]\n[MEMORY]: Abhi user ke baare me koi purani memory save nahi hai."
         }
 
         return """
