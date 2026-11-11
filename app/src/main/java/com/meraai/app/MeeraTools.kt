@@ -403,6 +403,13 @@ object MeeraTools {
                         .put("target_text", JSONObject().put("type", "STRING").put("description", "The button, icon, or item we are trying to find and tap")))
                     .put("required", JSONArray().put("target_text")))
         )
+        funcs.put(
+            JSONObject()
+                .put("name", "navigate_to_app_home")
+                .put("description", "Navigate back to the current app's main dashboard/home screen (e.g. Instagram main feed, Hotstar home, WhatsApp chats list, Settings main page) by closing open reels, popups, or deep sub-screens. Set want_search=true if you just need the Search button/bar to become visible.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("want_search", JSONObject().put("type", "BOOLEAN").put("description", "true to stop unwinding as soon as Search icon/bar is visible on screen")))))
                 funcs.put(
             JSONObject()
                 .put("name", "reply_whatsapp_notification")
@@ -609,9 +616,34 @@ object MeeraTools {
                 } else {
                     val id = args.optInt("id", -1)
                     val text = args.optString("text", "").trim()
-                    val ok = if (id > 0) svc.tapElementById(id) else svc.clickByText(text)
                     val label = if (id > 0) "#$id" else text
-                    ToolExecutionResult(true, name, if (ok) "$label पर टैप कर दिया।" else "स्क्रीन पर '$label' नहीं मिला।", if (ok) "SUCCESS: Tapped $label" else "FAILED: $label not found")
+                    val sig = svc.getScreenSignature()
+                    if (MeeraMission.isActionBlacklisted(sig, id, text)) {
+                        // HARD GUARD: एक ही गलत बटन को बार-बार टैप करने से रोकें!
+                        val scrolled = svc.performSystemAction("scroll_down")
+                        ToolExecutionResult(
+                            true, name, "",
+                            "BLOCKED_REPEAT_TAP: '$label' was already tapped on this screen and caused a loop or no progress! Auto-performed scroll_down=${scrolled}. Pick a DIFFERENT element, or call navigate_to_app_home / click top Back button."
+                        )
+                    } else {
+                        MeeraMission.registerTapAttempt(sig, id, text)
+                        val ok = if (id > 0) svc.tapElementById(id) else svc.clickByTextWithScrollFallback(text, maxScrolls = 2)
+                        ToolExecutionResult(true, name, if (ok) "$label पर टैप कर दिया।" else "स्क्रीन पर '$label' नहीं मिला।", if (ok) "SUCCESS: Tapped $label" else "FAILED: $label not found even after scrolling")
+                    }
+                }
+            }
+            "navigate_to_app_home" -> {
+                val svc = MeeraAccessibilityService.instance
+                if (svc == null) {
+                    ToolExecutionResult(true, name, "Accessibility बंद है।", "ERROR: Accessibility OFF")
+                } else {
+                    val wantSearch = args.optBoolean("want_search", false)
+                    val status = svc.navigateToAppMainScreen(wantSearch)
+                    ToolExecutionResult(
+                        true, name,
+                        "ऐप के मुख्य डैशबोर्ड पर आ गई हूँ।",
+                        "VERIFIED_SUCCESS: Navigated to app main screen ($status)."
+                    )
                 }
             }
             "wait_for_screen_text" -> {
@@ -633,9 +665,19 @@ object MeeraTools {
                 if (svc == null) {
                     ToolExecutionResult(true, name, "यह काम करने के लिए कृपया Accessibility परमिशन ऑन करें।", "ERROR: Accessibility Service OFF")
                 } else {
+                    val sig = svc.getScreenSignature()
+                    if (act == "click" && target.isNotBlank() && MeeraMission.isActionBlacklisted(sig, -1, target)) {
+                        svc.performSystemAction("scroll_down")
+                        return ToolExecutionResult(
+                            true, name, "",
+                            "BLOCKED_REPEAT_TAP: '$target' was already clicked on this screen without progress. Auto-scrolled down. Choose a different option or call navigate_to_app_home."
+                        )
+                    }
+                    if (act == "click" && target.isNotBlank()) MeeraMission.registerTapAttempt(sig, -1, target)
                     val ok = when (act) {
-                        "click" -> svc.clickByText(target)
+                        "click" -> svc.clickByTextWithScrollFallback(target, maxScrolls = 2)
                         "type" -> svc.inputText(target, autoSend = true)
+                        "main_home", "app_home" -> svc.navigateToAppMainScreen(false).isNotBlank()
                         else -> svc.performSystemAction(act)
                     }
                     ToolExecutionResult(true, name, if (ok) "कर दिया।" else "स्क्रीन पर '$target' नहीं मिला।", if (ok) "SUCCESS: $act ($target)" else "FAILED: $act ($target)")
@@ -1916,11 +1958,13 @@ object MeeraTools {
         )
     }
 
-/** Lambe kaam ki checklist + Self-Reflection & Error Recovery State Machine */
+/** Lambe kaam ki checklist + Anti-PingPong Loop & Per-Screen Tap Memory */
 object MeeraMission {
     private val steps = mutableListOf<String>()
     private val done = mutableSetOf<Int>()
     private val failedTargets = mutableSetOf<String>()
+    private val recentScreens = ArrayDeque<String>()
+    private val tapCountsPerScreen = HashMap<String, Int>()
     @Volatile private var stuckCount = 0
     @Volatile private var lastReplanReason = ""
     @Volatile private var updatedAt = 0L
@@ -1928,8 +1972,31 @@ object MeeraMission {
 
     private fun alive() = steps.isNotEmpty() && (System.currentTimeMillis() - updatedAt) < 30 * 60_000L
 
+    private fun tapKey(screenSig: String, id: Int, text: String): String {
+        val shortSig = screenSig.hashCode().toString()
+        val target = if (text.isNotBlank()) text.lowercase().trim() else "id#$id"
+        return "$shortSig::$target"
+    }
+
+    @Synchronized fun registerTapAttempt(screenSig: String, id: Int, text: String) {
+        val k = tapKey(screenSig, id, text)
+        val c = (tapCountsPerScreen[k] ?: 0) + 1
+        tapCountsPerScreen[k] = c
+        if (c >= 2) {
+            failedTargets.add(if (text.isNotBlank()) text else "#$id")
+        }
+    }
+
+    @Synchronized fun isActionBlacklisted(screenSig: String, id: Int, text: String): Boolean {
+        val k = tapKey(screenSig, id, text)
+        if ((tapCountsPerScreen[k] ?: 0) >= 2) return true
+        val label = if (text.isNotBlank()) text else "#$id"
+        return failedTargets.any { it.equals(label, ignoreCase = true) }
+    }
+
     @Synchronized fun set(raw: String) {
         steps.clear(); done.clear(); failedTargets.clear()
+        recentScreens.clear(); tapCountsPerScreen.clear()
         stuckCount = 0; lastReplanReason = ""
         raw.split('\n', '|', ';')
             .map { it.trim().replace(Regex("^\\d+[.)]\\s*"), "") }
@@ -1968,16 +2035,27 @@ object MeeraMission {
         val failed = rawResult.startsWith("FAILED") || rawResult.startsWith("ERROR") || rawResult.startsWith("TIMEOUT")
         val unchanged = isTapOrAction && beforeSig.isNotBlank() && beforeSig == afterSig
 
-        if (failed || unchanged) {
+        // Ping-Pong Loop Detection: क्या हम बार-बार घूमकर उसी पुरानी स्क्रीन (A -> Popup B -> A) पर आ रहे हैं?
+        val pingPongLoop = isTapOrAction && afterSig.isNotBlank() && recentScreens.count { it == afterSig } >= 2
+        if (afterSig.isNotBlank()) {
+            recentScreens.addLast(afterSig)
+            while (recentScreens.size > 6) recentScreens.removeFirst()
+        }
+
+        if (failed || unchanged || pingPongLoop) {
             stuckCount++
-            if (targetDesc.isNotBlank()) failedTargets.add("$toolName($targetDesc)")
-            val reason = if (unchanged) "SCREEN_UNCHANGED (the tap had no effect on screen)" else "ACTION_FAILED"
-            return "\n[SELF-REFLECTION MONITOR: ⚠️ $reason (stuckCount=$stuckCount). Avoid repeating: ${failedTargets.toList().takeLast(4).joinToString(", ")}. Call recover_stuck_step, scroll, or replan_mission!]"
+            if (targetDesc.isNotBlank()) failedTargets.add(targetDesc)
+            val reason = when {
+                pingPongLoop -> "PING_PONG_LOOP_DETECTED (you returned to the exact same screen after opening/closing a popup!)"
+                unchanged -> "SCREEN_UNCHANGED (the tap had no effect on screen)"
+                else -> "ACTION_FAILED"
+            }
+            return "\n[SELF-REFLECTION MONITOR: ⚠️ $reason (stuckCount=$stuckCount). PERMANENTLY BLACKLISTED ON THIS SCREEN: ${failedTargets.toList().takeLast(5).joinToString(", ")}. DO NOT tap them again! Instead: 1) Call screen_action(scroll_down) if looking for an option in a list, OR 2) Call navigate_to_app_home if you need to go back to the app's main dashboard!]"
         } else {
-            if (isTapOrAction || toolName == "open_app" || toolName == "recover_stuck_step") {
+            if (isTapOrAction || toolName == "open_app" || toolName == "recover_stuck_step" || toolName == "navigate_to_app_home") {
                 stuckCount = 0
             }
-            return "\n[SELF-REFLECTION MONITOR: ✅ Screen state progressed successfully.]"
+            return "\n[SELF-REFLECTION MONITOR: ✅ Screen state progressed to a new view.]"
         }
     }
 

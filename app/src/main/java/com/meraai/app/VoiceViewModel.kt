@@ -430,7 +430,9 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
 
             val isHardFail = res.rawDataForAi.startsWith("FAILED") ||
                 res.rawDataForAi.startsWith("ERROR") ||
-                res.rawDataForAi.contains("SCREEN_UNCHANGED")
+                res.rawDataForAi.startsWith("BLOCKED_REPEAT_TAP") ||
+                res.rawDataForAi.contains("SCREEN_UNCHANGED") ||
+                res.rawDataForAi.contains("PING_PONG_LOOP_DETECTED")
 
             if (isHardFail) {
                 consecutiveFailures++
