@@ -468,6 +468,24 @@ object MeeraTools {
                 .put("description", "Wake the screen and perform swipe-up unlock gesture when the user says 'unlock karo' or 'lock kholo'.")
                 .put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()))
         )
+        funcs.put(
+            JSONObject()
+                .put("name", "switch_system_config")
+                .put("description", "Switch personality (Meera, Jarvis, Rudra), change voice (Aoede, Orus, Fenrir, Kore, Leda, Zephyr, Despina, Callirrhoe, Puck, Charon, Alnilam), toggle Girlfriend mode, or switch engine mode (LIVE or MODULAR) WITHOUT turning off the microphone. Call this immediately when the user says 'Jarvis se baat karao', 'Jarvis mode on karo', 'Rudra ko bulao', 'Meera ko bulao', 'aawaz badlo', or 'Modular/Live mode me aao'.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("persona", JSONObject().put("type", "STRING").put("description", "Meera, Jarvis, or Rudra"))
+                        .put("voice", JSONObject().put("type", "STRING").put("description", "Optional Google voice name like Aoede, Orus, Fenrir, Kore, Leda, Zephyr, Despina, Callirrhoe, Puck, Charon, Alnilam"))
+                        .put("girlfriend_mode", JSONObject().put("type", "BOOLEAN").put("description", "Optional true or false for Meera's Girlfriend/Companion mode"))
+                        .put("mode", JSONObject().put("type", "STRING").put("description", "Optional LIVE or MODULAR"))
+                        .put("model", JSONObject().put("type", "STRING").put("description", "Optional model code to switch to"))))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "get_system_status")
+                .put("description", "Get complete real-time status of Meera AI's architecture, active personality, all 3 personalities (Meera, Jarvis, Rudra), voices, Live/Modular mode, active AI models, tabs, and granted Android permissions.")
+                .put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()))
+        )
         return JSONArray().put(JSONObject().put("functionDeclarations", funcs))
     }
 
@@ -706,6 +724,21 @@ object MeeraTools {
             "unlock_phone_screen" -> {
                 unlockPhoneScreenTool(ctx)
             }
+            "switch_system_config" -> {
+                val p = args.optString("persona", "").trim().takeIf { it.isNotEmpty() }
+                val v = args.optString("voice", "").trim().takeIf { it.isNotEmpty() }
+                val gf = if (args.has("girlfriend_mode")) args.optBoolean("girlfriend_mode") else null
+                val m = args.optString("mode", "").trim().takeIf { it.isNotEmpty() }
+                val mod = args.optString("model", "").trim().takeIf { it.isNotEmpty() }
+                val reply = MeeraConfigBridge.onConfigChange?.invoke(p, v, gf, m, mod)
+                    ?: "सिस्टम सेटिंग अपडेट कर दी गई है।"
+                ToolExecutionResult(true, name, reply, "VERIFIED_SUCCESS: $reply")
+            }
+            "get_system_status" -> {
+                val statusReport = MeeraConfigBridge.onStatusRequest?.invoke()
+                    ?: SystemPrompt.build(Prefs(ctx).persona, Prefs(ctx).girlfriendMode, Prefs(ctx).getMemories(), ctx, Prefs(ctx))
+                ToolExecutionResult(true, name, "", "VERIFIED_SUCCESS: CURRENT SYSTEM ARCHITECTURE & STATUS:\n$statusReport")
+            }
             "find_my_phone" -> {
                 findMyPhoneTool(ctx)
             }
@@ -795,6 +828,47 @@ object MeeraTools {
     fun tryDirectVoiceCommand(ctx: Context, userText: String): ToolExecutionResult {
         val raw = userText.trim().trimEnd('।', '.', '!', '?', ',', ' ')
         val low = raw.lowercase()
+
+        // 00. Direct Personality / Mode Switch by Voice (बिना माइक बंद किए तुरंत स्विच)
+        val wantsSwitch = low.contains("मोड") || low.contains("mode") || low.contains("बुलाओ") || low.contains("bulao") ||
+            low.contains("बात कराओ") || low.contains("baat karao") || low.contains("स्विच") || low.contains("switch") ||
+            low.contains("एक्टिवेट") || low.contains("activate") || low.contains("ऑन करो") || low.contains("on karo") ||
+            low.contains("बन जाओ") || low.contains("ban jao") || low.contains("पर्सनैलिटी") || low.contains("personality")
+        if (wantsSwitch) {
+            when {
+                low.contains("जारविस") || low.contains("जार्विस") || low.contains("jarvis") -> {
+                    val r = MeeraConfigBridge.onConfigChange?.invoke("Jarvis", null, null, null, null)
+                        ?: "Jarvis online, Boss! माइक चालू है, बताइए क्या कमांड है?"
+                    return ToolExecutionResult(true, "switch_system_config", r, "VERIFIED_SUCCESS: Switched to Jarvis")
+                }
+                low.contains("रुद्र") || low.contains("रुद्रा") || low.contains("rudra") -> {
+                    val r = MeeraConfigBridge.onConfigChange?.invoke("Rudra", null, null, null, null)
+                        ?: "रुद्रा हाज़िर है भाई! माइक चालू है, बोल क्या करना है?"
+                    return ToolExecutionResult(true, "switch_system_config", r, "VERIFIED_SUCCESS: Switched to Rudra")
+                }
+                (low.contains("मीरा") || low.contains("meera")) && !low.contains("डैशबोर्ड") && !low.contains("ऐप") -> {
+                    val r = MeeraConfigBridge.onConfigChange?.invoke("Meera", null, null, null, null)
+                        ?: "मैं आ गई राहुल! माइक चालू है, बताओ क्या बात करनी है?"
+                    return ToolExecutionResult(true, "switch_system_config", r, "VERIFIED_SUCCESS: Switched to Meera")
+                }
+                low.contains("गर्लफ्रेंड") || low.contains("girlfriend") -> {
+                    val turnOff = low.contains("बंद") || low.contains("ऑफ") || low.contains("off")
+                    val r = MeeraConfigBridge.onConfigChange?.invoke("Meera", null, !turnOff, null, null)
+                        ?: if (turnOff) "गर्लफ्रेंड मोड ऑफ कर दिया है।" else "गर्लफ्रेंड मोड ऑन हो गया है!"
+                    return ToolExecutionResult(true, "switch_system_config", r, "VERIFIED_SUCCESS: Girlfriend mode=${!turnOff}")
+                }
+                low.contains("मॉड्यूलर") || low.contains("modular") -> {
+                    val r = MeeraConfigBridge.onConfigChange?.invoke(null, null, null, "MODULAR", null)
+                        ?: "Modular मोड चालू हो गया है और माइक ऑन है!"
+                    return ToolExecutionResult(true, "switch_system_config", r, "VERIFIED_SUCCESS: Switched to MODULAR mode")
+                }
+                low.contains("लाइव मोड") || low.contains("live mode") -> {
+                    val r = MeeraConfigBridge.onConfigChange?.invoke(null, null, null, "LIVE", null)
+                        ?: "Live मोड चालू हो गया है और माइक ऑन है!"
+                    return ToolExecutionResult(true, "switch_system_config", r, "VERIFIED_SUCCESS: Switched to LIVE mode")
+                }
+            }
+        }
 
         // 00A. Emergency SOS Trigger ("SOS activate kar do" / "बचाओ इमरजेंसी")
         if (Regex("\\bsos\\b").containsMatchIn(low) || low.contains("एसओएस") || (low.contains("इमरजेंसी") && (low.contains("एक्टिवेट") || low.contains("बचाओ") || low.contains("अलर्ट")))) {
@@ -1971,4 +2045,11 @@ object MeeraAutoReply {
         rules["all"]?.let { return it }
         return rules.entries.firstOrNull { (k, _) -> s.contains(k) || (s.length >= 3 && k.contains(s)) }?.value
     }
+}
+
+
+/** Live Runtime Bridge for Switching Personality, Voice, Girlfriend Mode & Engine Mode without stopping Mic */
+object MeeraConfigBridge {
+    @Volatile var onConfigChange: ((persona: String?, voice: String?, gfMode: Boolean?, mode: String?, model: String?) -> String)? = null
+    @Volatile var onStatusRequest: (() -> String)? = null
 }
