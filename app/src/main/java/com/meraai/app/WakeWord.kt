@@ -53,7 +53,7 @@ object MeeraWake {
     fun resume() { service?.resumeListening() }
 }
 
-class WakeEngine(ctx: Context) {
+class WakeEngine(private val ctx: Context) {
     companion object {
         const val CHUNK = 1280        // 80 ms @16 kHz
         private const val CTX = 480   // mel के लिए पिछले 30 ms का संदर्भ
@@ -70,7 +70,7 @@ class WakeEngine(ctx: Context) {
     }
 
     private fun load(name: String): OrtSession {
-        val bytes = ctx.assets.open("wakeword/$name").use { it.readBytes() }
+        val bytes: ByteArray = ctx.assets.open("wakeword/$name").use { input -> input.readBytes() }
         return env.createSession(bytes, opts)
     }
 
