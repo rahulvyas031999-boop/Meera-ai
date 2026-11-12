@@ -518,6 +518,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
             return
         }
         sleepRequested.set(false)
+        MeeraWake.pause()
         installConfigBridge()
         active = true
         requestInFlight.set(false)
@@ -648,6 +649,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
         MeeraNotificationService.onIncomingMessage = null
         MeeraSiren.stop()
         MeeraKeepAliveService.stop(getApplication())
+        MeeraWake.resume()
         MeeraOverlayService.stop(getApplication())
         setState(VState.IDLE)
     }

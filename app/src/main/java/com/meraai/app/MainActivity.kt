@@ -19,9 +19,35 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         MeeraCrashLog.install(this)
+        handleWakeIntent(intent)
+        MeeraWake.ensureRunning(this)
         setContent {
             MeraTheme { MeraApp(vm, onMic = ::onMic) }
         }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleWakeIntent(intent)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun handleWakeIntent(i: android.content.Intent?) {
+        if (i == null || !i.getBooleanExtra(MeeraWake.EXTRA_WAKE, false)) return
+        i.removeExtra(MeeraWake.EXTRA_WAKE)
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 27) {
+                setShowWhenLocked(true); setTurnScreenOn(true)
+            } else {
+                window.addFlags(
+                    android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                        android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+                )
+            }
+        } catch (_: Exception) {}
+        if (!vm.isActive) onMic()
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ if (!vm.isActive) MeeraWake.resume() }, 2500)
     }
 
     private fun onMic() {

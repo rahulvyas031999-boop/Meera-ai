@@ -123,6 +123,11 @@
             android:name=".MeeraOverlayService"
             android:exported="false" />
 
+        <service
+            android:name=".MeeraWakeService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
