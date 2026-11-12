@@ -35,7 +35,7 @@ object MeeraWake {
     @Volatile var service: MeeraWakeService? = null
     @Volatile var enabled = true
 
-    fun ensureRunning(private val ctx: Context) {
+    fun ensureRunning(ctx: Context) {
         if (!enabled || service != null) return
         if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return
         try {
