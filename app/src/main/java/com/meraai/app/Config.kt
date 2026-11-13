@@ -12,6 +12,7 @@ object Cfg {
     )
 
     val CHAT_BRAIN_OPTIONS = listOf(
+        "gemini-hydrogen" to "🧪 Gemini Hydrogen (⚡ Ultra-Advanced Reasoning)",
         "gemini-flash-lite-latest" to "⚡ Fast Chat (~2.0s)",
         "gemini-3.5-flash-lite" to "⚡ Lite Chat Brain (~2.4s)",
         "gemini-3.5-flash" to "🧠 Smart Balanced Brain (~2.4s)",
