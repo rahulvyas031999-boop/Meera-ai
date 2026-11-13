@@ -244,7 +244,7 @@ object MeeraTools {
                         .put("type", "OBJECT")
                         .put(
                             "properties", JSONObject()
-                                .put("action_type", JSONObject().put("type", "STRING").put("description", "One of: click, type, home, back, scroll_down, scroll_up, notifications"))
+                                .put("action_type", JSONObject().put("type", "STRING").put("description", "One of: click, type, paste, home, back, scroll_down, scroll_up, notifications (with paste, set target_or_text='send' to paste and send)"))
                                 .put("target_or_text", JSONObject().put("type", "STRING").put("description", "Button text to click, or message text to type"))
                         )
                         .put("required", JSONArray().put("action_type"))
@@ -520,6 +520,12 @@ object MeeraTools {
                 .put("description", "Get complete real-time status of Meera AI's architecture, active personality, all 3 personalities (Meera, Jarvis, Rudra), voices, Live/Modular mode, active AI models, tabs, and granted Android permissions.")
                 .put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()))
         )
+                funcs.put(
+            JSONObject()
+                .put("name", "copy_debug_log")
+                .put("description", "Copy Meera AI's internal debugging logs directly to the Android system clipboard so they can be pasted into any app.")
+                .put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()))
+        )
         return JSONArray().put(JSONObject().put("functionDeclarations", funcs))
     }
 
@@ -685,6 +691,7 @@ object MeeraTools {
                     val ok = when (act) {
                         "click" -> svc.clickByTextWithScrollFallback(target, maxScrolls = 2)
                         "type" -> svc.inputText(target, autoSend = true)
+                        "paste" -> svc.pasteClipboardText(ctx, autoSend = target.equals("send", ignoreCase = true) || target.isEmpty()).first
                         "main_home", "app_home" -> svc.navigateToAppMainScreen(false).isNotBlank()
                         else -> svc.performSystemAction(act)
                     }
@@ -842,6 +849,15 @@ object MeeraTools {
             }
             "find_my_phone" -> {
                 findMyPhoneTool(ctx)
+            }
+            "copy_debug_log" -> {
+                MeeraDebugLog.copyNow(ctx)
+                val cnt = MeeraDebugLog.lineCount()
+                ToolExecutionResult(
+                    true, name,
+                    "मैंने अपने डीबग लॉग ($cnt लाइनें) क्लिपबोर्ड पर कॉपी कर लिए हैं!",
+                    "VERIFIED_SUCCESS: Copied $cnt lines of Meera debug log to Android system clipboard. Ready to paste."
+                )
             }
             "play_macro" -> {
                 val macroName = args.optString("name", "").trim()
@@ -1196,6 +1212,11 @@ object MeeraTools {
             'ॐ' to "om"
         )
         val sb = StringBuilder()
+        val nowStr = java.text.SimpleDateFormat("EEE, dd MMM yyyy hh:mm a", java.util.Locale.getDefault()).format(java.util.Date())
+        val svcInst = MeeraAccessibilityService.instance
+        val clipPreview = svcInst?.let { MeeraDebugLog.lastCopiedText.ifBlank { "check_clipboard" } }.orEmpty()
+        val hasInputOnScreen = svcInst?.readScreenElements(60, updateCache = false)?.contains("[Input]") == true
+        sb.append("\n[LIVE ENVIRONMENT: ActiveApp=$pkg | Time=$nowStr | InputBoxVisibleOnScreen=$hasInputOnScreen | DebugLogCopied=${MeeraDebugLog.lastCopiedText.isNotBlank()}]")
         var i = 0
         while (i < input.length) {
             // Check 2-char conjuncts like क्ष (क + ् + ष)

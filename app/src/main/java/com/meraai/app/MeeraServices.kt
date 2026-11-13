@@ -221,6 +221,19 @@ class MeeraAccessibilityService : AccessibilityService() {
         return r.width() >= 280 && r.height() >= 280 && notFullScreen
     }
 
+    private fun isLeftAvatar(rect: Rect, label: String, resId: String): Boolean {
+        val dm = resources.displayMetrics
+        val low = label.lowercase()
+        val rLow = resId.lowercase()
+        // Top/bottom app bars (y < 220 or y > height - 200) me back/home icons hote hain, unhe Avatar na maanein
+        val inListVerticalZone = rect.centerY() in 220..(dm.heightPixels - 210)
+        val isSmallLeftSquare = rect.left < 185 && rect.width() in 55..195 && rect.height() in 55..195 &&
+            kotlin.math.abs(rect.width() - rect.height()) <= 45
+        val explicitPhoto = low.contains("profile photo") || low.contains("contact photo") || low.contains("avatar") ||
+            rLow.contains("contact_photo") || rLow.contains("avatar") || rLow.contains("profile_pic") || rLow.contains("row_user_imageview")
+        return explicitPhoto || (inListVerticalZone && isSmallLeftSquare && (low == "clickable_area" || low.startsWith("icon:") || low.length <= 25))
+    }
+
     private fun isMenuDots(label: String, resId: String): Boolean {
         val low = label.lowercase()
         return low == "more options" || low.contains("अधिक विकल्प") || resId.contains("overflow") || resId.contains("contextual_menu")
@@ -243,15 +256,16 @@ class MeeraAccessibilityService : AccessibilityService() {
                 else -> if (isBigImage(node)) "image(no text)" else ""
             }
             if (label.length in 1..180) {
+                val rect = Rect()
+                node.getBoundsInScreen(rect)
                 val kind = when {
                     label == "image(no text)" -> "Image"
                     node.isEditable -> "Input"
                     isMenuDots(label, resId) -> "MenuIcon"
+                    isLeftAvatar(rect, label, resId) -> "Avatar"
                     node.isClickable || node.parent?.isClickable == true -> "Button"
                     else -> "Text"
                 }
-                val rect = Rect()
-                node.getBoundsInScreen(rect)
                 val duplicate = out.any { it.label.equals(label, ignoreCase = true) && it.kind == kind && (it.bounds.centerY() - rect.centerY()).let { dy -> dy in -20..20 } }
                 if (!duplicate && rect.width() > 10 && rect.height() > 10) {
                     out.add(ScreenElement(out.size + 1, label, kind, rect))
@@ -611,6 +625,15 @@ class MeeraAccessibilityService : AccessibilityService() {
         return findContainsNode(root, q, requireClickable = false)
     }
 
+    private fun phoneDigitsMatch(screenText: String, query: String): Boolean {
+        val qDigits = query.filter { it.isDigit() }
+        if (qDigits.length < 6) return false
+        val tDigits = screenText.filter { it.isDigit() }
+        if (tDigits.length < 6) return false
+        val qCore = if (qDigits.length > 10) qDigits.takeLast(10) else qDigits
+        return tDigits.contains(qCore)
+    }
+
     private fun findExactNode(node: AccessibilityNodeInfo?, q: String, requireClickable: Boolean = false): AccessibilityNodeInfo? {
         if (node == null) return null
         if (node.isVisibleToUser) {
@@ -633,7 +656,7 @@ class MeeraAccessibilityService : AccessibilityService() {
         if (node.isVisibleToUser) {
             val t = node.text?.toString()?.trim().orEmpty()
             val d = node.contentDescription?.toString()?.trim().orEmpty()
-            val matches = t.contains(q, ignoreCase = true) || d.contains(q, ignoreCase = true)
+            val matches = t.contains(q, ignoreCase = true) || d.contains(q, ignoreCase = true) || phoneDigitsMatch(t, q) || phoneDigitsMatch(d, q)
             if (matches && (!requireClickable || node.isClickable || node.parent?.isClickable == true)) {
                 return node
             }
@@ -647,15 +670,89 @@ class MeeraAccessibilityService : AccessibilityService() {
 
     private fun performClickOnNode(node: AccessibilityNodeInfo): Boolean {
         if (isPaymentAppActive()) return false
+        val nodeRect = Rect()
+        node.getBoundsInScreen(nodeRect)
         var cur: AccessibilityNodeInfo? = node
         while (cur != null) {
-            if (cur.isClickable && cur.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+            if (cur.isClickable) {
+                val r = Rect()
+                cur.getBoundsInScreen(r)
+                // Agar ye chhota left avatar hai par iske parent me poori row hai, to parent ya row ke center-right par tap karein
+                if (r.left < 185 && r.width() in 55..195 && r.height() in 55..195 && cur.parent?.isClickable == true) {
+                    cur = cur.parent
+                    continue
+                }
+                if (cur.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+            }
             cur = cur.parent
         }
-        val rect = Rect()
-        node.getBoundsInScreen(rect)
-        if (!rect.isEmpty) {
-            return tapCoordinates(rect.exactCenterX(), rect.exactCenterY())
+        if (!nodeRect.isEmpty) {
+            val safeX = if (nodeRect.left < 185 && nodeRect.width() < 200) (nodeRect.right + 220f).coerceAtMost(resources.displayMetrics.widthPixels * 0.65f) else nodeRect.exactCenterX()
+            return tapCoordinates(safeX, nodeRect.exactCenterY())
+        }
+        return false
+    }
+
+    /** Read current text on Android Clipboard (or fallback to lastCopiedText) */
+    fun getClipboardPreview(ctx: Context): String {
+        try {
+            val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            val clip = cm.primaryClip?.getItemAt(0)?.coerceToText(ctx)?.toString().orEmpty().trim()
+            if (clip.isNotBlank()) return clip
+        } catch (_: Throwable) {}
+        return MeeraDebugLog.lastCopiedText.trim()
+    }
+
+    /** Paste current Android Clipboard text into active input field (works in any app) */
+    fun pasteClipboardText(ctx: Context, autoSend: Boolean = false): Pair<Boolean, String> {
+        val clipText = getClipboardPreview(ctx)
+        if (clipText.isBlank()) return false to "Clipboard khali hai."
+        val root = rootInActiveWindow
+        val editNode = if (root != null) findWhatsAppOrGenericEditable(root) else null
+        if (editNode != null) {
+            editNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+            val pasted = editNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+            if (!pasted) {
+                val args = Bundle().apply {
+                    putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, clipText)
+                }
+                editNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+            }
+            if (autoSend) {
+                try { Thread.sleep(400) } catch (_: Exception) {}
+                triggerUniversalSend(editNode)
+            }
+            return true to clipText.take(60)
+        }
+        val ok = inputText(clipText, autoSend = autoSend)
+        return ok to clipText.take(60)
+    }
+
+    /** Universal Send/Post/Submit trigger for any app (WhatsApp, Instagram, YouTube comments, SMS, Search) */
+    private fun triggerUniversalSend(editNode: AccessibilityNodeInfo? = null): Boolean {
+        if (clickWhatsAppSendButton()) return true
+        val sendLabels = listOf("Send", "भेजें", "Send message", "Post", "Comment", "Reply", "Done", "Submit", "Search", "खोजें")
+        for (lbl in sendLabels) {
+            if (clickByText(lbl)) return true
+        }
+        if (Build.VERSION.SDK_INT >= 30 && editNode != null) {
+            if (editNode.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)) return true
+        }
+        // Fallback: right-side send/arrow icon on the same horizontal row as the input box
+        if (editNode != null) {
+            val er = Rect()
+            editNode.getBoundsInScreen(er)
+            val dm = resources.displayMetrics
+            if (lastElements.isEmpty()) readScreenElements(80)
+            val rightSendIcon = lastElements.firstOrNull {
+                it.kind == "Button" &&
+                    it.bounds.centerX() > er.right - 20 &&
+                    it.bounds.centerX() > dm.widthPixels * 0.72f &&
+                    kotlin.math.abs(it.bounds.centerY() - er.centerY()) < 140
+            }
+            if (rightSendIcon != null) {
+                return tapCoordinates(rightSendIcon.bounds.exactCenterX(), rightSendIcon.bounds.exactCenterY())
+            }
         }
         return false
     }
@@ -670,9 +767,7 @@ class MeeraAccessibilityService : AccessibilityService() {
         val ok = editNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
         if (ok && autoSend) {
             try { Thread.sleep(350) } catch (_: Exception) {}
-            if (!clickWhatsAppSendButton()) {
-                clickByText("Send") || clickByText("भेजें") || clickByText("Send Message") || clickByText("Search")
-            }
+            triggerUniversalSend(editNode)
         }
         return ok
     }

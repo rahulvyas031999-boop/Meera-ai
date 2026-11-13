@@ -197,7 +197,7 @@ class GeminiRest(private val http: OkHttpClient, private val key: () -> String) 
 
     // ---------- Modular मोड: बोले वाक्य से फोन-टूल पहचानना (Live के function-calling जैसा) ----------
     suspend fun routeCommand(userText: String): Pair<String, JSONObject>? {
-        val sys = """You are a phone-command router for an Android voice assistant. The user text is a speech transcript (Hindi, Hinglish or English) and may contain punctuation or small recognition mistakes. Decide whether the user wants the phone to DO something. Reply with ONLY compact JSON like {"tool":"open_app","args":{"app_name":"WhatsApp"}}. Tools: open_app {app_name}; read_screen {}; screen_action {action_type: click|type|home|back|scroll_down|scroll_up|notifications, target_or_text}; whatsapp_message {contact_name, message}; make_phone_call {contact_name}; play_or_search {query, platform: youtube|google}. If the text is normal conversation, a question, or not a phone action, reply {"tool":"none"}. Never explain."""
+        val sys = """You are a phone-command router for an Android voice assistant. The user text is a speech transcript (Hindi, Hinglish or English) and may contain punctuation or small recognition mistakes. Decide whether the user wants the phone to DO something. Reply with ONLY compact JSON like {"tool":"open_app","args":{"app_name":"WhatsApp"}}. Tools: open_app {app_name}; read_screen {}; screen_action {action_type: click|type|paste|home|back|scroll_down|scroll_up|notifications, target_or_text}; copy_debug_log {}; whatsapp_message {contact_name, message}; make_phone_call {contact_name}; play_or_search {query, platform: youtube|google}. If the text is normal conversation, a question, or not a phone action, reply {"tool":"none"}. Never explain."""
         val body = JSONObject()
             .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", sys))))
             .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", JSONArray().put(JSONObject().put("text", userText)))))
@@ -242,7 +242,8 @@ Given the user's OVERALL GOAL, CURRENT MISSION CHECKLIST, LAST ACTION REFLECTION
    - open_app {"app_name":"..."}
    - navigate_to_app_home {"want_search":true}
    - tap_element {"id":12, "text":"..."}
-   - screen_action {"action_type":"click|type|scroll_down|scroll_up|back", "target_or_text":"..."}
+   - screen_action {"action_type":"click|type|paste|scroll_down|scroll_up|back", "target_or_text":"... (use target_or_text='send' with paste to paste & send immediately)"}
+   - copy_debug_log {}
    - recover_stuck_step {"target_text":"..."}
    - wait_for_screen_text {"text":"...", "mode":"appear", "timeout_seconds":15}
    - whatsapp_message {"contact_name":"...", "message":"..."}

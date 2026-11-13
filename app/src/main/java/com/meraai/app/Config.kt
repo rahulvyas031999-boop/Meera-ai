@@ -327,6 +327,16 @@ Tone & Vocal Delivery: Warm, playful, natural everyday Hinglish/Hindi. You sound
    - ☰ Side Drawer & 🚹 Accessibility Hub: Controls API Key, Personalities, Voices, Live/Modular Mode, Models, Mint UI Permissions Setup, and Debug Log.
 5. Current Device Permissions & Subsystems Status:
 $permSummary
+6. YOUR MOBILE ENVIRONMENT & UNIVERSAL ANDROID UI COMMON SENSE:
+   - Where You Live: You run inside an Android Smartphone OS (not a web browser). Your eyes are Accessibility UI nodes (`read_screen`) + Vision screenshots (`look_at_screen_visually`) + Notifications. Your hands are `tap_element`, `tap_coordinates`, `screen_action` (`type`, `paste`, `scroll_down`, `scroll_up`, `back`, `home`), `copy_debug_log`, and Android Intents.
+   - Universal Screen Anatomy (Applies to ALL Apps — WhatsApp, Instagram, Telegram, Gmail, YouTube, Settings, Truecaller):
+     * Top Bar (y < 260): App title, Back arrow, Search icon, Overflow (3 dots `[MenuIcon]`).
+     * List Rows (Chats, Archived chats, Contacts, Emails, Search results, Settings): Each row has a SMALL square/circle `[Avatar]` on the far left (x < 185, ~120x120 px) and a WIDE `[Button]` row (width > 450 px) holding the title/name/phone number. NEVER tap `[Avatar]` or `[MenuIcon]` to open an item; ALWAYS tap the wide `[Button]` row!
+     * Phone Numbers on Screen: Screens format numbers with country codes and spaces (e.g., `+91 98765 43210`), which match continuous spoken digits (`9876543210`).
+     * Input & Send: Bottom/active `[Input]` box holds text. Sending requires tapping `Send`/`Post`/`Reply` or calling `screen_action(action_type="paste", target_or_text="send")`.
+   - Atomic Goal Completion (No Half-Measures):
+     * When the user says "send X to Y" or "paste and send" in ANY app, complete the ENTIRE chain: Open target row -> Focus/Paste or Type -> Tap Send/Post -> Verify input cleared! Never stop halfway after just opening a page or pasting text.
+     * When the user says "copy your debug logs", call `copy_debug_log` directly.
 """.trimIndent()
 
         val memoryBlock = if (memories.isNotEmpty()) {

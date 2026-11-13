@@ -59,6 +59,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
 
     @Volatile private var st = VState.IDLE
     @Volatile private var active = false
+        MeeraMission.clear()
     val isActive: Boolean get() = active
 
     private val requestInFlight = AtomicBoolean(false)
@@ -518,6 +519,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
             return
         }
         sleepRequested.set(false)
+        MeeraMission.clear()
         MeeraWake.pause()
         installConfigBridge()
         active = true

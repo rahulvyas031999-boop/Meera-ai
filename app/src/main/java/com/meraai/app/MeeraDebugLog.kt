@@ -15,6 +15,9 @@ import java.util.Locale
 import java.util.concurrent.CopyOnWriteArrayList
 
 object MeeraDebugLog {
+    @Volatile var lastCopiedText: String = ""
+    fun getFullLog(): String = if (lines.isEmpty()) "Abhi koi debug log record nahi hua hai." else lines.joinToString("\n")
+    fun lineCount(): Int = lines.size
     private val lines = CopyOnWriteArrayList<String>()
     @Volatile private var dirty = false
     @Volatile private var hooked = false
@@ -31,7 +34,9 @@ object MeeraDebugLog {
         Handler(Looper.getMainLooper()).post {
             try {
                 val cm = app.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                cm.setPrimaryClip(ClipData.newPlainText("meera_debug", lines.joinToString("\n")))
+                val dump = getFullLog()
+                lastCopiedText = dump
+                cm.setPrimaryClip(ClipData.newPlainText("meera_debug", dump))
                 dirty = false
                 Toast.makeText(app, "Debug log copy ho gaya. Paste karke bhejo.", Toast.LENGTH_LONG).show()
             } catch (_: Throwable) {}
