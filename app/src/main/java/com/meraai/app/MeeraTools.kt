@@ -1212,11 +1212,6 @@ object MeeraTools {
             'ॐ' to "om"
         )
         val sb = StringBuilder()
-        val nowStr = java.text.SimpleDateFormat("EEE, dd MMM yyyy hh:mm a", java.util.Locale.getDefault()).format(java.util.Date())
-        val svcInst = MeeraAccessibilityService.instance
-        val clipPreview = svcInst?.let { MeeraDebugLog.lastCopiedText.ifBlank { "check_clipboard" } }.orEmpty()
-        val hasInputOnScreen = svcInst?.readScreenElements(60, updateCache = false)?.contains("[Input]") == true
-        sb.append("\n[LIVE ENVIRONMENT: ActiveApp=$pkg | Time=$nowStr | InputBoxVisibleOnScreen=$hasInputOnScreen | DebugLogCopied=${MeeraDebugLog.lastCopiedText.isNotBlank()}]")
         var i = 0
         while (i < input.length) {
             // Check 2-char conjuncts like क्ष (क + ् + ष)
@@ -2157,6 +2152,10 @@ object MeeraMission {
 
     @Synchronized fun extraContext(pkg: String): String {
         val sb = StringBuilder()
+        val nowStr = java.text.SimpleDateFormat("EEE, dd MMM yyyy hh:mm a", java.util.Locale.getDefault()).format(java.util.Date())
+        val svcInst = MeeraAccessibilityService.instance
+        val hasInputOnScreen = svcInst?.readScreenElements(60, updateCache = false)?.contains("[Input]") == true
+        sb.append("\n[LIVE ENVIRONMENT: ActiveApp=$pkg | Time=$nowStr | InputBoxVisibleOnScreen=$hasInputOnScreen | DebugLogCopied=${MeeraDebugLog.lastCopiedText.isNotBlank()}]")
         val freshNotif = MeeraNotificationService.getFreshUnreadAlert()
         if (freshNotif.isNotEmpty()) sb.append(freshNotif)
         val st = status()
