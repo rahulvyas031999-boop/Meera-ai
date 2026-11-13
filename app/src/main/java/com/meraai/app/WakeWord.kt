@@ -15,6 +15,8 @@ import android.content.pm.ServiceInfo
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.NoiseSuppressor
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -28,9 +30,10 @@ import java.nio.FloatBuffer
  */
 object MeeraWake {
     const val EXTRA_WAKE = "meera_wake"
-    const val THRESHOLD = 0.5f      // ज़्यादा बार बिना बोले जागे तो 0.6-0.7 करें, सुने ही नहीं तो 0.4
-    const val HITS_NEEDED = 2       // लगातार इतने 80ms-हिस्सों पर स्कोर ऊँचा रहना चाहिए
-    const val COOLDOWN_MS = 3000L
+    const val THRESHOLD = 0.68f         // TV और बस के शोर से बचाव के लिए 0.68f
+    const val FAST_SPEECH_PEAK = 0.82f  // अगर आप जल्दी में एक साथ बोलें और स्कोर 0.82+ जाए तो 1 हिट में भी जागेगी
+    const val HITS_NEEDED = 2           // सामान्य बोलने पर 2 हिट्स
+    const val COOLDOWN_MS = 3500L
 
     @Volatile var service: MeeraWakeService? = null
     @Volatile var enabled = true
