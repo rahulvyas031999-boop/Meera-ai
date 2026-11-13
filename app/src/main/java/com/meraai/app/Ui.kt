@@ -453,8 +453,53 @@ private fun HomeTabContent(ui: UiState, vm: VoiceViewModel, active: Boolean) {
 
         Spacer(Modifier.weight(0.6f))
 
-        // Center Glowing Orb
-        Orb(ui.state, vm, Modifier.size(220.dp))
+        // Center Stage: Maya-Style Live2D Avatar + Classic Orb Switcher
+        var useMayaAvatar by remember { mutableStateOf(true) }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(bottom = 6.dp)
+        ) {
+            Surface(
+                color = if (useMayaAvatar) AccentBlue.copy(alpha = 0.28f) else CardGlass,
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier
+                    .border(1.dp, if (useMayaAvatar) AccentCyan else CardBorder, RoundedCornerShape(16.dp))
+                    .clickable { useMayaAvatar = true }
+            ) {
+                Text(
+                    "👧 Maya Avatar",
+                    color = Color.White,
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
+                )
+            }
+            Surface(
+                color = if (!useMayaAvatar) AccentBlue.copy(alpha = 0.28f) else CardGlass,
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier
+                    .border(1.dp, if (!useMayaAvatar) AccentCyan else CardBorder, RoundedCornerShape(16.dp))
+                    .clickable { useMayaAvatar = false }
+            ) {
+                Text(
+                    "🔮 Classic Orb",
+                    color = Color.White,
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
+                )
+            }
+        }
+        if (useMayaAvatar) {
+            MayaStyleAvatarCard(
+                state = ui.state,
+                audioLevel = if (ui.state == VState.ASSISTANT_SPEAKING) 0.65f else 0f,
+                modifier = Modifier.fillMaxWidth().height(270.dp)
+            )
+        } else {
+            Orb(ui.state, vm, Modifier.size(220.dp))
+        }
 
         Spacer(Modifier.height(10.dp))
         Text(
