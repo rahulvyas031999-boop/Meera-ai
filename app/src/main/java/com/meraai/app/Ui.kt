@@ -175,6 +175,7 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
     var currentTab by remember { mutableStateOf(NavTab.HOME) }
     var showKey by remember { mutableStateOf(false) }
     var showA11yHub by remember { mutableStateOf(false) }
+    var showTerminal by remember { mutableStateOf(false) }
     val orbCtx = LocalContext.current
     var orbStyle by remember { mutableStateOf(MeeraOrbPrefs.getStyle(orbCtx)) }
     var orbSizeDp by remember { mutableFloatStateOf(MeeraOrbPrefs.getSizeDp(orbCtx)) }
@@ -225,6 +226,18 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
                         },
                         selected = false,
                         onClick = { scope.launch { drawer.close() }; showA11yHub = true },
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    )
+
+                    NavigationDrawerItem(
+                        label = { Text("Terminal (Termux Live)") },
+                        icon = { Text("💻") },
+                        badge = {
+                            val termuxOk = MeeraTermuxEngine.hasPermission(orbCtx)
+                            Text(if (termuxOk) "रेडी ✓" else "सेटअप", color = if (termuxOk) AccentCyan else Color(0xFFFFB84D))
+                        },
+                        selected = false,
+                        onClick = { scope.launch { drawer.close() }; showTerminal = true },
                         modifier = Modifier.padding(horizontal = 12.dp)
                     )
 
@@ -348,7 +361,9 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
             }
         }
     ) {
-        if (showA11yHub) {
+        if (showTerminal) {
+            MeeraTerminalScreen(onBack = { showTerminal = false })
+        } else if (showA11yHub) {
             AccessibilityHubScreen(onBack = { showA11yHub = false })
         } else {
             Column(

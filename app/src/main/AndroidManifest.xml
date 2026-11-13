@@ -63,6 +63,7 @@
         <package android:name="com.whatsapp.w4b" />
         <package android:name="com.google.android.youtube" />
         <package android:name="com.instagram.android" />
+        <package android:name="com.termux" />
     </queries>
 
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
@@ -146,5 +147,8 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+            <receiver
+            android:name=".MeeraTermuxReceiver"
+            android:exported="true" />
     </application>
 </manifest>

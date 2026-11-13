@@ -33,39 +33,10 @@ object MeeraColabBridge {
     private fun getSecret(ctx: Context): String =
         ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE).getString(KEY_SECRET, "meera123") ?: "meera123"
 
-    /** Lightweight Local Execution via Termux RUN_COMMAND Intent */
+    /** Lightweight Local Execution via Termux Background Engine + Live Output Capture */
     fun runTermuxCommand(ctx: Context, command: String, argsCsv: String = ""): ToolExecutionResult {
-        val cmd = command.trim()
-        if (cmd.isBlank()) {
-            return ToolExecutionResult(true, "run_termux_command", "Termux में क्या कमांड चलाना है बताइए?", "ERROR: Empty command")
-        }
-        return try {
-            val intent = Intent("com.termux.RUN_COMMAND").apply {
-                setClassName("com.termux", "com.termux.app.RunCommandService")
-                putExtra("com.termux.RUN_COMMAND_PATH", "/data/data/com.termux/files/usr/bin/bash")
-                putExtra("com.termux.RUN_COMMAND_ARGUMENTS", arrayOf("-lc", if (argsCsv.isBlank()) cmd else "$cmd $argsCsv"))
-                putExtra("com.termux.RUN_COMMAND_WORKDIR", "/data/data/com.termux/files/home")
-                putExtra("com.termux.RUN_COMMAND_BACKGROUND", false)
-            }
-            if (android.os.Build.VERSION.SDK_INT >= 26) {
-                ctx.startForegroundService(intent)
-            } else {
-                ctx.startService(intent)
-            }
-            MeeraDebugLog.log("TERMUX", "Dispatched command: $cmd")
-            ToolExecutionResult(
-                true, "run_termux_command",
-                "Termux टर्मिनल में कमांड '$cmd' चला दिया है!",
-                "VERIFIED_SUCCESS: Dispatched command '$cmd' to Termux."
-            )
-        } catch (e: Exception) {
-            MeeraDebugLog.log("TERMUX", "Error: ${e.message}")
-            ToolExecutionResult(
-                true, "run_termux_command",
-                "Termux कमांड नहीं चल पाया। सुनिश्चित करें कि Termux इंस्टॉल है और allow-external-apps=true सेट है।",
-                "FAILED: Termux RUN_COMMAND error -> ${e.message}"
-            )
-        }
+        val fullCmd = if (argsCsv.isBlank()) command.trim() else "${command.trim()} $argsCsv"
+        return MeeraTermuxEngine.execute(ctx, fullCmd, background = true, waitMs = 5500L)
     }
 
     /** Heavy Cloud Execution on Google Colab Backend Server */
