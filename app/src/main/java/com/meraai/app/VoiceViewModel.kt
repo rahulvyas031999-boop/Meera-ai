@@ -86,6 +86,10 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
 
     init {
         installConfigBridge()
+        MeeraAgentFactory.onDeliverToChat = { roleTitle, fullOut ->
+            appendChatLog("model", fullOut)
+            _ui.update { it.copy(lastToolStatus = "🤖 $roleTitle") }
+        }
     }
 
     private fun buildFullSystemPrompt(): String =

@@ -526,6 +526,47 @@ object MeeraTools {
                 .put("description", "Copy Meera AI's internal debugging logs directly to the Android system clipboard so they can be pasted into any app.")
                 .put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()))
         )
+                funcs.put(
+            JSONObject()
+                .put("name", "spawn_custom_agent")
+                .put("description", "Dynamically create and run a specialized domain-expert sub-agent for ANY profession or sector (e.g., 'Stand-Up Comedian', 'YouTube Scriptwriter', 'Senior Coder', 'Business Analyst', 'Teacher', 'Marketing Strategist'). Performance tasks are spoken aloud; long scripts/code/reports are saved to Chat Tab & Clipboard.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("profession", JSONObject().put("type", "STRING").put("description", "Exact specialist role needed, e.g. 'Stand-Up Comedian', 'Suspense Scriptwriter', 'Chartered Accountant', 'Python Architect'"))
+                        .put("task_details", JSONObject().put("type", "STRING").put("description", "Complete details, topic, tone, and requirements of the user's request"))
+                        .put("delivery_mode", JSONObject().put("type", "STRING").put("description", "'speak' for comedy/shayari/short performance, 'document' for code/scripts/plans, or 'auto' (default)")))
+                    .put("required", JSONArray().put("profession").put("task_details")))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "run_termux_command")
+                .put("description", "Run a quick local shell or Python command in Termux on the phone. Only after the user clearly confirmed the exact command.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("command", JSONObject().put("type", "STRING").put("description", "Shell command to run in Termux")))
+                    .put("required", JSONArray().put("command")))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "run_colab_task")
+                .put("description", "Send a heavy coding, Excel/PDF generation, data analysis, or GitHub automation task to the user's connected Google Colab Cloud Backend server.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("task_type", JSONObject().put("type", "STRING").put("description", "Type of task: 'python_exec', 'excel_report', 'github_ops', or 'general'"))
+                        .put("instruction", JSONObject().put("type", "STRING").put("description", "Clear instruction of what Colab should execute"))
+                        .put("payload", JSONObject().put("type", "STRING").put("description", "Optional Python code, JSON data, or script content")))
+                    .put("required", JSONArray().put("instruction")))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "set_colab_url")
+                .put("description", "Save the public HTTPS tunnel URL and the secret word of the user's running Google Colab server so Meera can send heavy tasks to it.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("url", JSONObject().put("type", "STRING").put("description", "Public HTTPS URL from Google Colab (e.g., https://xxx.trycloudflare.com)"))
+                        .put("secret", JSONObject().put("type", "STRING").put("description", "The secret word printed by the Colab cell")))
+                    .put("required", JSONArray().put("url")))
+        )
         return JSONArray().put(JSONObject().put("functionDeclarations", funcs))
     }
 
@@ -857,6 +898,32 @@ object MeeraTools {
                     true, name,
                     "मैंने अपने डीबग लॉग ($cnt लाइनें) क्लिपबोर्ड पर कॉपी कर लिए हैं!",
                     "VERIFIED_SUCCESS: Copied $cnt lines of Meera debug log to Android system clipboard. Ready to paste."
+                )
+            }
+            "spawn_custom_agent" -> {
+                val prof = args.optString("profession", "Specialist").trim()
+                val details = args.optString("task_details", "").trim()
+                val mode = args.optString("delivery_mode", "auto").trim()
+                MeeraAgentFactory.spawnAndRun(ctx, prof, details, mode)
+            }
+            "run_termux_command" -> {
+                val cmd = args.optString("command", "").trim()
+                MeeraColabBridge.runTermuxCommand(ctx, cmd)
+            }
+            "run_colab_task" -> {
+                val tType = args.optString("task_type", "general").trim()
+                val inst = args.optString("instruction", "").trim()
+                val pay = args.optString("payload", "").trim()
+                MeeraColabBridge.runColabTask(ctx, tType, inst, pay)
+            }
+            "set_colab_url" -> {
+                val u = args.optString("url", "").trim()
+                val sec = args.optString("secret", "meera123").trim()
+                MeeraColabBridge.setServerConfig(ctx, u, sec)
+                ToolExecutionResult(
+                    true, name,
+                    "Google Colab क्लाउड सर्वर का लिंक सेव कर लिया है! अब भारी काम मैं सीधे Colab पर चला सकूँगी।",
+                    "VERIFIED_SUCCESS: Saved Google Colab server URL -> $u"
                 )
             }
             "play_macro" -> {
