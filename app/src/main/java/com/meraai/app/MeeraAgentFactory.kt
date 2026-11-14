@@ -15,10 +15,11 @@ import java.util.concurrent.TimeUnit
 
 object MeeraAgentFactory {
     @Volatile var onDeliverToChat: ((agentTitle: String, fullOutput: String) -> Unit)? = null
+    @Volatile var lastError: String = ""
 
     private val http = OkHttpClient.Builder()
         .connectTimeout(25, TimeUnit.SECONDS)
-        .readTimeout(120, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
         .build()
 
     private fun auditGeneratedCode(code: String): List<String> {
@@ -56,7 +57,7 @@ object MeeraAgentFactory {
     ): Pair<String, String> {
         for (m in models.distinct()) {
             val thinkingAttempts = if (useHighThinking && (m.contains("hydrogen") || m.contains("3.8") || m.contains("3.1-pro"))) {
-                listOf(true, false)
+                listOf(false)
             } else {
                 listOf(false)
             }
@@ -85,6 +86,10 @@ object MeeraAgentFactory {
                         .build()
 
                     http.newCall(req).execute().use { resp ->
+                        if (!resp.isSuccessful) {
+                            lastError = "HTTP ${resp.code}: ${resp.body?.string()?.take(200)}"
+                            MeeraDebugLog.log("CODING_ENGINE", "Model $m -> $lastError")
+                        }
                         if (resp.isSuccessful) {
                             val j = JSONObject(resp.body!!.string())
                             val parts = j.optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")
@@ -99,6 +104,7 @@ object MeeraAgentFactory {
                         }
                     }
                 } catch (e: Exception) {
+                    lastError = e.message ?: "error"
                     MeeraDebugLog.log("CODING_ENGINE", "Model $m (think=$withThinking) failed: ${e.message}")
                 }
             }
@@ -145,7 +151,7 @@ CRITICAL ENGINEERING RULES (ZERO TOLERANCE FOR BROKEN CODE):
 
         MeeraBackgroundMonitor.updateProgress(taskId, 40, "Gemini Hydrogen से हाई-रीजनिंग कोड तैयार हो रहा है...")
 
-        val priorityModels = listOf("gemini-hydrogen", "gemini-3.1-pro-preview", prefs.chatModel, "gemini-3.8-flash")
+        val priorityModels = listOf("gemini-hydrogen")
         var (codeOutput, usedModel) = callReasoningBrain(
             key = key,
             models = priorityModels,
@@ -175,7 +181,7 @@ CRITICAL ENGINEERING RULES (ZERO TOLERANCE FOR BROKEN CODE):
         }
 
         if (codeOutput.isBlank()) {
-            MeeraBackgroundMonitor.completeTask(taskId, false, "कोड जनरेट नहीं हो पाया (मॉडल रिस्पॉन्स खाली)।")
+            MeeraBackgroundMonitor.completeTask(taskId, false, "कोड जनरेट नहीं हो पाया — कारण: $lastError")
             return ToolExecutionResult(
                 true, "generate_professional_code",
                 "कोडिंग इंजन से अभी कोड तैयार नहीं हो पाया, कृपया नेटवर्क या API Key चेक करके दोबारा कहें।",
@@ -250,7 +256,7 @@ CRITICAL ENGINEERING RULES (ZERO TOLERANCE FOR BROKEN CODE):
         }
 
         MeeraBackgroundMonitor.updateProgress(taskId, 45, "'$roleName' एजेंट काम कर रहा है...")
-        val candidateModels = listOf("gemini-hydrogen", "gemini-3.1-pro-preview", prefs.chatModel, "gemini-3.8-flash")
+        val candidateModels = listOf("gemini-hydrogen")
         val (generatedOutput, usedModel) = callReasoningBrain(
             key = key,
             models = candidateModels,
