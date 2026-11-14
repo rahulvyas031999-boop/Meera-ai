@@ -175,6 +175,8 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
     var currentTab by remember { mutableStateOf(NavTab.HOME) }
     var showKey by remember { mutableStateOf(false) }
     var showA11yHub by remember { mutableStateOf(false) }
+    var showGitHubVault by remember { mutableStateOf(false) }
+    var privateRepoPrompt by remember { mutableStateOf(false) }
     val showTerminal by MeeraTermuxEngine.terminalVisible.collectAsState()
     val orbCtx = LocalContext.current
     var orbStyle by remember { mutableStateOf(MeeraOrbPrefs.getStyle(orbCtx)) }
@@ -258,6 +260,46 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
                         badge = { Text("v$curVerName", color = AccentCyan) },
                         selected = false,
                         onClick = { scope.launch { drawer.close() }; MeeraUpdater.checkAndInstallUpdate(logCtx) },
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    )
+
+                    val exportUi by MeeraRepoExporter.state.collectAsState()
+                    var hasGhToken by remember(showGitHubVault) { mutableStateOf(MeeraTokenVault.hasToken(logCtx)) }
+                    NavigationDrawerItem(
+                        label = { Text("पूरा कोड डाउनलोड करें") },
+                        icon = { Text("📥") },
+                        badge = {
+                            Text(
+                                if (exportUi.running) "बन रहा है..." else "Code Dump",
+                                color = if (exportUi.running) Color(0xFFFFB84D) else AccentCyan
+                            )
+                        },
+                        selected = false,
+                        onClick = {
+                            scope.launch { drawer.close() }
+                            MeeraRepoExporter.exportFullCode(logCtx) {
+                                privateRepoPrompt = true
+                                showGitHubVault = true
+                            }
+                        },
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    )
+
+                    NavigationDrawerItem(
+                        label = { Text("GitHub Token (Encrypted Vault)") },
+                        icon = { Text("🔐") },
+                        badge = {
+                            Text(
+                                if (hasGhToken) "Encrypted ✓" else "Optional",
+                                color = if (hasGhToken) AccentCyan else Muted
+                            )
+                        },
+                        selected = false,
+                        onClick = {
+                            scope.launch { drawer.close() }
+                            privateRepoPrompt = false
+                            showGitHubVault = true
+                        },
                         modifier = Modifier.padding(horizontal = 12.dp)
                     )
 
@@ -458,6 +500,81 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
             hasKey = ui.hasKey,
             onSave = { vm.saveKey(it); showKey = false },
             onDismiss = { showKey = false }
+        )
+    }
+
+    val exportDialogState by MeeraRepoExporter.state.collectAsState()
+    if (showGitHubVault) {
+        GitHubTokenVaultDialog(
+            hasSavedToken = MeeraTokenVault.hasToken(orbCtx),
+            isForPrivateDownload = privateRepoPrompt,
+            onSaveAndDownload = { tok, shouldSave ->
+                if (shouldSave) {
+                    MeeraTokenVault.saveToken(orbCtx, tok)
+                    Toast.makeText(orbCtx, "Token encrypted save ho gaya!", Toast.LENGTH_SHORT).show()
+                }
+                showGitHubVault = false
+                privateRepoPrompt = false
+                MeeraRepoExporter.exportFullCode(orbCtx, explicitToken = tok) {
+                    Toast.makeText(orbCtx, "Token invalid hai ya repo access nahi mila.", Toast.LENGTH_LONG).show()
+                }
+            },
+            onSaveOnly = { tok ->
+                MeeraTokenVault.saveToken(orbCtx, tok)
+                showGitHubVault = false
+                Toast.makeText(orbCtx, "GitHub Token encrypted save ho gaya!", Toast.LENGTH_SHORT).show()
+            },
+            onDeleteToken = {
+                MeeraTokenVault.clearToken(orbCtx)
+                showGitHubVault = false
+                privateRepoPrompt = false
+                Toast.makeText(orbCtx, "Saved GitHub Token hata diya gaya.", Toast.LENGTH_SHORT).show()
+            },
+            onDismiss = {
+                showGitHubVault = false
+                privateRepoPrompt = false
+            }
+        )
+    }
+
+    if (exportDialogState.completedFileName != null || exportDialogState.errorMsg != null) {
+        AlertDialog(
+            onDismissRequest = { MeeraRepoExporter.dismissCompletedDialog() },
+            title = {
+                Text(
+                    if (exportDialogState.errorMsg != null) "⚠️ Code Export Error"
+                    else "✅ Poora Code Download Ho Gaya!"
+                )
+            },
+            text = {
+                Text(
+                    exportDialogState.errorMsg
+                        ?: "File: Downloads/${exportDialogState.completedFileName}\nTotal Code Files: ${exportDialogState.completedFileCount} | Size: ${exportDialogState.completedSizeKb} KB\n\nAb aap isse direct share kar sakte hain.",
+                    fontSize = 13.5.sp
+                )
+            },
+            confirmButton = {
+                val sUri = exportDialogState.shareUri
+                if (sUri != null && exportDialogState.errorMsg == null) {
+                    TextButton(onClick = {
+                        MeeraRepoExporter.launchShareSheet(orbCtx, sUri)
+                        MeeraRepoExporter.dismissCompletedDialog()
+                    }) {
+                        Text("📤 Share / Send Karein", fontWeight = FontWeight.Bold)
+                    }
+                } else {
+                    TextButton(onClick = { MeeraRepoExporter.dismissCompletedDialog() }) {
+                        Text("Theek Hai")
+                    }
+                }
+            },
+            dismissButton = {
+                if (exportDialogState.errorMsg == null) {
+                    TextButton(onClick = { MeeraRepoExporter.dismissCompletedDialog() }) {
+                        Text("Band Karein")
+                    }
+                }
+            }
         )
     }
 }
