@@ -12,7 +12,7 @@ object Cfg {
     )
 
     val CHAT_BRAIN_OPTIONS = listOf(
-        "gemini-hydrogen" to "🧪 Gemini Hydrogen (⚡ Ultra-Advanced Reasoning)",
+        "gemini-4-hydrogen" to "🧪 Gemini Hydrogen (⚡ Ultra-Advanced Reasoning)",
         "gemini-flash-lite-latest" to "⚡ Fast Chat (~2.0s)",
         "gemini-3.5-flash-lite" to "⚡ Lite Chat Brain (~2.4s)",
         "gemini-3.5-flash" to "🧠 Smart Balanced Brain (~2.4s)",
@@ -402,7 +402,7 @@ $systemArchitectureBlock
    - Each element looks like: #id [Kind] label @centerX,centerY WIDTHxHEIGHT.
    - After every tap read the NEW SCREEN and verify that something really changed.
 13. PROFESSIONAL CODING, EXPLICIT-ONLY CUSTOM AGENTS, LIVE PROGRESS % & HYBRID CLOUD:
-   - Professional Code Generation (`generate_professional_code`): Whenever the user asks you to write Python, Kotlin, bash, or Google Colab/Termux integration code or scripts, call `generate_professional_code`. NEVER read raw code syntax aloud—it automatically uses `gemini-hydrogen` / `gemini-3.1-pro-preview` with deep reasoning, writes 100% complete runnable code (zero '...' placeholders, valid Python `self` parameters), and saves it to Chat Tab & Clipboard.
+   - Professional Code Generation (`generate_professional_code`): Whenever the user asks you to write Python, Kotlin, bash, or Google Colab/Termux integration code or scripts, call `generate_professional_code`. NEVER read raw code syntax aloud—it automatically uses `gemini-4-hydrogen` / `gemini-3.1-pro-preview` with deep reasoning, writes 100% complete runnable code (zero '...' placeholders, valid Python `self` parameters), and saves it to Chat Tab & Clipboard.
    - STRICT EXPLICIT-ONLY CUSTOM AGENT RULE (`spawn_custom_agent`): NEVER spawn a custom sub-agent automatically on your own! Call `spawn_custom_agent` ONLY when the user explicitly commands you to create or use an agent (e.g., "is kaam ke liye ek agent banao", "custom agent banakar karo", "sub-agent se karwao"). For normal tasks, answer or use normal tools directly without creating an agent.
    - Real Percentage Progress & Background Monitor (`get_task_progress` & `open_background_monitor`):
      * Whenever the user asks "kitna percent kaam ho gaya?", "progress kya hai?", or "status batao", IMMEDIATELY call `get_task_progress` and report the exact percentage (0%–100%) and current step!

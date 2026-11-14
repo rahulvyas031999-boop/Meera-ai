@@ -126,7 +126,7 @@ object MeeraAgentFactory {
         val taskId = MeeraBackgroundMonitor.startTask(
             title = "Code: ${taskDetails.take(45)}",
             category = "Hydrogen Coding Engine",
-            modelUsed = "gemini-hydrogen",
+            modelUsed = "gemini-4-hydrogen",
             initialStep = "कोडिंग आवश्यकताएँ और आर्किटेक्चर समझ रही हूँ...",
             initialPercent = 15
         )
@@ -151,7 +151,7 @@ CRITICAL ENGINEERING RULES (ZERO TOLERANCE FOR BROKEN CODE):
 
         MeeraBackgroundMonitor.updateProgress(taskId, 40, "Gemini Hydrogen से हाई-रीजनिंग कोड तैयार हो रहा है...")
 
-        val priorityModels = listOf("gemini-hydrogen")
+        val priorityModels = listOf("gemini-4-hydrogen")
         var (codeOutput, usedModel) = callReasoningBrain(
             key = key,
             models = priorityModels,
@@ -224,7 +224,7 @@ CRITICAL ENGINEERING RULES (ZERO TOLERANCE FOR BROKEN CODE):
         val taskId = MeeraBackgroundMonitor.startTask(
             title = "Agent: $roleName",
             category = "Custom Sub-Agent",
-            modelUsed = "gemini-hydrogen",
+            modelUsed = "gemini-4-hydrogen",
             initialStep = "'$roleName' कस्टम एजेंट तैयार हो रहा है...",
             initialPercent = 15
         )
@@ -256,7 +256,7 @@ CRITICAL ENGINEERING RULES (ZERO TOLERANCE FOR BROKEN CODE):
         }
 
         MeeraBackgroundMonitor.updateProgress(taskId, 45, "'$roleName' एजेंट काम कर रहा है...")
-        val candidateModels = listOf("gemini-hydrogen")
+        val candidateModels = listOf("gemini-4-hydrogen")
         val (generatedOutput, usedModel) = callReasoningBrain(
             key = key,
             models = candidateModels,

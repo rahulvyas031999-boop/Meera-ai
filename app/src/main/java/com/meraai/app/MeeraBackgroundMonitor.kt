@@ -82,7 +82,7 @@ object MeeraBackgroundMonitor {
     fun startTask(
         title: String,
         category: String,
-        modelUsed: String = "gemini-hydrogen",
+        modelUsed: String = "gemini-4-hydrogen",
         initialStep: String = "प्रारंभ हो रहा है...",
         initialPercent: Int = 5
     ): Long {
