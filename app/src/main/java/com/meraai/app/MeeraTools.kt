@@ -529,7 +529,7 @@ object MeeraTools {
                 funcs.put(
             JSONObject()
                 .put("name", "spawn_custom_agent")
-                .put("description", "EXPLICIT-ONLY: Create and run a custom domain-expert sub-agent ONLY when the user explicitly asks to create or use an agent (e.g. 'agent banao'). NEVER call automatically. Dynamically create for ANY sector (e.g., 'Stand-Up Comedian', 'YouTube Scriptwriter', 'Senior Coder', 'Business Analyst', 'Teacher', 'Marketing Strategist'). Performance tasks are spoken aloud; long scripts/code/reports are saved to Chat Tab & Clipboard.")
+                .put("description", "EXPLICIT-ONLY: Create and run a custom domain-expert sub-agent ONLY when the user explicitly asks to create or use an agent (e.g. 'agent banao'). NEVER call automatically. If the user only wants a model such as Hydrogen to write or answer something, do NOT use this, use ask_hydrogen instead. If you are not sure whether the user wants an agent created, ask one short confirmation question first.")
                 .put("parameters", JSONObject().put("type", "OBJECT")
                     .put("properties", JSONObject()
                         .put("profession", JSONObject().put("type", "STRING").put("description", "Exact specialist role needed, e.g. 'Stand-Up Comedian', 'Suspense Scriptwriter', 'Chartered Accountant', 'Python Architect'"))
@@ -588,6 +588,15 @@ object MeeraTools {
                 .put("name", "open_background_monitor")
                 .put("description", "Open Meera's Live Background Activity Monitor screen so the user can visually inspect live percentage progress, step logs, and outputs.")
                 .put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()))
+        )
+                funcs.put(
+            JSONObject()
+                .put("name", "ask_hydrogen")
+                .put("description", "Send a writing or thinking task straight to the Gemini Hydrogen model and get its answer, with NO agent or role created. Use this when the user wants Hydrogen (or a strong model) to write or answer something, such as a story, script, article, plan or explanation. For code use generate_professional_code instead. The full answer is saved to the Chat tab and clipboard.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("request", JSONObject().put("type", "STRING").put("description", "The full request as the user wants it: topic, length, language and tone")))
+                    .put("required", JSONArray().put("request")))
         )
         return JSONArray().put(JSONObject().put("functionDeclarations", funcs))
     }
@@ -937,6 +946,10 @@ object MeeraTools {
                 MeeraBackgroundMonitor.openMonitor()
                 val report = MeeraBackgroundMonitor.getVoiceProgressReport()
                 ToolExecutionResult(true, name, "मैंने बैकग्राउंड एक्टिविटी मॉनिटर स्क्रीन खोल दी है। $report", "VERIFIED_SUCCESS: Opened Background Activity Monitor. $report")
+            }
+            "ask_hydrogen" -> {
+                val hReq = args.optString("request", "").trim()
+                MeeraAgentFactory.askHydrogen(ctx, hReq)
             }
             "spawn_custom_agent" -> {
                 val prof = args.optString("profession", "Specialist").trim()

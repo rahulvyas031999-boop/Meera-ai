@@ -19,7 +19,7 @@ object MeeraAgentFactory {
 
     private val http = OkHttpClient.Builder()
         .connectTimeout(25, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(180, TimeUnit.SECONDS)
         .build()
 
     private fun auditGeneratedCode(code: String): List<String> {
@@ -220,6 +220,7 @@ CRITICAL ENGINEERING RULES (ZERO TOLERANCE FOR BROKEN CODE):
             return ToolExecutionResult(true, "spawn_custom_agent", "पहले API Key डालनी होगी।", "ERROR: Missing API Key")
         }
 
+        lastError = ""
         val roleName = profession.trim().ifBlank { "Domain Specialist" }
         val taskId = MeeraBackgroundMonitor.startTask(
             title = "Agent: $roleName",
@@ -269,7 +270,7 @@ CRITICAL ENGINEERING RULES (ZERO TOLERANCE FOR BROKEN CODE):
         }
 
         if (generatedOutput.isBlank()) {
-            MeeraBackgroundMonitor.completeTask(taskId, false, "'$roleName' एजेंट विफल रहा।")
+            MeeraBackgroundMonitor.completeTask(taskId, false, "'$roleName' एजेंट विफल — कारण: $lastError")
             return ToolExecutionResult(
                 true, "spawn_custom_agent",
                 "कस्टम '$roleName' एजेंट अभी आउटपुट तैयार नहीं कर पाया, कृपया दोबारा कोशिश करें।",
@@ -306,6 +307,44 @@ CRITICAL ENGINEERING RULES (ZERO TOLERANCE FOR BROKEN CODE):
             true, "spawn_custom_agent",
             generatedOutput,
             "VERIFIED_SUCCESS: Explicit custom [$roleName] agent generated performance. Deliver this exact performance aloud naturally:\n$generatedOutput"
+        )
+    }
+
+    fun askHydrogen(ctx: Context, request: String): ToolExecutionResult {
+        val prefs = Prefs(ctx)
+        val key = prefs.apiKey
+        if (key.isBlank()) {
+            return ToolExecutionResult(true, "ask_hydrogen", "पहले API Key डालनी होगी।", "ERROR: Missing API Key")
+        }
+        lastError = ""
+        val taskId = MeeraBackgroundMonitor.startTask(
+            title = "Hydrogen: ${request.take(45)}",
+            category = "Hydrogen Direct",
+            modelUsed = "gemini-4-hydrogen",
+            initialStep = "अनुरोध हाइड्रोजन को भेजा जा रहा है...",
+            initialPercent = 20
+        )
+        MeeraBackgroundMonitor.updateProgress(taskId, 50, "हाइड्रोजन जवाब तैयार कर रहा है...")
+        val (answer, usedModel) = callReasoningBrain(
+            key = key,
+            models = listOf("gemini-4-hydrogen"),
+            systemPrompt = "You are Gemini Hydrogen. Do exactly what the user asks, in the language and tone they ask for. Give the complete answer with no placeholders.",
+            userPrompt = request,
+            temperature = 0.7,
+            useHighThinking = false
+        ) { }
+        if (answer.isBlank()) {
+            MeeraBackgroundMonitor.completeTask(taskId, false, "हाइड्रोजन विफल — कारण: $lastError")
+            return ToolExecutionResult(true, "ask_hydrogen", "हाइड्रोजन से अभी जवाब नहीं मिल पाया।", "ERROR: Hydrogen failed: $lastError")
+        }
+        onDeliverToChat?.invoke("Hydrogen", "🧪 [Hydrogen • $usedModel]:\n\n$answer")
+        copyToClipboard(ctx, answer)
+        MeeraBackgroundMonitor.completeTask(taskId, true, "100% पूरा — जवाब Chat टैब और क्लिपबोर्ड में सेव है।", answer)
+        val plain = answer.replace(Regex("[*#`_]"), "").trim()
+        val spoken = if (plain.length <= 1500) plain else "हाइड्रोजन ने जवाब तैयार करके Chat टैब और क्लिपबोर्ड में सेव कर दिया है।"
+        return ToolExecutionResult(
+            true, "ask_hydrogen", spoken,
+            "VERIFIED_SUCCESS: Hydrogen finished and the full answer is saved in the Chat tab and clipboard. If the answer is short, read it aloud naturally; otherwise give a two sentence summary.\n\nANSWER:\n$answer"
         )
     }
 
