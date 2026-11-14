@@ -598,6 +598,12 @@ object MeeraTools {
                         .put("request", JSONObject().put("type", "STRING").put("description", "The full request as the user wants it: topic, length, language and tone")))
                     .put("required", JSONArray().put("request")))
         )
+                funcs.put(
+            JSONObject()
+                .put("name", "open_code_pusher")
+                .put("description", "Open Meera's In-App Code Patch, Diff Preview & GitHub Push Studio screen so the user can apply code updates, preview changes, push to v2-test, and monitor APK builds directly on the phone.")
+                .put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()))
+        )
         return JSONArray().put(JSONObject().put("functionDeclarations", funcs))
     }
 
@@ -651,6 +657,7 @@ object MeeraTools {
             "open_meera_dashboard" -> {
                 MeeraTermuxEngine.closeTerminal()
                 MeeraBackgroundMonitor.closeMonitor()
+                MeeraCodePatcher.closeScreen()
                 val intent = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName)
                 if (intent != null) {
                     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
@@ -941,6 +948,10 @@ object MeeraTools {
             "get_task_progress" -> {
                 val report = MeeraBackgroundMonitor.getVoiceProgressReport()
                 ToolExecutionResult(true, name, report, "VERIFIED_SUCCESS: $report")
+            }
+            "open_code_pusher" -> {
+                MeeraCodePatcher.openScreen()
+                ToolExecutionResult(true, name, "मैंने इन-ऐप कोड पुश और बिल्ड स्टूडियो खोल दिया है! आप यहाँ बदलाव लिखकर या पेस्ट करके प्रीव्यू देख सकते हैं और सीधे GitHub पर पुश कर सकते हैं।", "VERIFIED_SUCCESS: Opened Meera Code Push & Build Studio.")
             }
             "open_background_monitor" -> {
                 MeeraBackgroundMonitor.openMonitor()

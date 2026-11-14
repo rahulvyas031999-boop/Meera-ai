@@ -319,6 +319,22 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
                         modifier = Modifier.padding(horizontal = 12.dp)
                     )
 
+                    val patcherUi by MeeraCodePatcher.state.collectAsState()
+                    val patcherBadge = when (patcherUi.buildStatus) {
+                        "WATCHING" -> "⏳ CI..."
+                        "SUCCESS" -> "APK ✓"
+                        "FAILURE" -> "Err !"
+                        else -> "GitHub"
+                    }
+                    NavigationDrawerItem(
+                        label = { Text("कोड पुश और बिल्ड (Studio)") },
+                        icon = { Text("🚀") },
+                        badge = { Text(patcherBadge, color = AccentCyan, fontWeight = FontWeight.Bold) },
+                        selected = false,
+                        onClick = { scope.launch { drawer.close() }; MeeraCodePatcher.openScreen() },
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    )
+
                     NavigationDrawerItem(
                         label = { Text("Debug log कॉपी करें") },
                         icon = { Text("📋") },
@@ -420,12 +436,15 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
         }
     ) {
         val bgMonitorOpen by MeeraBackgroundMonitor.monitorVisible.collectAsState()
+        val codePatcherOpen by MeeraCodePatcher.screenVisible.collectAsState()
         if (showTerminal) {
             MeeraTerminalScreen(onBack = { MeeraTermuxEngine.closeTerminal() })
         } else if (showA11yHub) {
             AccessibilityHubScreen(onBack = { showA11yHub = false })
         } else if (bgMonitorOpen) {
             MeeraBackgroundActivityScreen(onBack = { MeeraBackgroundMonitor.closeMonitor() })
+        } else if (codePatcherOpen) {
+            MeeraCodePatcherScreen(onBack = { MeeraCodePatcher.closeScreen() }, onOpenTokenVault = { MeeraCodePatcher.closeScreen(); showGitHubVault = true })
         } else {
             Column(
                 Modifier.fillMaxSize().background(Bg).systemBarsPadding()
