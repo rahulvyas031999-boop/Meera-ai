@@ -419,13 +419,13 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
             }
         }
     ) {
+        val bgMonitorOpen by MeeraBackgroundMonitor.monitorVisible.collectAsState()
         if (showTerminal) {
             MeeraTerminalScreen(onBack = { MeeraTermuxEngine.closeTerminal() })
-        } else val bgMonitorOpen by MeeraBackgroundMonitor.monitorVisible.collectAsState()
- if (showA11yHub) {
+        } else if (showA11yHub) {
             AccessibilityHubScreen(onBack = { showA11yHub = false })
- } else if (bgMonitorOpen) {
-     MeeraBackgroundActivityScreen(onBack = { MeeraBackgroundMonitor.closeMonitor() })
+        } else if (bgMonitorOpen) {
+            MeeraBackgroundActivityScreen(onBack = { MeeraBackgroundMonitor.closeMonitor() })
         } else {
             Column(
                 Modifier.fillMaxSize().background(Bg).systemBarsPadding()
