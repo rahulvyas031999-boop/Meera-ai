@@ -813,6 +813,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
                 }
             }
             if (finishedAiText.isNotBlank()) appendChatLog("model", finishedAiText)
+            userBuf.clear(); aiBuf.clear()
             toolCalledThisTurn = false
             liveTurnOpen = false; newUserTurn = true; dropAudio = false
         }
