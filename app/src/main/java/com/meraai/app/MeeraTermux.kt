@@ -173,6 +173,7 @@ object MeeraTermuxEngine {
             startedAtMs = nowMs
         )
         entries.value = (entries.value + newEntry).takeLast(40)
+        val bgId = MeeraBackgroundMonitor.startTask("Termux: ${cmd.take(40)}", "Termux Terminal", "Android Bash", "कमांड चल रही है: $cmd", 35)
 
         val latch = CountDownLatch(1)
         latches[entryId] = latch
@@ -214,6 +215,8 @@ object MeeraTermuxEngine {
 
             val latest = entries.value.find { it.id == entryId }
             if (latest != null && !latest.running) {
+                val cmdOk = (latest.exitCode ?: 0) == 0
+                MeeraBackgroundMonitor.completeTask(bgId, cmdOk, if (cmdOk) "100% पूरा (exit=0)" else "एरर (exit=${latest.exitCode})", latest.stdout.ifBlank { latest.stderr })
                 val outCombined = buildString {
                     if (latest.stdout.isNotBlank()) append(latest.stdout.trim())
                     if (latest.stderr.isNotBlank()) {

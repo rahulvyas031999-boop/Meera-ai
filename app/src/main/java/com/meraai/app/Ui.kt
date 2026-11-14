@@ -303,6 +303,22 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
                         modifier = Modifier.padding(horizontal = 12.dp)
                     )
 
+                    val bgTasks by MeeraBackgroundMonitor.tasks.collectAsState()
+                    val bgRunning = bgTasks.firstOrNull { it.status == "RUNNING" }
+                    val bgBadge = when {
+                        bgRunning != null -> "⚡ ${bgRunning.percent}%"
+                        bgTasks.firstOrNull()?.status == "COMPLETED" -> "100% ✓"
+                        else -> "Idle"
+                    }
+                    NavigationDrawerItem(
+                        label = { Text("बैकग्राउंड एक्टिविटी (Live %)") },
+                        icon = { Text("📊") },
+                        badge = { Text(bgBadge, color = if (bgRunning != null) Color(0xFFFFB84D) else AccentCyan, fontWeight = FontWeight.Bold) },
+                        selected = false,
+                        onClick = { scope.launch { drawer.close() }; MeeraBackgroundMonitor.openMonitor() },
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    )
+
                     NavigationDrawerItem(
                         label = { Text("Debug log कॉपी करें") },
                         icon = { Text("📋") },
@@ -405,8 +421,11 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
     ) {
         if (showTerminal) {
             MeeraTerminalScreen(onBack = { MeeraTermuxEngine.closeTerminal() })
-        } else if (showA11yHub) {
+        } else val bgMonitorOpen by MeeraBackgroundMonitor.monitorVisible.collectAsState()
+ if (showA11yHub) {
             AccessibilityHubScreen(onBack = { showA11yHub = false })
+ } else if (bgMonitorOpen) {
+     MeeraBackgroundActivityScreen(onBack = { MeeraBackgroundMonitor.closeMonitor() })
         } else {
             Column(
                 Modifier.fillMaxSize().background(Bg).systemBarsPadding()

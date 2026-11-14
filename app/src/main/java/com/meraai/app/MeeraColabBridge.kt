@@ -50,6 +50,7 @@ object MeeraColabBridge {
             )
         }
 
+        val bgId = MeeraBackgroundMonitor.startTask("Colab: ${instruction.take(40)}", "Google Colab Cloud", "Colab Runtime", "Colab सर्वर को टास्क भेजा जा रहा है...", 20)
         return try {
             val jsonBody = JSONObject()
                 .put("secret", getSecret(ctx))
@@ -65,6 +66,7 @@ object MeeraColabBridge {
             http.newCall(req).execute().use { resp ->
                 val raw = resp.body?.string().orEmpty()
                 if (!resp.isSuccessful) {
+                    MeeraBackgroundMonitor.completeTask(bgId, false, "Colab HTTP ${resp.code} एरर")
                     return ToolExecutionResult(
                         true, "run_colab_task",
                         "Colab सर्वर से संपर्क नहीं हो पाया (HTTP ${resp.code})। हो सकता है Colab सेशन बंद हो गया हो।",
@@ -75,6 +77,7 @@ object MeeraColabBridge {
                 val ok = j.optBoolean("ok", true)
                 val summary = j.optString("summary", "Colab पर काम पूरा हो गया है।")
                 val output = j.optString("output", "")
+                MeeraBackgroundMonitor.completeTask(bgId, ok, if (ok) "100% पूरा — Colab रिजल्ट प्राप्त हुआ।" else summary, output)
                 if (output.isNotBlank()) {
                     MeeraAgentFactory.onDeliverToChat?.invoke("Google Colab Cloud", "☁️ [Colab Result]:\n$output")
                 }
@@ -86,6 +89,7 @@ object MeeraColabBridge {
                 )
             }
         } catch (e: Exception) {
+            MeeraBackgroundMonitor.completeTask(bgId, false, "कनेक्शन टूटा: ${e.message}")
             ToolExecutionResult(
                 true, "run_colab_task",
                 "Colab सर्वर से कनेक्शन टूट गया है। कृपया नया Colab लिंक चेक करें।",

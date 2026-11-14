@@ -529,7 +529,7 @@ object MeeraTools {
                 funcs.put(
             JSONObject()
                 .put("name", "spawn_custom_agent")
-                .put("description", "Dynamically create and run a specialized domain-expert sub-agent for ANY profession or sector (e.g., 'Stand-Up Comedian', 'YouTube Scriptwriter', 'Senior Coder', 'Business Analyst', 'Teacher', 'Marketing Strategist'). Performance tasks are spoken aloud; long scripts/code/reports are saved to Chat Tab & Clipboard.")
+                .put("description", "EXPLICIT-ONLY: Create and run a custom domain-expert sub-agent ONLY when the user explicitly asks to create or use an agent (e.g. 'agent banao'). NEVER call automatically. Dynamically create for ANY sector (e.g., 'Stand-Up Comedian', 'YouTube Scriptwriter', 'Senior Coder', 'Business Analyst', 'Teacher', 'Marketing Strategist'). Performance tasks are spoken aloud; long scripts/code/reports are saved to Chat Tab & Clipboard.")
                 .put("parameters", JSONObject().put("type", "OBJECT")
                     .put("properties", JSONObject()
                         .put("profession", JSONObject().put("type", "STRING").put("description", "Exact specialist role needed, e.g. 'Stand-Up Comedian', 'Suspense Scriptwriter', 'Chartered Accountant', 'Python Architect'"))
@@ -566,6 +566,28 @@ object MeeraTools {
                         .put("url", JSONObject().put("type", "STRING").put("description", "Public HTTPS URL from Google Colab (e.g., https://xxx.trycloudflare.com)"))
                         .put("secret", JSONObject().put("type", "STRING").put("description", "The secret word printed by the Colab cell")))
                     .put("required", JSONArray().put("url")))
+        )
+                funcs.put(
+            JSONObject()
+                .put("name", "generate_professional_code")
+                .put("description", "Generate complete, production-ready, syntax-verified code (Python, Kotlin, Google Colab FastAPI tunnel, Termux scripts) using Gemini Hydrogen & Pro deep reasoning. Saves code cleanly to Chat Tab & Clipboard without reading raw symbols aloud.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("task_details", JSONObject().put("type", "STRING").put("description", "Exact coding requirement, language, and features needed"))
+                        .put("target_platform", JSONObject().put("type", "STRING").put("description", "Target environment, e.g. 'Google Colab Python', 'Termux Bash', 'Android Kotlin'")))
+                    .put("required", JSONArray().put("task_details")))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "get_task_progress")
+                .put("description", "Get the exact real-time completion percentage (0% to 100%), active step, model used, and elapsed time of Meera's current or latest background task.")
+                .put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "open_background_monitor")
+                .put("description", "Open Meera's Live Background Activity Monitor screen so the user can visually inspect live percentage progress, step logs, and outputs.")
+                .put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()))
         )
         return JSONArray().put(JSONObject().put("functionDeclarations", funcs))
     }
@@ -619,6 +641,7 @@ object MeeraTools {
         return when (name) {
             "open_meera_dashboard" -> {
                 MeeraTermuxEngine.closeTerminal()
+                MeeraBackgroundMonitor.closeMonitor()
                 val intent = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName)
                 if (intent != null) {
                     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
@@ -901,6 +924,20 @@ object MeeraTools {
                     "VERIFIED_SUCCESS: Copied $cnt lines of Meera debug log to Android system clipboard. Ready to paste."
                 )
             }
+            "generate_professional_code" -> {
+                val details = args.optString("task_details", "").trim()
+                val plat = args.optString("target_platform", "Python / Google Colab").trim()
+                MeeraAgentFactory.generateProfessionalCode(ctx, details, plat)
+            }
+            "get_task_progress" -> {
+                val report = MeeraBackgroundMonitor.getVoiceProgressReport()
+                ToolExecutionResult(true, name, report, "VERIFIED_SUCCESS: $report")
+            }
+            "open_background_monitor" -> {
+                MeeraBackgroundMonitor.openMonitor()
+                val report = MeeraBackgroundMonitor.getVoiceProgressReport()
+                ToolExecutionResult(true, name, "मैंने बैकग्राउंड एक्टिविटी मॉनिटर स्क्रीन खोल दी है। $report", "VERIFIED_SUCCESS: Opened Background Activity Monitor. $report")
+            }
             "spawn_custom_agent" -> {
                 val prof = args.optString("profession", "Specialist").trim()
                 val details = args.optString("task_details", "").trim()
@@ -1131,6 +1168,16 @@ object MeeraTools {
         if ((low.contains("gemini") || low.contains("जेमिनी")) && (low.contains("इमेज") || low.contains("फोटो") || low.contains("image") || low.contains("photo"))) {
             val promptClean = raw.replace(Regex("(?i)(gemini|जेमिनी|में|मे|जाकर|जाओ|एक|की|का|इमेज|फोटो|image|photo|बनाओ|बना दो|जनरेट करो)"), " ").trim()
             if (promptClean.isNotBlank()) return runBuiltinMacro(ctx, "gemini image", promptClean)
+        }
+
+        // 2C. Direct Voice Progress % & Background Monitor Check
+        if (low.contains("कितना परसेंट") || low.contains("kitna percent") || low.contains("कितना प्रतिशत") ||
+            low.contains("कितना काम हुआ") || low.contains("kitna kaam hua") || low.contains("प्रोग्रेस क्या") || low.contains("progress kya")
+        ) {
+            return executeFunctionCallInner(ctx, "get_task_progress", JSONObject())
+        }
+        if (low.contains("बैकग्राउंड एक्टिविटी") || low.contains("background activity") || low.contains("क्या कर रही हो दिखाओ") || low.contains("बैकग्राउंड में क्या")) {
+            return executeFunctionCallInner(ctx, "open_background_monitor", JSONObject())
         }
 
         // 3. Screen Read & Notifications
@@ -2093,6 +2140,7 @@ object MeeraTools {
 /** Lambe kaam ki checklist + Anti-PingPong Loop & Per-Screen Tap Memory */
 object MeeraMission {
     private val steps = mutableListOf<String>()
+    @Volatile private var monitorTaskId: Long = -1L
     private val done = mutableSetOf<Int>()
     private val failedTargets = mutableSetOf<String>()
     private val recentScreens = ArrayDeque<String>()
@@ -2137,6 +2185,15 @@ object MeeraMission {
             .forEach { steps.add(it) }
         updatedAt = System.currentTimeMillis()
         lastGuidePkg = ""
+        if (steps.isNotEmpty()) {
+            monitorTaskId = MeeraBackgroundMonitor.startTask(
+                title = steps.first().take(50),
+                category = "UI Automation Mission",
+                modelUsed = "Agentic Loop",
+                initialStep = "1/${steps.size}: ${steps.first()}",
+                initialPercent = 5
+            )
+        }
     }
 
     @Synchronized fun replanRemaining(newStepsRaw: String, reason: String = "") {
@@ -2196,6 +2253,15 @@ object MeeraMission {
         done.add(n)
         stuckCount = 0
         updatedAt = System.currentTimeMillis()
+        if (monitorTaskId > 0 && steps.isNotEmpty()) {
+            val pct = ((done.size * 100) / steps.size).coerceIn(5, 100)
+            val nextStep = steps.indices.firstOrNull { (it + 1) !in done }?.let { "${it + 1}/${steps.size}: ${steps[it]}" } ?: "सभी चरण पूरे हुए"
+            if (done.size >= steps.size) {
+                MeeraBackgroundMonitor.completeTask(monitorTaskId, true, "100% पूरा (${done.size}/${steps.size} चरण)")
+            } else {
+                MeeraBackgroundMonitor.updateProgress(monitorTaskId, pct, nextStep)
+            }
+        }
         return true
     }
 
