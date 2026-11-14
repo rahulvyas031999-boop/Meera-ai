@@ -84,7 +84,25 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
     private val aiBuf = StringBuilder()
     private val history = ArrayList<Pair<String, String>>()
 
+    private var noticeJob: Job? = null
+
+    private fun refreshModelLine() {
+        val F = FallbackManager
+        val line = if (prefs.mode == Mode.LIVE)
+            "🎙️ Live • ${F.activeOr(F.Slot.LIVE, prefs.liveModel)}"
+        else
+            "⚙️ Modular • 🧠 ${F.activeOr(F.Slot.CHAT, prefs.chatModel)} • 🎧 ${F.activeOr(F.Slot.STT, prefs.sttModel)} • 🔊 ${F.activeOr(F.Slot.TTS, prefs.ttsModel)}"
+        _ui.update { it.copy(activeModels = line) }
+    }
+
     init {
+        FallbackManager.onActive = { refreshModelLine() }
+        FallbackManager.onNotice = { msg ->
+            _ui.update { it.copy(fallbackNotice = msg) }
+            noticeJob?.cancel()
+            noticeJob = viewmodelScope.launch { kotlinx.coroutines.delay(9000); _ui.update { it.copy(fallbackNotice = null) } }
+        }
+        refreshModelLine()
         installConfigBridge()
         MeeraAgentFactory.onDeliverToChat = { roleTitle, fullOut ->
             appendChatLog("model", fullOut)
@@ -355,6 +373,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
         if (m == prefs.mode) return
         prefs.mode = m
         _ui.update { it.copy(mode = m, error = null, lastToolStatus = "🔄 Mode: ${m.name}") }
+        refreshModelLine()
         if (active) hotReloadSession()
     }
 
@@ -388,6 +407,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
     fun setLiveModel(m: String) {
         if (m == prefs.liveModel) return
         prefs.liveModel = m
+        FallbackManager.resetSlot(FallbackManager.Slot.LIVE)
         _ui.update { it.copy(liveModel = m, error = null, lastToolStatus = "⚡ $m") }
         if (active && prefs.mode == Mode.LIVE) hotReloadSession()
     }
@@ -395,18 +415,21 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
     fun setChatModel(m: String) {
         if (m == prefs.chatModel) return
         prefs.chatModel = m
+        FallbackManager.resetSlot(FallbackManager.Slot.CHAT)
         _ui.update { it.copy(chatModel = m, error = null, lastToolStatus = "🧠 $m") }
     }
 
     fun setSttModel(m: String) {
         if (m == prefs.sttModel) return
         prefs.sttModel = m
+        FallbackManager.resetSlot(FallbackManager.Slot.STT)
         _ui.update { it.copy(sttModel = m, error = null, lastToolStatus = "🎙️ $m") }
     }
 
     fun setTtsModel(m: String) {
         if (m == prefs.ttsModel) return
         prefs.ttsModel = m
+        FallbackManager.resetSlot(FallbackManager.Slot.TTS)
         _ui.update { it.copy(ttsModel = m, error = null, lastToolStatus = "🔊 $m") }
     }
 
@@ -748,7 +771,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
                 ensureMicStarted()
                 detector.reset()
                 setState(VState.LISTENING)
-                _ui.update { it.copy(error = null, lastToolStatus = "✅ Live (${prefs.persona})") }
+                _ui.update { it.copy(error = null, lastToolStatus = "✅ Live (${prefs.persona}) • ${FallbackManager.activeOr(FallbackManager.Slot.LIVE, prefs.liveModel)}") }
             } catch (e: Exception) {
                 fail(e.message ?: "माइक शुरू नहीं हुआ")
             }

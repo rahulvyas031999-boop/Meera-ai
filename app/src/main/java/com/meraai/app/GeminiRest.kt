@@ -63,50 +63,38 @@ class GeminiRest(private val http: OkHttpClient, private val key: () -> String) 
         "IMPORTANT: If the audio is a cough, throat clearing, sneeze, laugh, background TV/mobile sound, or indistinct noise, set hasSpeech to false and transcript to an empty string."
 
     suspend fun transcribe(wav: ByteArray, preferredStt: String = Cfg.STT_MODELS.first()): String = withContext(Dispatchers.IO) {
-        var last: Exception? = null
-        val sttList = (listOf(preferredStt) + Cfg.STT_MODELS).distinct()
-        for ((idx, m) in sttList.withIndex()) {
-            try {
-                val structured = m != "gemini-3.5-transcribe"
-                val promptText = if (structured) sttPrompt else "Transcribe clear spoken words only. Ignore coughs or background noise."
-                val body = JSONObject().put(
-                    "contents", JSONArray().put(
-                        JSONObject().put("role", "user").put(
-                            "parts", JSONArray()
-                                .put(JSONObject().put("inlineData", JSONObject().put("mimeType", "audio/wav").put("data", b64(wav))))
-                                .put(JSONObject().put("text", promptText))
-                        )
+        FallbackManager.withFallback<String>(FallbackManager.Slot.STT, preferredStt) { m ->
+            val structured = m != "gemini-3.5-transcribe"
+            val promptText = if (structured) sttPrompt else "Transcribe clear spoken words only. Ignore coughs or background noise."
+            val body = JSONObject().put(
+                "contents", JSONArray().put(
+                    JSONObject().put("role", "user").put(
+                        "parts", JSONArray()
+                            .put(JSONObject().put("inlineData", JSONObject().put("mimeType", "audio/wav").put("data", b64(wav))))
+                            .put(JSONObject().put("text", promptText))
                     )
                 )
-                if (structured) {
-                    body.put(
-                        "generationConfig", JSONObject()
-                            .put("responseMimeType", "application/json")
-                            .put(
-                                "responseSchema", JSONObject()
-                                    .put("type", "OBJECT")
-                                    .put(
-                                        "properties", JSONObject()
-                                            .put("hasSpeech", JSONObject().put("type", "BOOLEAN"))
-                                            .put("transcript", JSONObject().put("type", "STRING"))
-                                    )
-                                    .put("required", JSONArray().put("hasSpeech").put("transcript"))
-                            )
-                    )
-                }
-                val resp = http.newCall(request(m, "generateContent", body)).await().okOrThrow()
-                val raw = resp.use { textOf(JSONObject(it.body!!.string())) }
-                val text = if (structured) parseStt(raw) else raw.trim()
-                if (text.isNotBlank()) return@withContext text
-                if (idx == 0) return@withContext ""
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                last = e
+            )
+            if (structured) {
+                body.put(
+                    "generationConfig", JSONObject()
+                        .put("responseMimeType", "application/json")
+                        .put(
+                            "responseSchema", JSONObject()
+                                .put("type", "OBJECT")
+                                .put(
+                                    "properties", JSONObject()
+                                        .put("hasSpeech", JSONObject().put("type", "BOOLEAN"))
+                                        .put("transcript", JSONObject().put("type", "STRING"))
+                                )
+                                .put("required", JSONArray().put("hasSpeech").put("transcript"))
+                        )
+                )
             }
+            val resp = http.newCall(request(m, "generateContent", body)).await().okOrThrow()
+            val raw = resp.use { textOf(JSONObject(it.body!!.string())) }
+            if (structured) parseStt(raw) else raw.trim()
         }
-        last?.let { throw it }
-        ""
     }
 
     private fun parseStt(raw: String): String = try {
@@ -132,18 +120,17 @@ class GeminiRest(private val http: OkHttpClient, private val key: () -> String) 
         preferredModel: String = Cfg.CHAT_MODELS.first(),
         onSentence: suspend (String) -> Unit,
     ): Unit = withContext<Unit>(Dispatchers.IO) {
-        var last: Exception? = null
         val isDeep = preferredModel == "gemini-3.8-flash-thinking"
         val firstModel = if (isDeep) "gemini-3.8-flash" else preferredModel
-        val modelList = (listOf(firstModel) + Cfg.CHAT_MODELS).distinct()
 
-        for (m in modelList) {
+        FallbackManager.withFallback<Unit>(FallbackManager.Slot.CHAT, firstModel) { m ->
             val levels = when {
                 isDeep && m == firstModel -> listOf("HIGH", "LOW", null)
                 m.contains("3.8") || m.contains("3.7") || m.contains("3.6") -> listOf("LOW", null)
                 m.contains("3.1") -> listOf("MINIMAL", null)
                 else -> listOf(null)
             }
+            var lastLevelErr: Exception? = null
             for (lv in levels) {
                 var emitted = false
                 val contents = JSONArray()
@@ -158,8 +145,8 @@ class GeminiRest(private val http: OkHttpClient, private val key: () -> String) 
                 val handle = currentCoroutineContext().job.invokeOnCompletion { call.cancel() }
                 try {
                     val resp = call.await().okOrThrow()
-                    resp.use { r ->
-                        val src = r.body!!.source()
+                    resp.use { rr ->
+                        val src = rr.body!!.source()
                         val buf = StringBuilder()
                         while (true) {
                             currentCoroutineContext().ensureActive()
@@ -181,18 +168,18 @@ class GeminiRest(private val http: OkHttpClient, private val key: () -> String) 
                         val rest = buf.toString().trim()
                         if (rest.isNotEmpty()) { emitted = true; onSentence(rest) }
                     }
-                    return@withContext
+                    return@withFallback
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    if (emitted) throw e
-                    last = e
+                    if (emitted) throw FallbackAbort(e)   // बोलना शुरू हो चुका: बीच में मॉडल मत बदलो
+                    lastLevelErr = e
                 } finally {
                     handle.dispose()
                 }
             }
+            throw (lastLevelErr ?: IOException("Chat मॉडल जवाब नहीं दे पाया"))
         }
-        throw (last ?: IOException("Chat मॉडल जवाब नहीं दे पाया"))
     }
 
     // ---------- Modular मोड: बोले वाक्य से फोन-टूल पहचानना (Live के function-calling जैसा) ----------
@@ -338,9 +325,9 @@ Reply with ONLY valid compact JSON: {"tool":"...","args":{...},"mark_done_step":
             "Rudra" -> "deep, bold, commanding, fearless, and grounded"
             else -> if (gfMode) "warm, playful, affectionate, expressive, and natural like a close companion" else "warm, friendly, natural, and conversational"
         }
-        val ttsList = (listOf(preferredTts) + Cfg.TTS_MODELS).distinct()
-        for (ttsModel in ttsList) {
+        FallbackManager.withFallback<ByteArray>(FallbackManager.Slot.TTS, preferredTts) { ttsModel ->
             val styles = if (ttsModel.startsWith("gemini-3.8")) listOf(true, false) else listOf(false)
+            var lastErr: Exception? = null
             for (withStyle in styles) {
                 try {
                     val part = JSONObject().put("text", text)
@@ -366,15 +353,15 @@ Reply with ONLY valid compact JSON: {"tool":"...","args":{...},"mark_done_step":
                     val rawBytes = unb64(inline.getString("data"))
                     val parsed = extractCleanPcm(rawBytes, inline.optString("mimeType", ""))
                     val pcm = if (parsed.second == Cfg.OUT_RATE) parsed.first else resample(parsed.first, parsed.second, Cfg.OUT_RATE)
-                    return@withContext applyMicroFade(pcm)
+                    return@withFallback applyMicroFade(pcm)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    last = e
+                    lastErr = e
                 }
             }
+            throw (lastErr ?: IOException("TTS फेल"))
         }
-        throw (last ?: IOException("TTS फेल"))
     }
 
     private fun extractCleanPcm(bytes: ByteArray, mime: String): Pair<ByteArray, Int> {

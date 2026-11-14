@@ -44,13 +44,15 @@ class GeminiLive(private val http: OkHttpClient, private val ev: Events) {
     private var dropAttempts = 0
     private var cKey = ""
     private var cModel = ""
+    private var cPreferred = ""   // यूज़र की चुनी सेटिंग (फॉलबैक इसे नहीं बदलता)
     private var cVoice = ""
     private var cSystem = ""
     private var cSilenceMs = 0
 
     fun connect(key: String, model: String, voice: String, system: String, silenceMs: Int) {
         cKey = key
-        cModel = model
+        cPreferred = model
+        cModel = FallbackManager.liveStart(model)
         cVoice = voice
         cSystem = system
         cSilenceMs = silenceMs
@@ -69,7 +71,8 @@ class GeminiLive(private val http: OkHttpClient, private val ev: Events) {
     /** बिना माइक बंद किए पर्सनैलिटी, आवाज़, मॉडल या सिस्टम प्रॉम्प्ट को तुरंत हॉट-स्विच करें */
     fun updateSessionConfig(model: String, voice: String, system: String, silenceMs: Int) {
         if (closedByUs) return
-        cModel = model
+        cPreferred = model
+        cModel = FallbackManager.liveStart(model)
         cVoice = voice
         cSystem = system
         cSilenceMs = silenceMs
@@ -138,7 +141,8 @@ class GeminiLive(private val http: OkHttpClient, private val ev: Events) {
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
                 try { webSocket.close(1000, null) } catch (_: Exception) {}
                 if (gen != socketGen || closedByUs) return
-                handleDrop("Live सेशन बंद हुआ ($code) $reason".trim(), true)
+                val ck = FallbackManager.classify("$code $reason").let { if (it == ErrKind.OTHER && (code == 1007 || code == 1008)) ErrKind.PERMANENT else it }
+                handleDrop("Live सेशन बंद हुआ ($code) $reason".trim(), true, ck)
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
@@ -149,20 +153,22 @@ class GeminiLive(private val http: OkHttpClient, private val ev: Events) {
                     null -> "कनेक्शन फेल: ${t.message ?: t.javaClass.simpleName}"
                     else -> "Live कनेक्शन फेल (HTTP $c)"
                 }
-                handleDrop(msg, c != 401 && c != 403)
+                handleDrop(msg, c != 401 && c != 403, FallbackManager.classify(t.message, c, t))
             }
         })
     }
 
-    private fun handleDrop(msg: String, retryable: Boolean) {
+    private fun handleDrop(msg: String, retryable: Boolean, kind: ErrKind = ErrKind.OTHER) {
         ready = false
         if (closedByUs) return
         if (!retryable) {
             ev.onError(msg)
             return
         }
+        // मॉडल ही नहीं मिला / कोटा पूरा: उसी पर अटके रहने की जगह तुरंत अऔले Live मॉडल पर
+        if ((kind == ErrKind.PERMANENT || kind == ErrKind.QUOTA) && switchModel(kind, msg)) return
         // यदि शुरुआती कनेक्शन में longSession फ़ील्ड से दिक्कत हो, तो एक बार बिना longSession के आज़माएँ
-        if (!setupDoneOnce && longSession && dropAttempts == 0) {
+        if (!setupDoneOnce && longSession && dropAttempts == 0 && kind != ErrKind.PERMANENT) {
             longSession = false
             dropAttempts++
             MeeraDebugLog.log("LIVE", "लंबे-सेशन वाला सेटअप नहीं चला ($msg); बेसिक सेटअप से कोशिश")
@@ -174,6 +180,8 @@ class GeminiLive(private val http: OkHttpClient, private val ev: Events) {
         if (dropStartAt == 0L) dropStartAt = now
         reconnecting = true
         dropAttempts++
+        // नेटवर्क ठीक है फिर भी इसी मॉडल पर 3 बार लगातार नहीं जुड़ा -> अगला मॉडल
+        if (networkUp && kind != ErrKind.NETWORK && dropAttempts >= 3 && switchModel(kind, msg)) return
         if (dropAttempts > 2) resumeHandle = null
         ev.onReconnecting(dropAttempts)
         val waitMs = when {
@@ -184,6 +192,28 @@ class GeminiLive(private val http: OkHttpClient, private val ev: Events) {
         }
         MeeraDebugLog.log("LIVE", "कनेक्शन टूटा ($msg); कोशिश $dropAttempts, $waitMs ms बाद")
         scheduleReconnect(waitMs)
+    }
+
+    /** अगले healthy Live मॉडल पर जाओ; जा पाए तो true */
+    private fun switchModel(kind: ErrKind, msg: String): Boolean {
+        val from = cModel
+        FallbackManager.markFail(FallbackManager.Slot.LIVE, from, kind)
+        val to = FallbackManager.nextLive(from, cPreferred)
+        if (to == null) {
+            // सारे Live मॉडल बंद: health साफ़ करके इसी पर धीरे-धीरे कोशिश जारी (हार नहीं मानते)
+            FallbackManager.clearHealth(FallbackManager.Slot.LIVE)
+            FallbackManager.onNotice?.invoke("⚠️ कोई भी Live मॉडल अभी नहीं जुड़ रहा — कोशिश जारी है")
+            return false
+        }
+        cModel = to
+        dropAttempts = 0
+        resumeHandle = null
+        setupDoneOnce = false
+        longSession = true
+        reconnecting = true
+        MeeraDebugLog.log("LIVE", "मॉडल बदला: $from -> $to ($msg)")
+        scheduleReconnect(300L)
+        return true
     }
 
     private fun scheduleReconnect(delayMs: Long) {
@@ -197,6 +227,10 @@ class GeminiLive(private val http: OkHttpClient, private val ev: Events) {
             // नेटवर्क आने का इंतज़ार करें, पर हर 2 सेकंड में चेक करते रहें
             scheduleReconnect(2000L)
             return
+        }
+        // फॉलबैक मॉडल पर हैं और ऊपर वाला ठीक हो चुका हो (cooldown ख़त्म) तो वापस उसी पर
+        FallbackManager.betterLive(cModel, cPreferred)?.let { better ->
+            cModel = better; resumeHandle = null; setupDoneOnce = false; longSession = true
         }
         openSocket()
     }
@@ -239,6 +273,8 @@ class GeminiLive(private val http: OkHttpClient, private val ev: Events) {
             val j = JSONObject(s)
             if (j.has("setupComplete")) {
                 ready = true
+                FallbackManager.markOk(FallbackManager.Slot.LIVE, cModel)
+                FallbackManager.noteUse(FallbackManager.Slot.LIVE, cModel, cPreferred)
                 val wasDone = setupDoneOnce
                 setupDoneOnce = true
                 longSession = true
@@ -258,7 +294,7 @@ class GeminiLive(private val http: OkHttpClient, private val ev: Events) {
             j.optJSONObject("error")?.let { errObj ->
                 val code = errObj.optInt("code", 0)
                 val errMsg = errObj.optString("message", "Live API error")
-                handleDrop(errMsg, code != 401 && code != 403)
+                handleDrop(errMsg, code != 401 && code != 403, FallbackManager.classify(errMsg, code))
                 return
             }
 

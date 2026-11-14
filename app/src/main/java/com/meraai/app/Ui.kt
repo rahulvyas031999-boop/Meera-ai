@@ -607,6 +607,21 @@ private fun HomeTabContent(ui: UiState, vm: VoiceViewModel, active: Boolean, orb
         Modifier.fillMaxSize().padding(horizontal = 18.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        // फॉलबैक सूचना / अभी चल रहा मॉडल
+        if (ui.fallbackNotice != null) {
+            Surface(
+                color = Color(0xFF3A2A10),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp).border(1.dp, Color(0xFFFFB84D), RoundedCornerShape(12.dp))
+            ) {
+                Text(ui.fallbackNotice, color = Color(0xFFFFB84D), fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp))
+            }
+        } else if (ui.activeModels.isNotBlank()) {
+            Text(ui.activeModels, color = Muted, fontSize = 10.sp, textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(top = 2.dp))
+        }
+
         // Greeting + Status Row
         Row(
             Modifier.fillMaxWidth().padding(top = 4.dp),

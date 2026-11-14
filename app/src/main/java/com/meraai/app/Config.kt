@@ -103,7 +103,9 @@ data class UiState(
     val askKey: Boolean = false,
     val memoryCount: Int = 0,
     val chatMessages: List<ChatMessage> = emptyList(),
-    val lastToolStatus: String? = null
+    val lastToolStatus: String? = null,
+    val activeModels: String = "",
+    val fallbackNotice: String? = null
 )
 
 class Prefs(ctx: Context) {
