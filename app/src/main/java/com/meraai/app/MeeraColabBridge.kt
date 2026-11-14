@@ -36,7 +36,7 @@ object MeeraColabBridge {
     /** Lightweight Local Execution via Termux Background Engine + Live Output Capture */
     fun runTermuxCommand(ctx: Context, command: String, argsCsv: String = ""): ToolExecutionResult {
         val fullCmd = if (argsCsv.isBlank()) command.trim() else "${command.trim()} $argsCsv"
-        return MeeraTermuxEngine.execute(ctx, fullCmd, background = true, waitMs = 5500L)
+        return MeeraTermuxEngine.execute(ctx, fullCmd, background = true, waitMs = 15000L, autoOpenUi = true)
     }
 
     /** Heavy Cloud Execution on Google Colab Backend Server */

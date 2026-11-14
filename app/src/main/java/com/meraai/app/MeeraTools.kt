@@ -618,11 +618,12 @@ object MeeraTools {
     private fun executeFunctionCallInner(ctx: Context, name: String, args: JSONObject): ToolExecutionResult {
         return when (name) {
             "open_meera_dashboard" -> {
+                MeeraTermuxEngine.closeTerminal()
                 val intent = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName)
                 if (intent != null) {
                     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
                     ctx.startActivity(intent)
-                    ToolExecutionResult(true, name, "मैं अपने डैशबोर्ड (Meera AI) पर आ गई हूँ।", "VERIFIED_SUCCESS: Opened Meera Dashboard")
+                    ToolExecutionResult(true, name, "ठीक है चलो, वापस डैशबोर्ड पर आ गई हूँ!", "VERIFIED_SUCCESS: Closed Terminal and returned to Meera Home Dashboard")
                 } else ToolExecutionResult(true, name, "डैशबोर्ड नहीं मिला।", "ERROR")
             }
             @Suppress("NewApi")
@@ -1143,11 +1144,23 @@ object MeeraTools {
             return ToolExecutionResult(true, "read_notifications", "", "RECENT NOTIFICATIONS:\n$notifSummary")
         }
 
-        // 4. Home Screen
-        if (low == "होम स्क्रीन पे आओ" || low == "होम स्क्रीन पर आओ" || low == "go home" || low == "home screen") {
+        // 4. Terminal Auto-Return on "नहीं / और कुछ नहीं करना" + Dashboard/Desktop Navigation
+        val terminalDonePhrases = setOf(
+            "नहीं", "नहीं बस", "नहीं कुछ नहीं", "और कुछ नहीं", "और कुछ नहीं करना", "कुछ नहीं करना",
+            "कुछ नहीं", "बस इतना ही", "बस हो गया", "हो गया", "खत्म", "अब कुछ नहीं",
+            "nahi", "nahin", "nahi bas", "aur kuch nahi", "aur kuch nahi karna", "kuch nahi karna",
+            "kuch nahi", "bas itna hi", "bas", "ho gaya", "no", "nothing", "nothing else", "that's it"
+        )
+        if (MeeraTermuxEngine.terminalVisible.value && (low in terminalDonePhrases || low.contains("और कुछ नहीं") || low.contains("aur kuch nahi") || low.contains("kuch nahi karna"))) {
+            return executeFunctionCallInner(ctx, "open_meera_dashboard", JSONObject())
+        }
+        if (low == "डैशबोर्ड पे जाओ" || low == "डैशबोर्ड पर जाओ" || low == "अपने डैशबोर्ड पर आओ" || low == "dashboard pe jao" || low == "dashboard par jao" || low == "टर्मिनल बंद करो" || low == "terminal band karo") {
+            return executeFunctionCallInner(ctx, "open_meera_dashboard", JSONObject())
+        }
+        if (low == "होम स्क्रीन पे आओ" || low == "होम स्क्रीन पर आओ" || low == "डेस्कटॉप पे जाओ" || low == "डेस्कटॉप पर जाओ" || low == "desktop pe jao" || low == "desktop par jao" || low == "go home" || low == "home screen") {
             val svc = MeeraAccessibilityService.instance
             if (svc != null && svc.performSystemAction("home")) {
-                return ToolExecutionResult(true, "screen_action", "आ गई होम स्क्रीन पर, बताइए अब क्या करना है?", "SUCCESS: Navigated Home")
+                return ToolExecutionResult(true, "screen_action", "आ गई फोन की होम स्क्रीन (डेस्कटॉप) पर, बताइए अब क्या करना है?", "SUCCESS: Navigated to Phone Desktop/Home")
             }
         }
 

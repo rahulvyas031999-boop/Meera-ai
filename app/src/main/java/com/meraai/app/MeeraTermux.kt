@@ -69,7 +69,9 @@ data class TermuxLogEntry(
     val stdout: String = "",
     val stderr: String = "",
     val exitCode: Int? = null,
-    val running: Boolean = true
+    val running: Boolean = true,
+    val startedAtMs: Long = System.currentTimeMillis(),
+    val durationMs: Long = 0L
 )
 
 object MeeraTermuxEngine {
@@ -79,7 +81,41 @@ object MeeraTermuxEngine {
 
     private val idGen = AtomicLong(100L)
     val entries = MutableStateFlow<List<TermuxLogEntry>>(emptyList())
+    val terminalVisible = MutableStateFlow(false)
     private val latches = ConcurrentHashMap<Long, CountDownLatch>()
+
+    private val FOLLOW_UP_PROMPTS = listOf(
+        "बताइए, टर्मक्स में और कोई कमांड चलानी है या बस इतना ही?",
+        "यह काम तो पूरा हो गया, अब आगे क्या करना है?",
+        "क्या टर्मक्स में कुछ और रन करना है, या यहीं खत्म करें?",
+        "सब तैयार है! बताइए अगला क्या काम है या डैशबोर्ड पर चलें?",
+        "और कुछ करवाना है टर्मक्स में, या अब वापस चलें?"
+    )
+    @Volatile private var lastFollowUpIdx = -1
+
+    fun nextFollowUpPrompt(): String {
+        val candidates = FOLLOW_UP_PROMPTS.indices.filter { it != lastFollowUpIdx }
+        val chosen = candidates.random()
+        lastFollowUpIdx = chosen
+        return FOLLOW_UP_PROMPTS[chosen]
+    }
+
+    fun openTerminal(ctx: Context? = null) {
+        terminalVisible.value = true
+        if (ctx != null) {
+            try {
+                val launch = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName)
+                if (launch != null) {
+                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                    ctx.startActivity(launch)
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    fun closeTerminal() {
+        terminalVisible.value = false
+    }
 
     fun isTermuxInstalled(ctx: Context): Boolean = try {
         ctx.packageManager.getPackageInfo("com.termux", 0)
@@ -99,12 +135,18 @@ object MeeraTermuxEngine {
         ctx: Context,
         rawCommand: String,
         background: Boolean = true,
-        waitMs: Long = 5500L
+        waitMs: Long = 15000L,
+        autoOpenUi: Boolean = true
     ): ToolExecutionResult {
         val cmd = rawCommand.trim()
         if (cmd.isBlank()) {
             return ToolExecutionResult(true, "run_termux_command", "Termux में क्या कमांड चलाना है बताइए?", "ERROR: Empty command")
         }
+
+        if (autoOpenUi) {
+            openTerminal(ctx)
+        }
+
         if (!isTermuxInstalled(ctx)) {
             return ToolExecutionResult(
                 true, "run_termux_command",
@@ -115,14 +157,21 @@ object MeeraTermuxEngine {
         if (!hasPermission(ctx)) {
             return ToolExecutionResult(
                 true, "run_termux_command",
-                "Termux कमांड चलाने की परमिशन अभी बंद है। साइड मेन्यू में Terminal खोलकर 'Allow karo' दबाएँ।",
-                "FAILED_PERMISSION: Missing com.termux.permission.RUN_COMMAND. Ask user to open Terminal in side drawer and tap Allow karo."
+                "मैंने Terminal स्क्रीन खोल दी है — ऊपर दिख रहे 'Allow karo' बटन को दबा दें ताकि मैं कमांड चला सकूँ।",
+                "FAILED_PERMISSION: Opened Meera Terminal screen, but com.termux.permission.RUN_COMMAND is not granted yet. Ask user to tap 'Allow karo' on screen."
             )
         }
 
         val entryId = idGen.incrementAndGet()
-        val timeStr = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
-        val newEntry = TermuxLogEntry(id = entryId, time = timeStr, command = cmd, running = true)
+        val nowMs = System.currentTimeMillis()
+        val timeStr = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(nowMs))
+        val newEntry = TermuxLogEntry(
+            id = entryId,
+            time = timeStr,
+            command = cmd,
+            running = true,
+            startedAtMs = nowMs
+        )
         entries.value = (entries.value + newEntry).takeLast(40)
 
         val latch = CountDownLatch(1)
@@ -173,19 +222,21 @@ object MeeraTermuxEngine {
                     }
                 }.ifBlank { "(Command finished with exitCode=${latest.exitCode ?: 0}, no text output)" }
 
+                val secStr = String.format(Locale.US, "%.1fs", latest.durationMs / 1000.0)
                 val ok = (latest.exitCode ?: 0) == 0
+                val followUp = nextFollowUpPrompt()
                 ToolExecutionResult(
                     true, "run_termux_command",
-                    if (ok) "Termux में कमांड पूरा हो गया! आउटपुट: ${outCombined.take(160)}"
-                    else "Termux कमांड में एरर आया: ${outCombined.take(160)}",
-                    if (ok) "VERIFIED_SUCCESS: Termux executed '$cmd' (exit=0)\nOUTPUT:\n${outCombined.take(1200)}"
-                    else "FAILED: Termux command '$cmd' failed (exit=${latest.exitCode})\nOUTPUT:\n${outCombined.take(1200)}"
+                    if (ok) "कमांड पूरा हो गया ($secStr)! आउटपुट स्क्रीन पर है: ${outCombined.take(160)} — $followUp"
+                    else "कमांड में एरर आया: ${outCombined.take(160)} — बताओ क्या करूँ?",
+                    if (ok) "VERIFIED_SUCCESS: Termux executed '$cmd' in $secStr (exit=0) and displayed output on Meera Terminal screen.\nFULL_OUTPUT:\n${outCombined.take(2500)}\nINSTRUCTIONS: Report the actual output clearly to Rahul. If more commands are pending in a multi-step task, run the next command immediately. Once all commands are done, ask a natural varied follow-up such as: '$followUp' (never repeat the exact same closing phrase every time)."
+                    else "FAILED: Termux command '$cmd' failed (exit=${latest.exitCode}).\nFULL_OUTPUT:\n${outCombined.take(2500)}"
                 )
             } else {
                 ToolExecutionResult(
                     true, "run_termux_command",
-                    "Termux बैकग्राउंड टर्मिनल में '$cmd' चालू कर दिया है! आप साइड मेन्यू के Terminal में लाइव आउटपुट देख सकते हैं।",
-                    "VERIFIED_SUCCESS: Dispatched '$cmd' to Termux background engine (still running, live output streaming to Terminal screen)."
+                    "मैंने Terminal स्क्रीन खोलकर '$cmd' चालू कर दिया है, आउटपुट लाइव आ रहा है।",
+                    "VERIFIED_SUCCESS: Dispatched '$cmd' to Termux and opened Meera Terminal UI (still running, output streaming live)."
                 )
             }
         } catch (e: Exception) {
@@ -193,20 +244,28 @@ object MeeraTermuxEngine {
             onCommandResult(entryId, "", e.message ?: "Failed to start Termux service", -1)
             ToolExecutionResult(
                 true, "run_termux_command",
-                "Termux से कनेक्ट नहीं हो पाया। एक बार Termux खोलकर allow-external-apps=true सेट करें।",
+                "Termux से कनेक्ट नहीं हो पाया। Terminal स्क्रीन पर ऊपर 'Setup' दबाकर allow-external-apps=true सेट करें।",
                 "FAILED: Termux RUN_COMMAND exception -> ${e.message}"
             )
         }
     }
 
     fun onCommandResult(entryId: Long, stdout: String, stderr: String, exitCode: Int) {
+        val now = System.currentTimeMillis()
         entries.value = entries.value.map { item ->
             if (item.id == entryId) {
-                item.copy(stdout = stdout, stderr = stderr, exitCode = exitCode, running = false)
+                val dur = (now - item.startedAtMs).coerceAtLeast(50L)
+                item.copy(
+                    stdout = stdout,
+                    stderr = stderr,
+                    exitCode = exitCode,
+                    running = false,
+                    durationMs = dur
+                )
             } else item
         }
         latches.remove(entryId)?.countDown()
-        MeeraDebugLog.log("TERMUX", "Result #$entryId exit=$exitCode out=${stdout.take(120)}")
+        MeeraDebugLog.log("TERMUX", "Result #$entryId exit=$exitCode out=${stdout.take(150)}")
     }
 }
 
@@ -231,6 +290,7 @@ fun MeeraTerminalScreen(onBack: () -> Unit) {
     var permTick by remember { mutableIntStateOf(0) }
     val installed = remember { MeeraTermuxEngine.isTermuxInstalled(ctx) }
     val hasPerm = remember(permTick) { MeeraTermuxEngine.hasPermission(ctx) }
+    var showSetupBox by remember { mutableStateOf(logs.isEmpty()) }
     var cmdInput by remember { mutableStateOf("") }
     val scrollState = rememberScrollState()
 
@@ -240,7 +300,8 @@ fun MeeraTerminalScreen(onBack: () -> Unit) {
         permTick++
     }
 
-    LaunchedEffect(logs.size) {
+    val scrollTrigger = logs.hashCode()
+    LaunchedEffect(scrollTrigger) {
         scrollState.animateScrollTo(scrollState.maxValue)
     }
 
@@ -251,8 +312,8 @@ fun MeeraTerminalScreen(onBack: () -> Unit) {
             .fillMaxSize()
             .background(Color(0xFF090D18))
             .systemBarsPadding()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         // Top Header Bar
         Row(
@@ -265,7 +326,7 @@ fun MeeraTerminalScreen(onBack: () -> Unit) {
                     color = Color(0xFF16203A),
                     shape = CircleShape,
                     modifier = Modifier
-                        .size(42.dp)
+                        .size(40.dp)
                         .border(1.dp, Color(0xFF26355E), CircleShape)
                         .clickable(onClick = onBack)
                 ) {
@@ -273,15 +334,32 @@ fun MeeraTerminalScreen(onBack: () -> Unit) {
                         Text("←", color = Color.White, fontSize = 20.sp)
                     }
                 }
-                Spacer(Modifier.width(12.dp))
+                Spacer(Modifier.width(10.dp))
                 Column {
-                    Text("Terminal", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
-                    Text("meera@termux • Background Engine", color = Color(0xFF2EE6A8), fontSize = 11.5.sp)
+                    Text("Terminal", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+                    Text("meera@termux • Live Output", color = Color(0xFF2EE6A8), fontSize = 11.sp)
                 }
             }
-            if (logs.isNotEmpty()) {
-                TextButton(onClick = { MeeraTermuxEngine.clearLogs() }) {
-                    Text("Clear", color = Color(0xFF8A94B8), fontSize = 13.sp)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Surface(
+                    color = if (showSetupBox) Color(0xFF5B8CFF).copy(alpha = 0.25f) else Color(0xFF16203A),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .border(1.dp, Color(0xFF26355E), RoundedCornerShape(12.dp))
+                        .clickable { showSetupBox = !showSetupBox }
+                ) {
+                    Text(
+                        "⚙️ Setup",
+                        color = Color(0xFF2EE6A8),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                }
+                if (logs.isNotEmpty()) {
+                    TextButton(onClick = { MeeraTermuxEngine.clearLogs() }) {
+                        Text("Clear", color = Color(0xFF8A94B8), fontSize = 12.5.sp)
+                    }
                 }
             }
         }
@@ -290,33 +368,33 @@ fun MeeraTerminalScreen(onBack: () -> Unit) {
         if (!installed || !hasPerm) {
             Surface(
                 color = Color(0xFF16203A),
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(18.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(1.dp, Color(0xFF5B8CFF), RoundedCornerShape(20.dp))
+                    .border(1.dp, Color(0xFF5B8CFF), RoundedCornerShape(18.dp))
             ) {
                 Row(
-                    Modifier.padding(16.dp),
+                    Modifier.padding(14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text("Termux commands", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
-                        Spacer(Modifier.height(4.dp))
+                        Text("Termux commands", color = Color.White, fontSize = 15.5.sp, fontWeight = FontWeight.ExtraBold)
+                        Spacer(Modifier.height(3.dp))
                         Text(
                             if (!installed) "Phone me pehle Termux app install karein (F-Droid / GitHub)."
-                            else "Taaki Meera tumhare liye background me Termux commands chala sake, permission allow karo.",
+                            else "Taaki Meera tumhare liye Termux me commands chala sake, permission allow karo.",
                             color = Color(0xFF8A94B8),
-                            fontSize = 12.5.sp
+                            fontSize = 12.sp
                         )
                     }
                     if (installed && !hasPerm) {
                         Box(
                             Modifier
-                                .clip(RoundedCornerShape(16.dp))
+                                .clip(RoundedCornerShape(14.dp))
                                 .background(Brush.linearGradient(listOf(Color(0xFF5B8CFF), Color(0xFF38BDF8))))
                                 .clickable { permLauncher.launch(MeeraTermuxEngine.PERM_TERMUX) }
-                                .padding(horizontal = 16.dp, vertical = 10.dp)
+                                .padding(horizontal = 14.dp, vertical = 9.dp)
                         ) {
                             Text("Allow karo", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                         }
@@ -325,52 +403,54 @@ fun MeeraTerminalScreen(onBack: () -> Unit) {
             }
         }
 
-        // One-time Termux External Apps Setup Card
-        Surface(
-            color = Color(0xFF12192E),
-            shape = RoundedCornerShape(16.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .border(1.dp, Color(0xFF26355E), RoundedCornerShape(16.dp))
-        ) {
-            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("⚙️ 1-Time Termux Setup (allow-external-apps)", color = Color(0xFF2EE6A8), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text(
-                            "📋 Copy",
-                            color = Color(0xFF5B8CFF),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.clickable {
-                                val cb = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                cb.setPrimaryClip(ClipData.newPlainText("TermuxSetup", setupCmd))
-                                Toast.makeText(ctx, "Setup command copy हो गई! Termux में पेस्ट करें।", Toast.LENGTH_SHORT).show()
-                            }
-                        )
-                        Text(
-                            "↗ Open Termux",
-                            color = Color(0xFF2EE6A8),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.clickable { MeeraTools.openAppByName(ctx, "Termux") }
-                        )
+        // Collapsible 1-Time Termux Setup Card
+        if (showSetupBox) {
+            Surface(
+                color = Color(0xFF12192E),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, Color(0xFF26355E), RoundedCornerShape(14.dp))
+            ) {
+                Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("1-Time Termux Setup", color = Color(0xFF2EE6A8), fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text(
+                                "📋 Copy",
+                                color = Color(0xFF5B8CFF),
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.clickable {
+                                    val cb = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    cb.setPrimaryClip(ClipData.newPlainText("TermuxSetup", setupCmd))
+                                    Toast.makeText(ctx, "Setup command copy हो गई! Termux में पेस्ट करें।", Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                            Text(
+                                "↗ Open Termux",
+                                color = Color(0xFF2EE6A8),
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.clickable { MeeraTools.openAppByName(ctx, "Termux") }
+                            )
+                        }
                     }
+                    Text(
+                        setupCmd,
+                        color = Color(0xFFCBD5E1),
+                        fontSize = 10.5.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
                 }
-                Text(
-                    setupCmd,
-                    color = Color(0xFFCBD5E1),
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace
-                )
             }
         }
 
-        // Live Dark Terminal Console Output
+        // Full-Screen Live Dark Terminal Console & Complete Output View
         Surface(
             color = Color(0xFF05070E),
             shape = RoundedCornerShape(18.dp),
@@ -384,7 +464,7 @@ fun MeeraTerminalScreen(onBack: () -> Unit) {
                     .fillMaxSize()
                     .padding(14.dp)
                     .verticalScroll(scrollState),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
                     "meera@termux:~ $ _",
@@ -402,47 +482,105 @@ fun MeeraTerminalScreen(onBack: () -> Unit) {
                     )
                 } else {
                     logs.forEach { entry ->
+                        val ok = (entry.exitCode ?: 0) == 0
+                        val durSec = String.format(Locale.US, "%.1fs", entry.durationMs / 1000.0)
                         Column(
                             Modifier
                                 .fillMaxWidth()
-                                .background(Color(0xFF0B1020), RoundedCornerShape(10.dp))
-                                .padding(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                                .background(Color(0xFF0B1020), RoundedCornerShape(12.dp))
+                                .border(
+                                    1.dp,
+                                    if (entry.running) Color(0xFFFFB84D).copy(alpha = 0.45f)
+                                    else if (ok) Color(0xFF2EE6A8).copy(alpha = 0.35f)
+                                    else Color(0xFFFF6B6B).copy(alpha = 0.45f),
+                                    RoundedCornerShape(12.dp)
+                                )
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             Row(
                                 Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
                                     "$ ${entry.command}",
                                     color = Color(0xFF2EE6A8),
-                                    fontSize = 12.5.sp,
+                                    fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold,
                                     fontFamily = FontFamily.Monospace,
                                     modifier = Modifier.weight(1f)
                                 )
                                 Text(
-                                    if (entry.running) "⏳ running" else "exit:${entry.exitCode ?: 0} • ${entry.time}",
-                                    color = if (entry.running) Color(0xFFFFB84D) else Color(0xFF64748B),
-                                    fontSize = 10.5.sp,
+                                    if (entry.running) "⏳ running..."
+                                    else if (ok) "✓ done in $durSec"
+                                    else "✗ exit:${entry.exitCode} ($durSec)",
+                                    color = if (entry.running) Color(0xFFFFB84D)
+                                    else if (ok) Color(0xFF2EE6A8)
+                                    else Color(0xFFFF6B6B),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
                                     fontFamily = FontFamily.Monospace
                                 )
                             }
+
+                            if (!entry.running && entry.stdout.isBlank() && entry.stderr.isBlank()) {
+                                Text(
+                                    "(Command completed with exit code ${entry.exitCode ?: 0}, no console text printed)",
+                                    color = Color(0xFF64748B),
+                                    fontSize = 11.5.sp,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+
                             if (entry.stdout.isNotBlank()) {
-                                Text(
-                                    entry.stdout.trim(),
-                                    color = Color(0xFFE2E8F0),
-                                    fontSize = 12.sp,
-                                    fontFamily = FontFamily.Monospace
-                                )
+                                Column(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .background(Color(0xFF060913), RoundedCornerShape(8.dp))
+                                        .padding(10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Row(
+                                        Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text("OUTPUT:", color = Color(0xFF38BDF8), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                        Text(
+                                            "📋 Copy",
+                                            color = Color(0xFF8A94B8),
+                                            fontSize = 10.5.sp,
+                                            modifier = Modifier.clickable {
+                                                val cb = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                                cb.setPrimaryClip(ClipData.newPlainText("TermuxOut", entry.stdout.trim()))
+                                                Toast.makeText(ctx, "Output copy हो गया", Toast.LENGTH_SHORT).show()
+                                            }
+                                        )
+                                    }
+                                    Text(
+                                        entry.stdout.trim(),
+                                        color = Color(0xFFF1F5F9),
+                                        fontSize = 12.5.sp,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                }
                             }
+
                             if (entry.stderr.isNotBlank()) {
-                                Text(
-                                    entry.stderr.trim(),
-                                    color = Color(0xFFFF6B6B),
-                                    fontSize = 12.sp,
-                                    fontFamily = FontFamily.Monospace
-                                )
+                                Column(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .background(Color(0xFF1F0A10), RoundedCornerShape(8.dp))
+                                        .padding(10.dp)
+                                ) {
+                                    Text("ERROR:", color = Color(0xFFFF6B6B), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                    Text(
+                                        entry.stderr.trim(),
+                                        color = Color(0xFFFF9494),
+                                        fontSize = 12.sp,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                }
                             }
                         }
                     }
@@ -470,7 +608,7 @@ fun MeeraTerminalScreen(onBack: () -> Unit) {
                             val toRun = cmdInput.trim()
                             cmdInput = ""
                             Thread {
-                                MeeraTermuxEngine.execute(ctx, toRun, background = true, waitMs = 3000L)
+                                MeeraTermuxEngine.execute(ctx, toRun, background = true, waitMs = 15000L, autoOpenUi = false)
                             }.start()
                         }
                     },
