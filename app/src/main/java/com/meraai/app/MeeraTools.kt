@@ -497,7 +497,7 @@ object MeeraTools {
         funcs.put(
             JSONObject()
                 .put("name", "switch_system_config")
-                .put("description", "Switch personality (Meera, Jarvis, Rudra), change voice (Aoede, Orus, Fenrir, Kore, Leda, Zephyr, Despina, Callirrhoe, Puck, Charon, Alnilam), toggle Girlfriend mode, or switch engine mode (LIVE or MODULAR) WITHOUT turning off the microphone. Call this immediately when the user says 'Jarvis se baat karao', 'Jarvis mode on karo', 'Rudra ko bulao', 'Meera ko bulao', 'aawaz badlo', or 'Modular/Live mode me aao'.")
+                .put("description", "Switch personality (Meera, Jarvis, Rudra), change voice (Aoede, Orus, Fenrir, Kore, Leda, Zephyr, Despina, Callirrhoe, Puck, Charon, Alnilam), toggle Girlfriend mode, or switch engine mode (LIVE or MODULAR) WITHOUT turning off the microphone. Call this ONLY when the user is clearly commanding a switch right now (never for questions or casual mentions; if unsure, ask the user to confirm first), for example when the user says 'Jarvis se baat karao', 'Jarvis mode on karo', 'Rudra ko bulao', 'Meera ko bulao', 'aawaz badlo', or 'Modular/Live mode me aao'.")
                 .put("parameters", JSONObject().put("type", "OBJECT")
                     .put("properties", JSONObject()
                         .put("persona", JSONObject().put("type", "STRING").put("description", "Meera, Jarvis, or Rudra"))
@@ -1047,6 +1047,44 @@ object MeeraTools {
     }
 
     /** Direct Voice Router with Strict Scroll Guard & Smart Intent Separation */
+    private fun classifySwitchIntent(ctx: Context, text: String): String {
+        return try {
+            val key = Prefs(ctx).apiKey
+            if (key.isBlank()) return "not_switch"
+            val prompt = "A voice assistant app has personalities (Meera, Jarvis, Rudra), a Girlfriend mode, and two engine modes (LIVE and MODULAR). " +
+                "Decide what the user's sentence means. Answer with exactly one word: " +
+                "SWITCH if the user is clearly commanding the assistant to change personality, voice, girlfriend mode or engine mode right now; " +
+                "NOT_SWITCH if the user is only asking about, discussing or mentioning these things, or talking about something else; " +
+                "UNSURE if it could be a command but it is not clear.\nUser sentence: " + text
+            val body = JSONObject()
+                .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", JSONArray().put(JSONObject().put("text", prompt)))))
+                .put("generationConfig", JSONObject().put("temperature", 0.0))
+            val mt = with(okhttp3.MediaType.Companion) { "application/json".toMediaType() }
+            val rb = with(okhttp3.RequestBody.Companion) { body.toString().toRequestBody(mt) }
+            val client = okhttp3.OkHttpClient.Builder()
+                .callTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+            val req = okhttp3.Request.Builder()
+                .url("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent")
+                .header("x-goog-api-key", key)
+                .post(rb)
+                .build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@use "not_switch"
+                val j = JSONObject(resp.body?.string() ?: "")
+                val ans = j.optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content")
+                    ?.optJSONArray("parts")?.optJSONObject(0)?.optString("text", "")?.trim()?.uppercase() ?: ""
+                when {
+                    ans.startsWith("UNSURE") -> "unsure"
+                    ans.startsWith("SWITCH") -> "switch"
+                    else -> "not_switch"
+                }
+            }
+        } catch (e: Exception) {
+            "not_switch"
+        }
+    }
+
     fun tryDirectVoiceCommand(ctx: Context, userText: String): ToolExecutionResult {
         val raw = userText.trim().trimEnd('।', '.', '!', '?', ',', ' ')
         val low = raw.lowercase()
@@ -1071,7 +1109,15 @@ object MeeraTools {
             low.contains("बात कराओ") || low.contains("baat karao") || low.contains("स्विच") || low.contains("switch") ||
             low.contains("एक्टिवेट") || low.contains("activate") || low.contains("ऑन करो") || low.contains("on karo") ||
             low.contains("बन जाओ") || low.contains("ban jao") || low.contains("पर्सनैलिटी") || low.contains("personality")
-        if (wantsSwitch) {
+        val switchIntent = if (wantsSwitch) classifySwitchIntent(ctx, raw) else "not_switch"
+        if (switchIntent == "unsure") {
+            return ToolExecutionResult(
+                true, "confirm_switch",
+                "क्या आप चाहते हैं कि मैं मोड या पर्सनैलिटी बदल दूँ? अगर हाँ, तो साफ़ बोलिए, जैसे मॉड्यूलर मोड पर चलो।",
+                "VERIFIED_SUCCESS: Asked the user to confirm a mode or personality switch"
+            )
+        }
+        if (switchIntent == "switch") {
             when {
                 low.contains("जारविस") || low.contains("जार्विस") || low.contains("jarvis") -> {
                     val r = MeeraConfigBridge.onConfigChange?.invoke("Jarvis", null, null, null, null)
