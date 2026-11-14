@@ -84,14 +84,14 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
     private val aiBuf = StringBuilder()
     private val history = ArrayList<Pair<String, String>>()
 
-    private var noticeJob: Job? = null
+    private val noticeHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val clearNotice = Runnable { _ui.update { it.copy(fallbackNotice = null) } }
 
     private fun refreshModelLine() {
-        val F = FallbackManager
         val line = if (prefs.mode == Mode.LIVE)
-            "🎙️ Live • ${F.activeOr(F.Slot.LIVE, prefs.liveModel)}"
+            "🎙️ Live • ${FallbackManager.activeOr(FallbackManager.Slot.LIVE, prefs.liveModel)}"
         else
-            "⚙️ Modular • 🧠 ${F.activeOr(F.Slot.CHAT, prefs.chatModel)} • 🎧 ${F.activeOr(F.Slot.STT, prefs.sttModel)} • 🔊 ${F.activeOr(F.Slot.TTS, prefs.ttsModel)}"
+            "⚙️ Modular • 🧠 ${FallbackManager.activeOr(FallbackManager.Slot.CHAT, prefs.chatModel)} • 🎧 ${FallbackManager.activeOr(FallbackManager.Slot.STT, prefs.sttModel)} • 🔊 ${FallbackManager.activeOr(FallbackManager.Slot.TTS, prefs.ttsModel)}"
         _ui.update { it.copy(activeModels = line) }
     }
 
@@ -99,8 +99,8 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
         FallbackManager.onActive = { refreshModelLine() }
         FallbackManager.onNotice = { msg ->
             _ui.update { it.copy(fallbackNotice = msg) }
-            noticeJob?.cancel()
-            noticeJob = viewmodelScope.launch { kotlinx.coroutines.delay(9000); _ui.update { it.copy(fallbackNotice = null) } }
+            noticeHandler.removeCallbacks(clearNotice)
+            noticeHandler.postDelayed(clearNotice, 9000L)
         }
         refreshModelLine()
         installConfigBridge()
