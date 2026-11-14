@@ -14,7 +14,6 @@ import android.security.keystore.KeyProperties
 import android.util.Base64
 import android.widget.Toast
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -161,11 +160,9 @@ object MeeraRepoExporter {
 
         Thread {
             try {
-                // Step 1: Pehle bina token (Public mode) try karein, ya explicitToken ho to use lagayein
                 var usedToken = explicitToken?.trim().orEmpty()
                 var zipBytes = downloadZipball(usedToken)
 
-                // Step 2: Agar Public request fail hui (401/403/404 = Private repo), to Encrypted Vault check karein
                 if (zipBytes == null && usedToken.isBlank()) {
                     val savedVaultToken = MeeraTokenVault.getToken(app)
                     if (savedVaultToken.isNotBlank()) {
@@ -174,22 +171,16 @@ object MeeraRepoExporter {
                     }
                 }
 
-                // Step 3: Agar ab bhi access nahi mila to user se Private Repo Token maangein
                 if (zipBytes == null) {
                     state.value = RepoExportUiState(running = false)
                     mainHandler.post { onNeedPrivateToken() }
                     return@Thread
                 }
 
-                // Step 4: Recent 15 commits fetch karein
                 val recentCommits = fetchRecentCommits(usedToken)
-
-                // Step 5: Memory mein ZIP unpack karke exact Complete Source Code Report banayein
                 val (reportContent, codeFileCount) = buildCompleteReport(zipBytes, recentCommits)
                 val reportBytes = reportContent.toByteArray(Charsets.UTF_8)
                 val sizeKb = (reportBytes.size / 1024).coerceAtLeast(1)
-
-                // Step 6: Downloads folder mein save karein + FileProvider Share URI banayein
                 val shareUri = saveReportAndGetShareUri(app, reportBytes)
 
                 state.value = RepoExportUiState(
@@ -250,8 +241,7 @@ object MeeraRepoExporter {
         return try {
             val url = "https://api.github.com/repos/$OWNER/$REPO/commits?sha=$BRANCH&per_page=15"
             val conn = openGitHubConn(url, token)
-            if (conn.responseCode !in 200..299) return "(Commits history unavailable)
-"
+            if (conn.responseCode !in 200..299) return "(Commits history unavailable)\n"
             val raw = conn.inputStream.bufferedReader(Charsets.UTF_8).readText()
             val arr = JSONArray(raw)
             val sb = StringBuilder()
@@ -261,15 +251,12 @@ object MeeraRepoExporter {
                 val msg = item.optJSONObject("commit")?.optString("message", "")
                     ?.lineSequence()?.firstOrNull()?.trim().orEmpty()
                 if (sha7.isNotBlank()) {
-                    sb.append("$sha7 $msg
-")
+                    sb.append("$sha7 $msg\n")
                 }
             }
-            sb.toString().ifBlank { "(No commits found)
-" }
+            sb.toString().ifBlank { "(No commits found)\n" }
         } catch (_: Exception) {
-            "(Commits history unavailable)
-"
+            "(Commits history unavailable)\n"
         }
     }
 
@@ -302,49 +289,33 @@ object MeeraRepoExporter {
         val numFmt = NumberFormat.getIntegerInstance(Locale.US)
         val out = StringBuilder(fileMap.values.sumOf { it.size } + 16384)
 
-        out.append("========================================================================
-")
-        out.append("MEERA-AI ($BRANCH) CURRENT COMPLETE SOURCE CODE DUMP
-")
-        out.append("========================================================================
+        out.append("========================================================================\n")
+        out.append("MEERA-AI ($BRANCH) CURRENT COMPLETE SOURCE CODE DUMP\n")
+        out.append("========================================================================\n\n")
 
-")
+        out.append("--- 1. RECENT 15 COMMITS ---\n")
+        out.append(recentCommits).append("\n")
 
-        out.append("--- 1. RECENT 15 COMMITS ---
-")
-        out.append(recentCommits).append("
-")
-
-        out.append("--- 2. COMPLETE REPOSITORY FILE TREE ---
-")
+        out.append("--- 2. COMPLETE REPOSITORY FILE TREE ---\n")
         for (p in sortedPaths) {
             val sz = fileMap[p]?.size ?: 0
-            out.append(" - ").append(p).append(" (").append(numFmt.format(sz)).append(" bytes)
-")
+            out.append(" - ").append(p).append(" (").append(numFmt.format(sz)).append(" bytes)\n")
         }
-        out.append("
---- 3. FULL SOURCE CODE OF ALL CODE & CONFIG FILES ---
-")
+        out.append("\n--- 3. FULL SOURCE CODE OF ALL CODE & CONFIG FILES ---\n")
 
         var codeCount = 0
         for (p in sortedPaths) {
             if (CODE_EXTS.any { p.endsWith(it, ignoreCase = true) }) {
                 codeCount++
-                out.append("
-===========================================================================
-")
-                out.append("FILE: ").append(p).append("
-")
-                out.append("===========================================================================
-")
+                out.append("\n===========================================================================\n")
+                out.append("FILE: ").append(p).append("\n")
+                out.append("===========================================================================\n")
                 val text = String(fileMap[p] ?: ByteArray(0), Charsets.UTF_8)
-                val lines = text.split("
-")
+                val lines = text.split("\n")
                 for (i in lines.indices) {
-                    val cleanLine = lines[i].removeSuffix("")
+                    val cleanLine = lines[i].removeSuffix("\r")
                     if (i == lines.lastIndex && cleanLine.isEmpty()) continue
-                    out.append(String.format(Locale.US, "%4d | %s
-", i + 1, cleanLine))
+                    out.append(String.format(Locale.US, "%4d | %s\n", i + 1, cleanLine))
                 }
             }
         }
@@ -353,7 +324,6 @@ object MeeraRepoExporter {
     }
 
     private fun saveReportAndGetShareUri(app: Context, data: ByteArray): Uri? {
-        // 1. Public Downloads folder mein save karein
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 val values = ContentValues().apply {
@@ -373,7 +343,6 @@ object MeeraRepoExporter {
             }
         } catch (_: Exception) {}
 
-        // 2. App external files Download directory mein copy rakhein taaki FileProvider se 1-tap Share ho sake
         return try {
             val shareDir = app.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: app.cacheDir
             if (!shareDir.exists()) shareDir.mkdirs()
