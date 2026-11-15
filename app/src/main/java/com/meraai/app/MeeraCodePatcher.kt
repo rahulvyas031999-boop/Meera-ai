@@ -388,7 +388,7 @@ RULES:
                 }
 
                 val patchRefBody = JSONObject().put("sha", newCommitSha).put("force", false)
-                http.newCall(ghRequest(refUrl, ghToken).patch(patchRefBody.toString().toRequestBody("application/json".toMediaType())).build()).execute().use { resp ->
+                http.newCall(ghRequest(refUrl.replace("/git/ref/", "/git/refs/"), ghToken).patch(patchRefBody.toString().toRequestBody("application/json".toMediaType())).build()).execute().use { resp ->
                     if (!resp.isSuccessful) throw RuntimeException("Update branch ref failed (HTTP ${resp.code})")
                 }
 
@@ -566,7 +566,7 @@ RULES:
             try {
                 val refUrl = "https://api.github.com/repos/$OWNER/$REPO/git/ref/heads/$BRANCH"
                 val body = JSONObject().put("sha", prevSha).put("force", true)
-                http.newCall(ghRequest(refUrl, ghToken).patch(body.toString().toRequestBody("application/json".toMediaType())).build()).execute().use { resp ->
+                http.newCall(ghRequest(refUrl.replace("/git/ref/", "/git/refs/"), ghToken).patch(body.toString().toRequestBody("application/json".toMediaType())).build()).execute().use { resp ->
                     if (!resp.isSuccessful) throw RuntimeException("Rollback HTTP ${resp.code}")
                 }
                 state.value = state.value.copy(busy = false, buildStatus = "", failureCompilerError = "", statusText = "✅ Rollback सफल! v2-test पिछले वर्किंग वर्ज़न पर आ गया है।")
