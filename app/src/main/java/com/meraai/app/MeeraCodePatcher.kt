@@ -95,7 +95,8 @@ data class PatcherUiState(
     val buildSummaryText: String = "",
     val failureCompilerError: String = "",
     val failureReportText: String = "",
-    val failureReportUri: Uri? = null
+    val failureReportUri: Uri? = null,
+    val pythonOutput: String = ""
 )
 
 object MeeraCodePatcher {
@@ -161,7 +162,7 @@ object MeeraCodePatcher {
         if (code.isBlank()) return false to "फ़ाइल खाली है"
         if (Regex("(?m)^\\s*(?://|#|/\\*)\\s*\\.\\.\\.").containsMatchIn(code)) return false to "कोड में अधूरे '...' प्लेसहोल्डर मिले हैं"
         if (filePath.endsWith(".kt") && !code.contains("package com.meraai.app")) return false to "Kotlin फ़ाइल में 'package com.meraai.app' गायब है"
-        return true to "100% Syntax Verified ✓"
+        return true to "बुनियादी जाँच पास (असली कम्पाइल जाँच GitHub बिल्ड में होगी)"
     }
 
     private fun buildCompactDiffSnippet(oldText: String, newText: String): Triple<Int, Int, String> {
@@ -196,26 +197,13 @@ object MeeraCodePatcher {
         Thread {
             try {
                 val allFiles = fetchRepoFileList(ghToken)
-                val low = cleanInst.lowercase()
-                val targetCandidates = allFiles.filter { path ->
-                    val fn = path.substringAfterLast("/").lowercase()
-                    when {
-                        low.contains("wake") || low.contains("hey meera") -> fn.contains("wakeword")
-                        low.contains("orb") || low.contains("3d") -> fn.contains("orb") || fn.contains("ui.kt")
-                        low.contains("avatar") || low.contains("live2d") -> fn.contains("avatar") || fn.contains("ui.kt")
-                        low.contains("termux") || low.contains("terminal") -> fn.contains("termux")
-                        low.contains("voice") || low.contains("mic") || low.contains("live") -> fn.contains("voiceviewmodel") || fn.contains("geminilive")
-                        low.contains("whatsapp") || low.contains("tool") -> fn.contains("meeratools") || fn.contains("meeraservices")
-                        low.contains("prompt") || low.contains("model") || low.contains("config") -> fn.contains("config.kt")
-                        low.contains("ui") || low.contains("menu") || low.contains("drawer") || low.contains("button") -> fn.contains("ui.kt")
-                        else -> fn in listOf("config.kt", "meeratools.kt", "ui.kt")
-                    }
-                }.take(3)
+                val targetCandidates = chooseTargetFiles(apiKey, cleanInst, allFiles)
+                if (targetCandidates.isEmpty()) throw RuntimeException("कौन सी फ़ाइल बदलनी है यह समझ नहीं आया। लिखें कि किस फ़ाइल (जैसे Ui.kt) में बदलाव चाहिए।")
 
                 val contextBuilder = StringBuilder()
                 for (path in targetCandidates) {
                     val liveCode = fetchLiveFileFromBranch(path, ghToken) ?: continue
-                    contextBuilder.append("\n=== FILE: $path ===\n").append(liveCode.take(28000)).append("\n")
+                    contextBuilder.append("\n=== FILE: $path ===\n").append(liveCode).append("\n")
                 }
 
                 MeeraBackgroundMonitor.updateProgress(bgId, 45, "gemini-4-hydrogen सटीक टारगेटेड पैच तैयार कर रहा है...")
@@ -248,18 +236,7 @@ RULES:
                     .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", JSONArray().put(JSONObject().put("text", userPrompt)))))
                     .put("generationConfig", JSONObject().put("responseMimeType", "application/json").put("temperature", 0.1))
 
-                val req = Request.Builder().url("https://generativelanguage.googleapis.com/v1beta/models/gemini-4-hydrogen:generateContent")
-                    .header("x-goog-api-key", apiKey).post(reqBody.toString().toRequestBody("application/json".toMediaType())).build()
-
-                var rawJson = ""
-                http.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) throw RuntimeException("Hydrogen HTTP ${resp.code}")
-                    val j = JSONObject(resp.body!!.string())
-                    val parts = j.optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")
-                    val sb = StringBuilder()
-                    if (parts != null) for (i in 0 until parts.length()) sb.append(parts.optJSONObject(i)?.optString("text", "") ?: "")
-                    rawJson = sb.toString().trim()
-                }
+                val rawJson = callPatchModels(apiKey, reqBody)
 
                 MeeraBackgroundMonitor.updateProgress(bgId, 80, "पैच का प्रीव्यू और सिंटैक्स जाँच हो रही है...")
                 preparePreviewFromPatchJson(ctx, rawJson, bgId)
@@ -336,6 +313,171 @@ RULES:
             } catch (e: Exception) {
                 MeeraBackgroundMonitor.completeTask(bgId, false, "JSON पार्स एरर: ${e.message}")
                 state.value = state.value.copy(busy = false, validationErrors = listOf("अमान्य Patch फ़ॉर्मेट: ${e.message}"), statusText = "❌ Patch पढ़ने में दिक्कत आई")
+            }
+        }.start()
+    }
+
+    private val longHttp = http.newBuilder().readTimeout(180, TimeUnit.SECONDS).build()
+
+    private fun callPatchModels(apiKey: String, reqBody: JSONObject): String {
+        val models = listOf("gemini-4-hydrogen", "gemini-3.1-pro-preview", "gemini-2.5-pro")
+        var lastErr = "कोई जवाब नहीं मिला"
+        for (m in models) {
+            try {
+                val req = Request.Builder()
+                    .url("https://generativelanguage.googleapis.com/v1beta/models/$m:generateContent")
+                    .header("x-goog-api-key", apiKey)
+                    .post(reqBody.toString().toRequestBody("application/json".toMediaType()))
+                    .build()
+                val text = longHttp.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) {
+                        lastErr = "$m: HTTP ${resp.code} ${resp.body?.string()?.take(150).orEmpty()}"
+                        return@use ""
+                    }
+                    val j = JSONObject(resp.body!!.string())
+                    val parts = j.optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")
+                    val sb = StringBuilder()
+                    if (parts != null) for (i in 0 until parts.length()) sb.append(parts.optJSONObject(i)?.optString("text", "") ?: "")
+                    sb.toString().trim()
+                }
+                if (text.isNotBlank()) return text
+                if (!lastErr.startsWith("$m:")) lastErr = "$m: खाली जवाब"
+            } catch (e: Exception) {
+                lastErr = "$m: ${e.message}"
+            }
+        }
+        throw RuntimeException(lastErr)
+    }
+
+    private fun chooseTargetFiles(apiKey: String, instruction: String, allFiles: List<String>): List<String> {
+        val chosen = LinkedHashSet<String>()
+        Regex("""([A-Za-z0-9_]+\.(?:kt|xml|kts))""").findAll(instruction).forEach { m ->
+            val name = m.groupValues[1]
+            allFiles.filter { it.substringAfterLast("/") == name }.forEach { chosen.add(it) }
+        }
+        if (chosen.size < 3) {
+            try {
+                val prompt = "You help edit an Android Kotlin repository. From the file list below, choose the files (at most 3) that must be edited to fulfil the user request. " +
+                    "Reply ONLY with JSON like {\"files\": [\"path1\", \"path2\"]} using exact paths from the list.\n\nFILES:\n" +
+                    allFiles.joinToString("\n") + "\n\nUSER REQUEST:\n" + instruction.take(3000)
+                val body = JSONObject()
+                    .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", JSONArray().put(JSONObject().put("text", prompt)))))
+                    .put("generationConfig", JSONObject().put("responseMimeType", "application/json").put("temperature", 0.0))
+                val req = Request.Builder()
+                    .url("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent")
+                    .header("x-goog-api-key", apiKey)
+                    .post(body.toString().toRequestBody("application/json".toMediaType()))
+                    .build()
+                http.newCall(req).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        val j = JSONObject(resp.body!!.string())
+                        val txt = j.optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)?.optString("text", "").orEmpty()
+                        val arr = JSONObject(txt.trim()).optJSONArray("files")
+                        if (arr != null) for (i in 0 until arr.length()) {
+                            val p = arr.optString(i)
+                            if (p in allFiles) chosen.add(p)
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+        return chosen.take(4)
+    }
+
+    private fun fetchFileWithStatus(path: String, token: String): Pair<Int, String> {
+        val cleanPath = path.trim().trimStart('/')
+        val url = "https://api.github.com/repos/$OWNER/$REPO/contents/$cleanPath?ref=$BRANCH"
+        http.newCall(ghRequest(url, token).get().build()).execute().use { resp ->
+            if (!resp.isSuccessful) return resp.code to ""
+            val j = JSONObject(resp.body!!.string())
+            val b64 = j.optString("content", "").replace("\n", "").replace("\r", "")
+            val text = if (b64.isBlank()) "" else String(Base64.decode(b64, Base64.DEFAULT), Charsets.UTF_8).replace("\r\n", "\n")
+            return 200 to text
+        }
+    }
+
+    fun prepareRawFilePreview(ctx: Context, rawPath: String, code: String) {
+        val filePath = rawPath.trim().trimStart('/')
+        val newCode = code.replace("\r\n", "\n")
+        if (filePath.isBlank() || newCode.isBlank()) {
+            state.value = state.value.copy(statusText = "⚠️ फ़ाइल का पाथ और कोड दोनों भरें", validationErrors = emptyList(), previews = emptyList())
+            return
+        }
+        val ghToken = MeeraTokenVault.getToken(ctx)
+        val bgId = MeeraBackgroundMonitor.startTask("Direct File: ${filePath.substringAfterLast("/")}", "In-App Code Studio", "Raw File", "GitHub से मौजूदा फ़ाइल पढ़ी जा रही है...", 30)
+        state.value = state.value.copy(busy = true, statusText = "🔍 फ़ाइल की जाँच हो रही है...", previews = emptyList(), validationErrors = emptyList())
+
+        Thread {
+            try {
+                val errorList = mutableListOf<String>()
+                if (filePath.contains("..") || filePath.contains("\\")) errorList.add("$filePath: पाथ सही नहीं है")
+                val (httpCode, oldText) = fetchFileWithStatus(filePath, ghToken)
+                var action = "OVERWRITE"
+                var oldContent = ""
+                when {
+                    httpCode == 200 -> oldContent = oldText
+                    httpCode == 404 -> {
+                        action = "CREATE"
+                        val sameName = fetchRepoFileList(ghToken).filter { it.substringAfterLast("/") == filePath.substringAfterLast("/") }
+                        if (sameName.isNotEmpty()) errorList.add("इस नाम की फ़ाइल पहले से यहाँ है: ${sameName.joinToString()} — पूरा सही पाथ लिखें, वरना डुप्लीकेट फ़ाइल बन जाएगी")
+                    }
+                    else -> errorList.add("GitHub से मौजूदा फ़ाइल पढ़ नहीं पाया (HTTP $httpCode) — पुश रोका गया ताकि फ़ाइल गलती से न मिटे")
+                }
+                if (oldContent.isNotBlank()) {
+                    val oldLines = oldContent.split("\n").size
+                    val newLines = newCode.split("\n").size
+                    if (newLines * 100 < oldLines * 60) errorList.add("नई फ़ाइल में $newLines लाइनें हैं, पुरानी में $oldLines थीं — शायद सिर्फ़ टुकड़ा पेस्ट हुआ है। पूरी फ़ाइल पेस्ट करें")
+                }
+                val (ok, note) = validateSourceCode(filePath, newCode)
+                if (!ok) errorList.add("$filePath: $note")
+                val (addCnt, remCnt, diffTxt) = buildCompactDiffSnippet(oldContent, newCode)
+                val preview = FilePatchPreview(filePath, action, addCnt, remCnt, diffTxt, newCode, ok && errorList.isEmpty(), note)
+
+                val prevSha = ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE).getString(KEY_PREV_SHA, "").orEmpty()
+                val good = errorList.isEmpty()
+                MeeraBackgroundMonitor.completeTask(bgId, good, if (good) "100% प्रीव्यू तैयार" else "जाँच में ${errorList.size} त्रुटि मिली")
+                state.value = state.value.copy(busy = false, commitMessage = "Update ${filePath.substringAfterLast("/")} via Direct Push", previews = listOf(preview), validationErrors = errorList, previousCommitSha = prevSha,
+                    statusText = if (good) "✅ प्रीव्यू तैयार है! नीचे बदलाव देखकर 'Confirm & Push' दबाएँ।" else "⚠️ पुश रोका गया: पहले नीचे दी गई त्रुटि ठीक करें।")
+            } catch (e: Exception) {
+                MeeraBackgroundMonitor.completeTask(bgId, false, "एरर: ${e.message}")
+                state.value = state.value.copy(busy = false, validationErrors = listOf("त्रुटि: ${e.message}"), statusText = "❌ फ़ाइल जाँच में दिक्कत आई")
+            }
+        }.start()
+    }
+
+    fun runPythonScript(ctx: Context, scriptCode: String) {
+        val script = scriptCode.replace("\r\n", "\n")
+        if (script.isBlank()) return
+        if (script.contains("getpass") || script.contains("input(")) {
+            state.value = state.value.copy(statusText = "⚠️ इस स्क्रिप्ट में getpass/input() है (कीबोर्ड से टोकन पूछती है)। इस टैब में कीबोर्ड नहीं है, इसलिए यह यहाँ नहीं चलेगी। इसे सीधे Termux ऐप में चलाएँ।", pythonOutput = "")
+            return
+        }
+        val bgId = MeeraBackgroundMonitor.startTask("Python Runner", "Termux", "Python3", "स्क्रिप्ट चलाई जा रही है...", 20)
+        state.value = state.value.copy(busy = true, statusText = "⏳ स्क्रिप्ट Termux में चल रही है (2 मिनट तक इंतज़ार)...", pythonOutput = "")
+
+        Thread {
+            try {
+                val delim = "MEERA_PY_END_7Q2"
+                val command = "cat << '$delim' > ~/meera_run.py\n$script\n$delim\ncd ~ && python3 -u meera_run.py 2>&1"
+                val res = MeeraTermuxEngine.execute(ctx, command, background = true, waitMs = 120000L, autoOpenUi = false)
+                val raw = res.rawDataForAi
+                val finished = raw.startsWith("VERIFIED_SUCCESS: Termux executed")
+                val stillRunning = raw.startsWith("VERIFIED_SUCCESS: Dispatched")
+                val out = if (raw.contains("FULL_OUTPUT:")) raw.substringAfter("FULL_OUTPUT:").substringBefore("INSTRUCTIONS:").trim() else raw
+                var hint = ""
+                if (!finished && !stillRunning && (out.contains("not found") || out.contains("No such file"))) {
+                    hint = "\n\n💡 अगर 'python3 not found' दिखे तो Termux में यह चलाएँ: pkg install python git"
+                }
+                val status = when {
+                    finished -> "✅ स्क्रिप्ट पूरी हुई (exit=0)"
+                    stillRunning -> "⏳ स्क्रिप्ट अभी भी चल रही है — नतीजा Background Activity में देखें"
+                    else -> "❌ स्क्रिप्ट फेल हुई — नीचे आउटपुट देखें"
+                }
+                MeeraBackgroundMonitor.completeTask(bgId, finished, status, out.take(2000))
+                state.value = state.value.copy(busy = false, statusText = status, pythonOutput = (out + hint).take(6000))
+            } catch (e: Exception) {
+                MeeraBackgroundMonitor.completeTask(bgId, false, "Python Runner एरर: ${e.message}")
+                state.value = state.value.copy(busy = false, statusText = "❌ एरर: ${e.message}")
             }
         }.start()
     }
@@ -579,9 +721,14 @@ RULES:
 fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
     val ctx = LocalContext.current
     val ui by MeeraCodePatcher.state.collectAsState()
+    var currentTab by remember { mutableStateOf(0) }
     var inputBox by remember { mutableStateOf("") }
+    var pyScript by remember { mutableStateOf("") }
+    var rawPath by remember { mutableStateOf("") }
+    var rawCode by remember { mutableStateOf("") }
     val scrollState = rememberScrollState()
     val hasToken = remember(ui.busy) { MeeraTokenVault.hasToken(ctx) }
+    val readClip = { (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).primaryClip?.getItemAt(0)?.coerceToText(ctx)?.toString().orEmpty() }
 
     Column(Modifier.fillMaxSize().background(Color(0xFF090D18)).systemBarsPadding().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
@@ -592,7 +739,7 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
                 Spacer(Modifier.width(10.dp))
                 Column {
                     Text("Code Push & Build Studio", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
-                    Text("Target: v2-test • Syntax Guard + Live CI", color = Color(0xFF2EE6A8), fontSize = 11.sp)
+                    Text("Target: v2-test • Live CI", color = Color(0xFF2EE6A8), fontSize = 11.sp)
                 }
             }
             Surface(color = if (hasToken) Color(0xFF16203A) else Color(0xFF3B1219), shape = RoundedCornerShape(12.dp), modifier = Modifier.border(1.dp, if (hasToken) Color(0xFF2EE6A8) else Color(0xFFFF6B6B), RoundedCornerShape(12.dp)).clickable(onClick = onOpenTokenVault)) {
@@ -600,18 +747,65 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
             }
         }
 
+        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color(0xFF16203A))) {
+            listOf("🧠 AI Patch", "🐍 Python", "📄 Raw Kotlin").forEachIndexed { idx, title ->
+                val active = currentTab == idx
+                Box(Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(if (active) Color(0xFF5B8CFF) else Color.Transparent).clickable { if (currentTab != idx) { currentTab = idx; MeeraCodePatcher.clearPreview() } }.padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
+                    Text(title, color = if (active) Color.White else Color(0xFF8A94B8), fontSize = 12.sp, fontWeight = if (active) FontWeight.Bold else FontWeight.Normal)
+                }
+            }
+        }
+
         Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(scrollState), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Surface(color = Color(0xFF12192E), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().border(1.dp, Color(0xFF26355E), RoundedCornerShape(16.dp))) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("1. क्या बदलाव करना है लिखें या Patch JSON पेस्ट करें:", color = Color.White, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
-                    OutlinedTextField(value = inputBox, onValueChange = { inputBox = it }, placeholder = { Text("उदाहरण: 'WakeWord की सेंसिटिविटी बढ़ाकर 0.45 कर दो'...", color = Color(0xFF8A94B8), fontSize = 12.sp) }, minLines = 3, maxLines = 7, modifier = Modifier.fillMaxWidth())
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Box(Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(Brush.linearGradient(listOf(Color(0xFF5B8CFF), Color(0xFF38BDF8)))).clickable(enabled = !ui.busy) { MeeraCodePatcher.generateAiPatchFromInstruction(ctx, inputBox) }.padding(vertical = 10.dp, horizontal = 8.dp), contentAlignment = Alignment.Center) { Text("✨ AI से बदलाव बनाएँ", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
-                        Box(Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(Color(0xFF16203A)).border(1.dp, Color(0xFF2EE6A8), RoundedCornerShape(12.dp)).clickable(enabled = !ui.busy) { MeeraCodePatcher.preparePreviewFromPatchJson(ctx, inputBox) }.padding(vertical = 10.dp, horizontal = 8.dp), contentAlignment = Alignment.Center) { Text("🔍 प्रीव्यू व जाँच करें", color = Color(0xFF2EE6A8), fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+            if (currentTab == 0) {
+                Surface(color = Color(0xFF12192E), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().border(1.dp, Color(0xFF26355E), RoundedCornerShape(16.dp))) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("1. क्या बदलाव करना है लिखें या Patch JSON पेस्ट करें:", color = Color.White, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                        OutlinedTextField(value = inputBox, onValueChange = { inputBox = it }, placeholder = { Text("उदाहरण: Config.kt में चैट मॉडल का नाम बदल दो", color = Color(0xFF8A94B8), fontSize = 12.sp) }, minLines = 3, maxLines = 7, modifier = Modifier.fillMaxWidth())
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Box(Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(Brush.linearGradient(listOf(Color(0xFF5B8CFF), Color(0xFF38BDF8)))).clickable(enabled = !ui.busy) { MeeraCodePatcher.generateAiPatchFromInstruction(ctx, inputBox) }.padding(vertical = 10.dp, horizontal = 8.dp), contentAlignment = Alignment.Center) { Text("✨ AI से बदलाव बनाएँ", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+                            Box(Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(Color(0xFF16203A)).border(1.dp, Color(0xFF2EE6A8), RoundedCornerShape(12.dp)).clickable(enabled = !ui.busy) { MeeraCodePatcher.preparePreviewFromPatchJson(ctx, inputBox) }.padding(vertical = 10.dp, horizontal = 8.dp), contentAlignment = Alignment.Center) { Text("🔍 प्रीव्यू व जाँच करें", color = Color(0xFF2EE6A8), fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+                        }
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            TextButton(onClick = { val clip = readClip(); if (clip.isNotBlank()) inputBox = clip }) { Text("📋 क्लिपबोर्ड से पेस्ट करें", color = Color(0xFF38BDF8), fontSize = 12.sp) }
+                            if (inputBox.isNotBlank() || ui.previews.isNotEmpty()) { TextButton(onClick = { inputBox = ""; MeeraCodePatcher.clearPreview() }) { Text("साफ़ करें", color = Color(0xFF8A94B8), fontSize = 12.sp) } }
+                        }
                     }
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        TextButton(onClick = { val cb = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager; val clip = cb.primaryClip?.getItemAt(0)?.coerceToText(ctx)?.toString().orEmpty(); if (clip.isNotBlank()) inputBox = clip }) { Text("📋 क्लिपबोर्ड से पेस्ट करें", color = Color(0xFF38BDF8), fontSize = 12.sp) }
-                        if (inputBox.isNotBlank() || ui.previews.isNotEmpty()) { TextButton(onClick = { inputBox = ""; MeeraCodePatcher.clearPreview() }) { Text("साफ़ करें", color = Color(0xFF8A94B8), fontSize = 12.sp) } }
+                }
+            }
+
+            if (currentTab == 1) {
+                Surface(color = Color(0xFF12192E), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().border(1.dp, Color(0xFF26355E), RoundedCornerShape(16.dp))) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Python स्क्रिप्ट पेस्ट करें (Termux में चलेगी):", color = Color.White, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                        Text("ध्यान: इस टैब में कीबोर्ड नहीं है, इसलिए getpass / input() वाली स्क्रिप्ट यहाँ नहीं चलेगी। Termux में python और git लगे होने चाहिए।", color = Color(0xFF8A94B8), fontSize = 11.sp)
+                        OutlinedTextField(value = pyScript, onValueChange = { pyScript = it }, placeholder = { Text("print('hello')", color = Color(0xFF8A94B8), fontSize = 12.sp, fontFamily = FontFamily.Monospace) }, minLines = 6, maxLines = 14, modifier = Modifier.fillMaxWidth())
+                        Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Brush.linearGradient(listOf(Color(0xFF10B981), Color(0xFF059669)))).clickable(enabled = !ui.busy) { MeeraCodePatcher.runPythonScript(ctx, pyScript) }.padding(vertical = 12.dp), contentAlignment = Alignment.Center) { Text("▶️ Termux में स्क्रिप्ट चलाएँ", color = Color.White, fontSize = 13.5.sp, fontWeight = FontWeight.Bold) }
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            TextButton(onClick = { val clip = readClip(); if (clip.isNotBlank()) pyScript = clip }) { Text("📋 क्लिपबोर्ड से पेस्ट करें", color = Color(0xFF38BDF8), fontSize = 12.sp) }
+                            if (pyScript.isNotBlank()) { TextButton(onClick = { pyScript = "" }) { Text("साफ़ करें", color = Color(0xFF8A94B8), fontSize = 12.sp) } }
+                        }
+                    }
+                }
+                if (ui.pythonOutput.isNotBlank()) {
+                    Box(Modifier.fillMaxWidth().background(Color(0xFF070B14), RoundedCornerShape(10.dp)).border(1.dp, Color(0xFF1E293B), RoundedCornerShape(10.dp)).padding(10.dp).horizontalScroll(rememberScrollState())) {
+                        Text(ui.pythonOutput, color = Color(0xFF94A3B8), fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                    }
+                }
+            }
+
+            if (currentTab == 2) {
+                Surface(color = Color(0xFF12192E), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().border(1.dp, Color(0xFF26355E), RoundedCornerShape(16.dp))) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("फ़ाइल का पूरा पाथ और उसका पूरा नया कोड पेस्ट करें:", color = Color.White, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                        Text("सुरक्षा: नई फ़ाइल पुरानी से बहुत छोटी हो, या पुरानी फ़ाइल पढ़ी न जा सके, तो पुश रुक जाएगा।", color = Color(0xFF8A94B8), fontSize = 11.sp)
+                        OutlinedTextField(value = rawPath, onValueChange = { rawPath = it }, placeholder = { Text("app/src/main/java/com/meraai/app/Config.kt", color = Color(0xFF8A94B8), fontSize = 12.sp) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(value = rawCode, onValueChange = { rawCode = it }, placeholder = { Text("package com.meraai.app", color = Color(0xFF8A94B8), fontSize = 12.sp, fontFamily = FontFamily.Monospace) }, minLines = 6, maxLines = 14, modifier = Modifier.fillMaxWidth())
+                        Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color(0xFF16203A)).border(1.dp, Color(0xFF2EE6A8), RoundedCornerShape(12.dp)).clickable(enabled = !ui.busy) { MeeraCodePatcher.prepareRawFilePreview(ctx, rawPath, rawCode) }.padding(vertical = 12.dp), contentAlignment = Alignment.Center) { Text("🔍 प्रीव्यू व जाँच करें", color = Color(0xFF2EE6A8), fontSize = 13.5.sp, fontWeight = FontWeight.Bold) }
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            TextButton(onClick = { val clip = readClip(); if (clip.isNotBlank()) rawCode = clip }) { Text("📋 कोड क्लिपबोर्ड से पेस्ट करें", color = Color(0xFF38BDF8), fontSize = 12.sp) }
+                            if (rawCode.isNotBlank() || rawPath.isNotBlank()) { TextButton(onClick = { rawCode = ""; rawPath = ""; MeeraCodePatcher.clearPreview() }) { Text("साफ़ करें", color = Color(0xFF8A94B8), fontSize = 12.sp) } }
+                        }
                     }
                 }
             }
@@ -623,7 +817,7 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
             if (ui.validationErrors.isNotEmpty()) {
                 Surface(color = Color(0xFF260D14), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth().border(1.dp, Color(0xFFFF6B6B), RoundedCornerShape(14.dp))) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("⚠️ कोड सुरक्षा जाँच में ये समस्याएँ मिलीं:", color = Color(0xFFFF6B6B), fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                        Text("⚠️ जाँच में ये समस्याएँ मिलीं:", color = Color(0xFFFF6B6B), fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
                         ui.validationErrors.forEach { err -> Text("• $err", color = Color(0xFFFFB4B4), fontSize = 12.sp) }
                     }
                 }
@@ -668,7 +862,7 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
                             }
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Box(Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).background(Color(0xFF16203A)).border(1.dp, Color(0xFF38BDF8), RoundedCornerShape(10.dp)).clickable { val uri = ui.failureReportUri; if (uri != null) MeeraRepoExporter.launchShareSheet(ctx, uri) else { val cb = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager; cb.setPrimaryClip(ClipData.newPlainText("BuildFailureReport", ui.failureReportText)); Toast.makeText(ctx, "Report कॉपी हो गई!", Toast.LENGTH_SHORT).show() } }.padding(vertical = 9.dp), contentAlignment = Alignment.Center) { Text("📤 Error Report शेयर करें", color = Color(0xFF38BDF8), fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
-                                Box(Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).background(Color(0xFF5B8CFF)).clickable(enabled = !ui.busy) { MeeraCodePatcher.generateAiPatchFromInstruction(ctx, "Fix this exact Kotlin compilation error:\n${ui.failureCompilerError}") }.padding(vertical = 9.dp), contentAlignment = Alignment.Center) { Text("🤖 Hydrogen Auto-Fix", color = Color.White, fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
+                                Box(Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).background(Color(0xFF5B8CFF)).clickable(enabled = !ui.busy) { currentTab = 0; MeeraCodePatcher.generateAiPatchFromInstruction(ctx, "Fix this exact Kotlin compilation error:\n${ui.failureCompilerError}") }.padding(vertical = 9.dp), contentAlignment = Alignment.Center) { Text("🤖 Hydrogen Auto-Fix", color = Color.White, fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
                             }
                         }
                     }
