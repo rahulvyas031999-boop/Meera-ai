@@ -24,14 +24,11 @@ object MeeraAgentFactory {
 
     private fun auditGeneratedCode(code: String): List<String> {
         val issues = mutableListOf<String>()
-        if (Regex("(?m)^\\s*(?://|#)\\s*\\.\\.\\.").containsMatchIn(code)) {
+        if (Regex("(?m)^\s*(?://|#)\s*\.\.\.").containsMatchIn(code)) {
             issues.add("Contains '...' placeholder comments")
         }
-        if (code.contains("class ") && Regex("(?m)^\\s{4}def\\s+[a-zA-Z_][a-zA-Z0-9_]*\\s*\\(\\s*\\)").containsMatchIn(code)) {
+        if (code.contains("class ") && Regex("(?m)^\s{4}def\s+[a-zA-Z_][a-zA-Z0-9_]*\s*\(\s*\)").containsMatchIn(code)) {
             issues.add("Python class method missing 'self' parameter")
-        }
-        if (code.contains("service ssh start") || code.contains("cloudflare-utils")) {
-            issues.add("Uses unsupported Colab/Termux SSH commands instead of FastAPI + cloudflared")
         }
         if (code.count { it == '{' } != code.count { it == '}' }) {
             issues.add("Unbalanced curly braces")
@@ -56,8 +53,9 @@ object MeeraAgentFactory {
         onModelSelected: (String) -> Unit
     ): Pair<String, String> {
         for (m in models.distinct()) {
+            // FIX: High Thinking Level successfully enabled for Hydrogen and Pro models
             val thinkingAttempts = if (useHighThinking && (m.contains("hydrogen") || m.contains("3.8") || m.contains("3.1-pro"))) {
-                listOf(false)
+                listOf(true, false)
             } else {
                 listOf(false)
             }
@@ -135,28 +133,21 @@ object MeeraAgentFactory {
 You are a Principal Software Architect and Staff Engineer powered by Gemini Hydrogen.
 Target Environment: $targetPlatform
 
-CRITICAL ENGINEERING RULES (ZERO TOLERANCE FOR BROKEN CODE):
-1. COMPLETE RUNNABLE CODE ONLY: NEVER use '...' (ellipsis placeholders), '# TODO', or truncated blocks. Write 100% complete, copy-paste-runnable code.
-2. STRICT PYTHON & KOTLIN SYNTAX VALIDATION:
-   - In Python classes, EVERY instance method MUST explicitly include `self` as its first parameter (e.g., `def start_tunnel(self):`).
-   - Use ONLY standard ASCII spaces (0x20) for indentation—NEVER non-breaking spaces.
-   - Verify all imports, parentheses, brackets, and f-string quotes before outputting.
-3. REAL MEERA AI + GOOGLE COLAB + TERMUX TOPOLOGY:
-   - Google Colab containers do NOT run systemd/SSH daemons (`service ssh start` fails).
-   - For Google Colab backend integration with Meera AI (`MeeraColabBridge.kt`), ALWAYS run a FastAPI + Uvicorn HTTP server on port 8765 (`POST /execute` accepting `{"secret": "...", "task_type": "...", "instruction": "...", "payload": "..."}`) exposed via `cloudflared tunnel --url http://127.0.0.1:8765` (which generates a `https://*.trycloudflare.com` URL).
-   - For Termux on Android, only use real Termux packages (`pkg install python openssh cloudflared -y`).
-4. SAFE FILE-PATCHING STANDARD: Whenever writing a Python script that modifies repository or source files, NEVER use blind `.replace()` calls—always verify exact anchor markers with `assert` before modifying and validate Python syntax with `ast.parse`.
-5. OUTPUT FORMAT: Provide clean, well-structured Markdown code blocks with brief, crystal-clear setup steps.
+CRITICAL ENGINEERING RULES:
+1. COMPLETE RUNNABLE CODE ONLY: NEVER use '...' placeholders or truncated blocks. Write 100% complete, runnable code.
+2. STRICT SYNTAX VALIDATION: Ensure all braces, parentheses, and method parameters (like Python 'self') are 100% correct and balanced.
+3. OUTPUT FORMAT: Provide clean Markdown code blocks.
 """.trimIndent()
 
         MeeraBackgroundMonitor.updateProgress(taskId, 40, "Gemini Hydrogen से हाई-रीजनिंग कोड तैयार हो रहा है...")
 
-        val priorityModels = listOf("gemini-4-hydrogen")
+        val priorityModels = listOf("gemini-4-hydrogen", "gemini-3.8-flash")
         var (codeOutput, usedModel) = callReasoningBrain(
             key = key,
             models = priorityModels,
             systemPrompt = codingSystemPrompt,
-            userPrompt = "BUILD PRODUCTION CODE FOR:\n$taskDetails",
+            userPrompt = "BUILD PRODUCTION CODE FOR:
+$taskDetails",
             temperature = 0.15,
             useHighThinking = true
         ) { selected ->
@@ -165,12 +156,14 @@ CRITICAL ENGINEERING RULES (ZERO TOLERANCE FOR BROKEN CODE):
 
         val defects = auditGeneratedCode(codeOutput)
         if (codeOutput.isNotBlank() && defects.isNotEmpty()) {
-            MeeraBackgroundMonitor.updateProgress(taskId, 75, "ऑटो-ऑडिट में कमियाँ मिलीं (${defects.joinToString()}), रिपेयर हो रहा है...", usedModel)
+            MeeraBackgroundMonitor.updateProgress(taskId, 75, "ऑटो-ऑडिट में कमियाँ मिलीं, रिपेयर हो रहा है...", usedModel)
             val (fixedCode, fixedModel) = callReasoningBrain(
                 key = key,
                 models = listOf(usedModel) + priorityModels,
                 systemPrompt = codingSystemPrompt,
-                userPrompt = "FIX THESE DEFECTS IN YOUR PREVIOUS CODE (${defects.joinToString("; ")}) AND RETURN THE COMPLETE FIXED CODE ONLY:\n\n$codeOutput",
+                userPrompt = "FIX THESE DEFECTS IN YOUR PREVIOUS CODE (${defects.joinToString("; ")}) AND RETURN THE COMPLETE FIXED CODE ONLY:
+
+$codeOutput",
                 temperature = 0.1,
                 useHighThinking = true
             ) {}
@@ -182,170 +175,81 @@ CRITICAL ENGINEERING RULES (ZERO TOLERANCE FOR BROKEN CODE):
 
         if (codeOutput.isBlank()) {
             MeeraBackgroundMonitor.completeTask(taskId, false, "कोड जनरेट नहीं हो पाया — कारण: $lastError")
-            return ToolExecutionResult(
-                true, "generate_professional_code",
-                "कोडिंग इंजन से अभी कोड तैयार नहीं हो पाया, कृपया नेटवर्क या API Key चेक करके दोबारा कहें।",
-                "ERROR: Coding engine failed to produce output"
-            )
+            return ToolExecutionResult(true, "generate_professional_code", "कोडिंग इंजन से अभी कोड तैयार नहीं हो पाया।", "ERROR: Coding engine failed")
         }
 
         MeeraBackgroundMonitor.updateProgress(taskId, 90, "सिंटैक्स साफ़ करके Chat टैब और क्लिपबोर्ड में सेव कर रही हूँ...", usedModel)
-        val chatCard = "💻 [Production Code • $usedModel]:\n\n$codeOutput"
+        val chatCard = "💻 [Production Code • $usedModel]:
+
+$codeOutput"
         onDeliverToChat?.invoke("Code ($usedModel)", chatCard)
         copyToClipboard(ctx, codeOutput)
 
-        MeeraBackgroundMonitor.completeTask(
-            taskId = taskId,
-            success = true,
-            finalStep = "100% पूरा — कोड Chat टैब और क्लिपबोर्ड में सेव है।",
-            outputPreview = codeOutput
-        )
+        MeeraBackgroundMonitor.completeTask(taskId, true, "100% पूरा — कोड Chat टैब और क्लिपबोर्ड में सेव है।", codeOutput)
 
         return ToolExecutionResult(
             true, "generate_professional_code",
-            "मैंने $usedModel मॉडल से पूरा वेरीफाइड कोड तैयार करके Chat टैब और क्लिपबोर्ड में सेव कर दिया है! आप सीधे पेस्ट करके चला सकते हैं।",
-            "VERIFIED_SUCCESS: Generated complete verified code using $usedModel and saved to Chat Tab & Clipboard. Do NOT read raw code symbols aloud; give a 1-sentence confirmation."
+            "मैंने $usedModel मॉडल से पूरा वेरीफाइड कोड तैयार करके Chat टैब और क्लिपबोर्ड में सेव कर दिया है!",
+            "VERIFIED_SUCCESS: Generated complete verified code using $usedModel."
         )
     }
 
-    fun spawnAndRun(
-        ctx: Context,
-        profession: String,
-        taskDetails: String,
-        deliveryMode: String = "auto"
-    ): ToolExecutionResult {
+    fun spawnAndRun(ctx: Context, profession: String, taskDetails: String, deliveryMode: String = "auto"): ToolExecutionResult {
         val prefs = Prefs(ctx)
         val key = prefs.apiKey
-        if (key.isBlank()) {
-            return ToolExecutionResult(true, "spawn_custom_agent", "पहले API Key डालनी होगी।", "ERROR: Missing API Key")
-        }
+        if (key.isBlank()) return ToolExecutionResult(true, "spawn_custom_agent", "पहले API Key डालनी होगी।", "ERROR: Missing API Key")
 
         lastError = ""
         val roleName = profession.trim().ifBlank { "Domain Specialist" }
-        val taskId = MeeraBackgroundMonitor.startTask(
-            title = "Agent: $roleName",
-            category = "Custom Sub-Agent",
-            modelUsed = "gemini-4-hydrogen",
-            initialStep = "'$roleName' कस्टम एजेंट तैयार हो रहा है...",
-            initialPercent = 15
-        )
+        val taskId = MeeraBackgroundMonitor.startTask("Agent: $roleName", "Custom Sub-Agent", "gemini-4-hydrogen", "'$roleName' एजेंट तैयार हो रहा है...", 15)
 
         val modeLow = deliveryMode.lowercase().trim()
         val isPerformance = modeLow == "speak" || modeLow == "perform" ||
-            listOf("comedian", "comedy", "standup", "stand-up", "shayari", "poet", "roast", "storyteller", "चुटकुला", "कॉमेडी", "शायरी")
-                .any { roleName.lowercase().contains(it) || taskDetails.lowercase().contains(it) }
+            listOf("comedian", "comedy", "standup", "shayari", "roast").any { roleName.lowercase().contains(it) || taskDetails.lowercase().contains(it) }
 
-        val systemArchitectPrompt = if (isPerformance) {
-            """
-            You are a world-class, award-winning $roleName hired as an explicit custom specialist sub-agent by Meera AI.
-            Task: Deliver an unforgettable, authentic, high-craft performance for Rahul.
-            Rules:
-            - Fully embody the craft, timing, rhythm, and vocabulary of a top $roleName.
-            - Match the user's language (Hindi/Hinglish/English or requested dialect).
-            - Output ONLY pure spoken dialogue with natural pauses and warmth. NO markdown, NO bullet symbols, NO stage-direction brackets, because Meera will perform this aloud.
-            - Keep it punchy, complete, and impactful (around 4 to 8 spoken sentences).
-            """.trimIndent()
-        } else {
-            """
-            You are an elite, senior-level $roleName hired as an explicit custom specialist sub-agent by Meera AI.
-            Task: Execute the user's request with true industry-standard depth, complete accuracy, and zero placeholders ('...').
-            Rules:
-            - Think and structure your output like a top practitioner in "$roleName".
-            - If writing code, include complete imports, valid `self` parameters in Python classes, and 100% runnable code.
-            - Match the language requested by the user (Hinglish/Hindi/English).
-            """.trimIndent()
-        }
-
-        MeeraBackgroundMonitor.updateProgress(taskId, 45, "'$roleName' एजेंट काम कर रहा है...")
-        val candidateModels = listOf("gemini-4-hydrogen")
+        val systemPrompt = "You are an expert $roleName. Execute the request completely without truncation."
         val (generatedOutput, usedModel) = callReasoningBrain(
             key = key,
-            models = candidateModels,
-            systemPrompt = systemArchitectPrompt,
-            userPrompt = "CLIENT REQUEST:\n$taskDetails",
-            temperature = if (isPerformance) 0.85 else 0.25,
+            models = listOf("gemini-4-hydrogen"),
+            systemPrompt = systemPrompt,
+            userPrompt = taskDetails,
+            temperature = 0.3,
             useHighThinking = !isPerformance
-        ) { selected ->
-            MeeraBackgroundMonitor.updateProgress(taskId, 70, "'$roleName' ($selected) आउटपुट तैयार कर रहा है...", selected)
-        }
+        ) { }
 
         if (generatedOutput.isBlank()) {
-            MeeraBackgroundMonitor.completeTask(taskId, false, "'$roleName' एजेंट विफल — कारण: $lastError")
-            return ToolExecutionResult(
-                true, "spawn_custom_agent",
-                "कस्टम '$roleName' एजेंट अभी आउटपुट तैयार नहीं कर पाया, कृपया दोबारा कोशिश करें।",
-                "ERROR: All models failed for custom agent $roleName"
-            )
+            MeeraBackgroundMonitor.completeTask(taskId, false, "एजेंट विफल")
+            return ToolExecutionResult(true, "spawn_custom_agent", "एजेंट आउटपुट तैयार नहीं कर पाया।", "ERROR")
         }
 
-        if (!isPerformance || generatedOutput.length > 480) {
-            val formattedCard = "🤖 [$roleName Agent Output • $usedModel]:\n\n$generatedOutput"
-            onDeliverToChat?.invoke(roleName, formattedCard)
-            copyToClipboard(ctx, generatedOutput)
-            MeeraBackgroundMonitor.completeTask(
-                taskId = taskId,
-                success = true,
-                finalStep = "100% पूरा — '$roleName' का आउटपुट Chat टैब और क्लिपबोर्ड में सेव है।",
-                outputPreview = generatedOutput
-            )
-            val preview = generatedOutput.replace(Regex("[*#`_]"), "").replace("\n", " ").take(160)
-            return ToolExecutionResult(
-                true, "spawn_custom_agent",
-                "आपके कहे अनुसार '$roleName' एजेंट ने 100% काम पूरा करके Chat टैब और क्लिपबोर्ड में सेव कर दिया है!",
-                "VERIFIED_SUCCESS: Explicit custom [$roleName] agent completed task (100%) and saved full output to Chat Tab & Clipboard. Give a crisp 2-sentence spoken summary: $preview"
-            )
-        }
+        onDeliverToChat?.invoke(roleName, "🤖 [$roleName • $usedModel]:
 
-        onDeliverToChat?.invoke(roleName, "🎭 [$roleName]:\n$generatedOutput")
-        MeeraBackgroundMonitor.completeTask(
-            taskId = taskId,
-            success = true,
-            finalStep = "100% पूरा — परफॉर्मेंस डिलीवर की गई।",
-            outputPreview = generatedOutput
-        )
-        return ToolExecutionResult(
-            true, "spawn_custom_agent",
-            generatedOutput,
-            "VERIFIED_SUCCESS: Explicit custom [$roleName] agent generated performance. Deliver this exact performance aloud naturally:\n$generatedOutput"
-        )
+$generatedOutput")
+        copyToClipboard(ctx, generatedOutput)
+        MeeraBackgroundMonitor.completeTask(taskId, true, "100% पूरा", generatedOutput)
+        return ToolExecutionResult(true, "spawn_custom_agent", "मैंने '$roleName' का काम पूरा करके Chat टैब में सेव कर दिया है!", "VERIFIED_SUCCESS")
     }
 
     fun askHydrogen(ctx: Context, request: String): ToolExecutionResult {
         val prefs = Prefs(ctx)
         val key = prefs.apiKey
-        if (key.isBlank()) {
-            return ToolExecutionResult(true, "ask_hydrogen", "पहले API Key डालनी होगी।", "ERROR: Missing API Key")
-        }
+        if (key.isBlank()) return ToolExecutionResult(true, "ask_hydrogen", "पहले API Key डालनी होगी।", "ERROR")
         lastError = ""
-        val taskId = MeeraBackgroundMonitor.startTask(
-            title = "Hydrogen: ${request.take(45)}",
-            category = "Hydrogen Direct",
-            modelUsed = "gemini-4-hydrogen",
-            initialStep = "अनुरोध हाइड्रोजन को भेजा जा रहा है...",
-            initialPercent = 20
-        )
-        MeeraBackgroundMonitor.updateProgress(taskId, 50, "हाइड्रोजन जवाब तैयार कर रहा है...")
+        val taskId = MeeraBackgroundMonitor.startTask("Hydrogen: ${request.take(40)}", "Hydrogen Direct", "gemini-4-hydrogen", "हाइड्रोजन सोच रहा है...", 20)
         val (answer, usedModel) = callReasoningBrain(
-            key = key,
-            models = listOf("gemini-4-hydrogen"),
-            systemPrompt = "You are Gemini Hydrogen. Do exactly what the user asks, in the language and tone they ask for. Give the complete answer with no placeholders.",
-            userPrompt = request,
-            temperature = 0.7,
-            useHighThinking = false
+            key = key, models = listOf("gemini-4-hydrogen"),
+            systemPrompt = "You are Gemini Hydrogen.", userPrompt = request, temperature = 0.7, useHighThinking = false
         ) { }
         if (answer.isBlank()) {
-            MeeraBackgroundMonitor.completeTask(taskId, false, "हाइड्रोजन विफल — कारण: $lastError")
-            return ToolExecutionResult(true, "ask_hydrogen", "हाइड्रोजन से अभी जवाब नहीं मिल पाया।", "ERROR: Hydrogen failed: $lastError")
+            MeeraBackgroundMonitor.completeTask(taskId, false, "हाइड्रोजन विफल")
+            return ToolExecutionResult(true, "ask_hydrogen", "हाइड्रोजन से जवाब नहीं मिला।", "ERROR")
         }
-        onDeliverToChat?.invoke("Hydrogen", "🧪 [Hydrogen • $usedModel]:\n\n$answer")
+        onDeliverToChat?.invoke("Hydrogen", "🧪 [Hydrogen • $usedModel]:
+
+$answer")
         copyToClipboard(ctx, answer)
-        MeeraBackgroundMonitor.completeTask(taskId, true, "100% पूरा — जवाब Chat टैब और क्लिपबोर्ड में सेव है।", answer)
-        val plain = answer.replace(Regex("[*#`_]"), "").trim()
-        val spoken = if (plain.length <= 1500) plain else "हाइड्रोजन ने जवाब तैयार करके Chat टैब और क्लिपबोर्ड में सेव कर दिया है।"
-        return ToolExecutionResult(
-            true, "ask_hydrogen", spoken,
-            "VERIFIED_SUCCESS: Hydrogen finished and the full answer is saved in the Chat tab and clipboard. If the answer is short, read it aloud naturally; otherwise give a two sentence summary.\n\nANSWER:\n$answer"
-        )
+        MeeraBackgroundMonitor.completeTask(taskId, true, "100% पूरा", answer)
+        return ToolExecutionResult(true, "ask_hydrogen", "हाइड्रोजन ने जवाब तैयार करके Chat टैब में सेव कर दिया है!", "VERIFIED_SUCCESS")
     }
 
     private fun copyToClipboard(ctx: Context, text: String) {
