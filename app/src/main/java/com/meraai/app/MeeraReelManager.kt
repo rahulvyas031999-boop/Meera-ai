@@ -1,4 +1,3 @@
-```kotlin
 package com.meraai.app
 
 import android.content.ClipData
@@ -97,9 +96,6 @@ object MeeraReelManager {
     private var videoPickerLauncher: ActivityResultLauncher<PickVisualMediaRequest>? = null
     @Volatile private var pendingUserHint: String = ""
 
-    /**
-     * MainActivity.onCreate() में कॉल करें ताकि गैलरी वीडियो पिकर तैयार रहे।
-     */
     fun initInActivity(activity: ComponentActivity) {
         val appCtx = activity.applicationContext
         videoPickerLauncher = activity.registerForActivityResult(
@@ -120,9 +116,6 @@ object MeeraReelManager {
         }
     }
 
-    /**
-     * MeeraTools से वॉइस या चैट कमांड आने पर गैलरी वीडियो पिकर खोलने के लिए।
-     */
     fun startReelWorkflow(ctx: Context, userHint: String = ""): ToolExecutionResult {
         val launcher = MeeraReelBridge.onLaunchPicker
         if (launcher == null) {
@@ -439,4 +432,3 @@ object MeeraReelManager {
         }.getOrDefault(false)
     }
 }
-```
