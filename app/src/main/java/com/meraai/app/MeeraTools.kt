@@ -1199,6 +1199,10 @@ object MeeraTools {
                 ?: "तुम्हारी याद में नींद कहाँ आती है... ✨❤️"
             return postWhatsAppStatusTool(ctx, customQuote)
         }
+        // 0C. Instagram Reel Auto-Post // (((((((
+        if ((low.contains("reel") || low.contains("रील")) && (low.contains("पोस्ट") || low.contains("डाल") || low.contains("लगा") || low.contains("बना") || low.contains("post") || low.contains("upload") || low.contains("share"))) {
+            return MeeraReelManager.startReelWorkflow(ctx, raw)
+        }
         // 1. Strict Scroll Guard: ONLY scroll when user explicitly says scroll / नीचे स्क्रॉल / ऊपर स्क्रॉल
         if (low.contains("स्क्रॉल डाउन") || low.contains("नीचे स्क्रॉल") || low == "नीचे करो" || low.contains("scroll down")) {
             val ok = MeeraAccessibilityService.instance?.performSystemAction("scroll_down") == true

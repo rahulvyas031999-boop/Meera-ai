@@ -19,6 +19,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         MeeraCrashLog.install(this)
+        MeeraReelManager.initInActivity(this)
         handleWakeIntent(intent)
         MeeraWake.ensureRunning(this)
         setContent {
