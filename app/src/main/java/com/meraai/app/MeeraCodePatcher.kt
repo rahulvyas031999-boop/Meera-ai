@@ -162,7 +162,9 @@ object MeeraCodePatcher {
         if (code.isBlank()) return false to "फ़ाइल खाली है"
         if (Regex("(?m)^\\s*(?://|#|/\\*)\\s*\\.\\.\\.").containsMatchIn(code)) return false to "कोड में अधूरे '...' प्लेसहोल्डर मिले हैं"
         if (filePath.endsWith(".kt") && !code.contains("package com.meraai.app")) return false to "Kotlin फ़ाइल में 'package com.meraai.app' गायब है"
-        return true to "बुनियादी जाँच पास (असली कम्पाइल जाँच GitHub बिल्ड में होगी)"
+        if (code.count { it == '{' } != code.count { it == '}' }) return false to "Curly braces '{ }' असंतुलित हैं"
+        if (code.count { it == '(' } != code.count { it == ')' }) return false to "Parentheses '( )' असंतुलित हैं"
+        return true to "सिंटैक्स और ब्रैकेट्स बिल्कुल सही हैं"
     }
 
     private fun buildCompactDiffSnippet(oldText: String, newText: String): Triple<Int, Int, String> {

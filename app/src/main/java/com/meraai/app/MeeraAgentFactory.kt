@@ -24,10 +24,10 @@ object MeeraAgentFactory {
 
     private fun auditGeneratedCode(code: String): List<String> {
         val issues = mutableListOf<String>()
-        if (Regex("(?m)^\s*(?://|#)\s*\.\.\.").containsMatchIn(code)) {
+        if (Regex("(?m)^\\s*(?://|#)\\s*\\.\\.\\.").containsMatchIn(code)) {
             issues.add("Contains '...' placeholder comments")
         }
-        if (code.contains("class ") && Regex("(?m)^\s{4}def\s+[a-zA-Z_][a-zA-Z0-9_]*\s*\(\s*\)").containsMatchIn(code)) {
+        if (code.contains("class ") && Regex("(?m)^\\s{4}def\\s+[a-zA-Z_][a-zA-Z0-9_]*\\s*\\(\\s*\\)").containsMatchIn(code)) {
             issues.add("Python class method missing 'self' parameter")
         }
         if (code.count { it == '{' } != code.count { it == '}' }) {
@@ -53,7 +53,6 @@ object MeeraAgentFactory {
         onModelSelected: (String) -> Unit
     ): Pair<String, String> {
         for (m in models.distinct()) {
-            // FIX: High Thinking Level successfully enabled for Hydrogen and Pro models
             val thinkingAttempts = if (useHighThinking && (m.contains("hydrogen") || m.contains("3.8") || m.contains("3.1-pro"))) {
                 listOf(true, false)
             } else {
@@ -146,8 +145,7 @@ CRITICAL ENGINEERING RULES:
             key = key,
             models = priorityModels,
             systemPrompt = codingSystemPrompt,
-            userPrompt = "BUILD PRODUCTION CODE FOR:
-$taskDetails",
+            userPrompt = "BUILD PRODUCTION CODE FOR:\n$taskDetails",
             temperature = 0.15,
             useHighThinking = true
         ) { selected ->
@@ -161,9 +159,7 @@ $taskDetails",
                 key = key,
                 models = listOf(usedModel) + priorityModels,
                 systemPrompt = codingSystemPrompt,
-                userPrompt = "FIX THESE DEFECTS IN YOUR PREVIOUS CODE (${defects.joinToString("; ")}) AND RETURN THE COMPLETE FIXED CODE ONLY:
-
-$codeOutput",
+                userPrompt = "FIX THESE DEFECTS IN YOUR PREVIOUS CODE (${defects.joinToString("; ")}) AND RETURN THE COMPLETE FIXED CODE ONLY:\n\n$codeOutput",
                 temperature = 0.1,
                 useHighThinking = true
             ) {}
@@ -179,9 +175,7 @@ $codeOutput",
         }
 
         MeeraBackgroundMonitor.updateProgress(taskId, 90, "सिंटैक्स साफ़ करके Chat टैब और क्लिपबोर्ड में सेव कर रही हूँ...", usedModel)
-        val chatCard = "💻 [Production Code • $usedModel]:
-
-$codeOutput"
+        val chatCard = "💻 [Production Code • $usedModel]:\n\n$codeOutput"
         onDeliverToChat?.invoke("Code ($usedModel)", chatCard)
         copyToClipboard(ctx, codeOutput)
 
@@ -210,7 +204,7 @@ $codeOutput"
         val systemPrompt = "You are an expert $roleName. Execute the request completely without truncation."
         val (generatedOutput, usedModel) = callReasoningBrain(
             key = key,
-            models = listOf("gemini-4-hydrogen"),
+            models = listOf("gemini-4-hydrogen", "gemini-3.8-flash"),
             systemPrompt = systemPrompt,
             userPrompt = taskDetails,
             temperature = 0.3,
@@ -222,9 +216,7 @@ $codeOutput"
             return ToolExecutionResult(true, "spawn_custom_agent", "एजेंट आउटपुट तैयार नहीं कर पाया।", "ERROR")
         }
 
-        onDeliverToChat?.invoke(roleName, "🤖 [$roleName • $usedModel]:
-
-$generatedOutput")
+        onDeliverToChat?.invoke(roleName, "🤖 [$roleName • $usedModel]:\n\n$generatedOutput")
         copyToClipboard(ctx, generatedOutput)
         MeeraBackgroundMonitor.completeTask(taskId, true, "100% पूरा", generatedOutput)
         return ToolExecutionResult(true, "spawn_custom_agent", "मैंने '$roleName' का काम पूरा करके Chat टैब में सेव कर दिया है!", "VERIFIED_SUCCESS")
@@ -237,16 +229,14 @@ $generatedOutput")
         lastError = ""
         val taskId = MeeraBackgroundMonitor.startTask("Hydrogen: ${request.take(40)}", "Hydrogen Direct", "gemini-4-hydrogen", "हाइड्रोजन सोच रहा है...", 20)
         val (answer, usedModel) = callReasoningBrain(
-            key = key, models = listOf("gemini-4-hydrogen"),
+            key = key, models = listOf("gemini-4-hydrogen", "gemini-3.8-flash"),
             systemPrompt = "You are Gemini Hydrogen.", userPrompt = request, temperature = 0.7, useHighThinking = false
         ) { }
         if (answer.isBlank()) {
             MeeraBackgroundMonitor.completeTask(taskId, false, "हाइड्रोजन विफल")
             return ToolExecutionResult(true, "ask_hydrogen", "हाइड्रोजन से जवाब नहीं मिला।", "ERROR")
         }
-        onDeliverToChat?.invoke("Hydrogen", "🧪 [Hydrogen • $usedModel]:
-
-$answer")
+        onDeliverToChat?.invoke("Hydrogen", "🧪 [Hydrogen • $usedModel]:\n\n$answer")
         copyToClipboard(ctx, answer)
         MeeraBackgroundMonitor.completeTask(taskId, true, "100% पूरा", answer)
         return ToolExecutionResult(true, "ask_hydrogen", "हाइड्रोजन ने जवाब तैयार करके Chat टैब में सेव कर दिया है!", "VERIFIED_SUCCESS")
