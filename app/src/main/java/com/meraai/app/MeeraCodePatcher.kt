@@ -4,7 +4,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ContentValues
 import android.content.Context
-import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -38,6 +37,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -65,11 +65,31 @@ import java.io.BufferedInputStream
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.zip.ZipInputStream
+
+val DEFAULT_STUDIO_MODELS = listOf(
+    "gemini-4-hydrogen",
+    "gemini-3.8-flash-thinking",
+    "gemini-3.1-pro-preview",
+    "gemini-3.8-flash"
+)
+
+data class CodingModelHealth(
+    val modelId: String,
+    val label: String,
+    val working: Boolean,
+    val latencyMs: Long = 0L,
+    val note: String = ""
+)
+
+data class PendingHydrogenJob(
+    val instruction: String,
+    val extraContext: String = "",
+    val attempts: Int = 1,
+    val lastReason: String = ""
+)
 
 data class FilePatchPreview(
     val filePath: String,
@@ -85,18 +105,28 @@ data class FilePatchPreview(
 data class PatcherUiState(
     val busy: Boolean = false,
     val statusText: String = "",
+    val activeModelText: String = "",
     val commitMessage: String = "Update Meera AI via In-App Studio",
     val previews: List<FilePatchPreview> = emptyList(),
     val validationErrors: List<String> = emptyList(),
     val pushedCommitSha: String = "",
     val previousCommitSha: String = "",
+    val lastPushedFiles: List<String> = emptyList(),
     val buildStatus: String = "",
     val buildRunNumber: Int = 0,
     val buildSummaryText: String = "",
     val failureCompilerError: String = "",
     val failureReportText: String = "",
     val failureReportUri: Uri? = null,
-    val pythonOutput: String = ""
+    val pythonOutput: String = "",
+    val curatedModels: List<String> = DEFAULT_STUDIO_MODELS,
+    val verifiedHealthMap: Map<String, CodingModelHealth> = emptyMap(),
+    val verifyingModels: Boolean = false,
+    val verifySummary: String = "",
+    val hydrogenBusyPrompt: Boolean = false,
+    val hydrogenWaitingAuto: Boolean = false,
+    val hydrogenWaitStatus: String = "",
+    val pendingHydrogenJob: PendingHydrogenJob? = null
 )
 
 object MeeraCodePatcher {
@@ -105,24 +135,308 @@ object MeeraCodePatcher {
     private const val BRANCH = "v2-test"
     private const val PREF_NAME = "meera_code_patcher_prefs"
     private const val KEY_PREV_SHA = "prev_head_sha"
+    private const val KEY_CURATED_MODELS = "curated_coding_models_json"
+    private const val KEY_VERIFIED_HEALTH = "verified_coding_health_json"
 
     val screenVisible = MutableStateFlow(false)
     val state = MutableStateFlow(PatcherUiState())
+    private val cancelWaitFlag = AtomicBoolean(false)
+    private var prefsLoaded = false
 
     private val http = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(120, TimeUnit.SECONDS)
         .build()
 
-    fun openScreen() { screenVisible.value = true }
-    fun closeScreen() { screenVisible.value = false }
+    private val hydrogenHttp = OkHttpClient.Builder()
+        .connectTimeout(25, TimeUnit.SECONDS)
+        .readTimeout(240, TimeUnit.SECONDS)
+        .build()
+
+    private val probeHttp = OkHttpClient.Builder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(18, TimeUnit.SECONDS)
+        .build()
+
+    fun openScreen() {
+        screenVisible.value = true
+    }
+
+    fun closeScreen() {
+        screenVisible.value = false
+    }
 
     fun clearPreview() {
-        state.value = state.value.copy(previews = emptyList(), validationErrors = emptyList(), statusText = "")
+        state.value = state.value.copy(
+            previews = emptyList(),
+            validationErrors = emptyList(),
+            statusText = "",
+            activeModelText = "",
+            hydrogenBusyPrompt = false
+        )
+    }
+
+    fun friendlyModelLabel(modelId: String): String {
+        return when (modelId.trim()) {
+            "gemini-4-hydrogen" -> "🧪 Hydrogen"
+            "gemini-3.8-flash-thinking" -> "🔬 3.8-Thinking"
+            "gemini-3.1-pro-preview" -> "👑 3.1-Pro"
+            "gemini-3.8-flash" -> "🚀 3.8-Flash"
+            "gemini-3.6-flash" -> "⚡ 3.6-Flash"
+            "gemini-3.5-flash" -> "🧠 3.5-Flash"
+            else -> modelId.removePrefix("models/").take(22)
+        }
+    }
+
+    fun ensurePrefsLoaded(ctx: Context) {
+        if (prefsLoaded) return
+        prefsLoaded = true
+        val sp = ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        val rawModels = sp.getString(KEY_CURATED_MODELS, null)
+        val loadedModels = if (!rawModels.isNullOrBlank()) {
+            try {
+                val arr = JSONArray(rawModels)
+                (0 until arr.length())
+                    .mapNotNull { arr.optString(it).trim().takeIf { s -> s.isNotBlank() } }
+                    .distinct()
+                    .take(4)
+            } catch (_: Exception) {
+                DEFAULT_STUDIO_MODELS
+            }
+        } else {
+            DEFAULT_STUDIO_MODELS
+        }.ifEmpty { DEFAULT_STUDIO_MODELS }
+
+        val rawHealth = sp.getString(KEY_VERIFIED_HEALTH, null)
+        val loadedHealth = LinkedHashMap<String, CodingModelHealth>()
+        if (!rawHealth.isNullOrBlank()) {
+            try {
+                val arr = JSONArray(rawHealth)
+                for (i in 0 until arr.length()) {
+                    val o = arr.optJSONObject(i) ?: continue
+                    val id = o.optString("modelId").trim()
+                    if (id.isNotBlank()) {
+                        loadedHealth[id] = CodingModelHealth(
+                            modelId = id,
+                            label = o.optString("label", friendlyModelLabel(id)),
+                            working = o.optBoolean("working", false),
+                            latencyMs = o.optLong("latencyMs", 0L),
+                            note = o.optString("note", "")
+                        )
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
+        state.value = state.value.copy(
+            curatedModels = loadedModels,
+            verifiedHealthMap = loadedHealth
+        )
+    }
+
+    private fun saveCuratedModels(ctx: Context, list: List<String>) {
+        val clean = list.map { it.trim().removePrefix("models/") }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .take(4)
+            .ifEmpty { listOf("gemini-4-hydrogen") }
+        val arr = JSONArray()
+        clean.forEach { arr.put(it) }
+        ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE).edit()
+            .putString(KEY_CURATED_MODELS, arr.toString())
+            .apply()
+        state.value = state.value.copy(curatedModels = clean)
+    }
+
+    private fun saveVerifiedHealth(ctx: Context, map: Map<String, CodingModelHealth>) {
+        val arr = JSONArray()
+        map.values.forEach { h ->
+            arr.put(
+                JSONObject()
+                    .put("modelId", h.modelId)
+                    .put("label", h.label)
+                    .put("working", h.working)
+                    .put("latencyMs", h.latencyMs)
+                    .put("note", h.note)
+            )
+        }
+        ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE).edit()
+            .putString(KEY_VERIFIED_HEALTH, arr.toString())
+            .apply()
+        state.value = state.value.copy(verifiedHealthMap = map)
+    }
+
+    fun toggleCuratedModel(ctx: Context, modelId: String) {
+        ensurePrefsLoaded(ctx)
+        val id = modelId.trim().removePrefix("models/")
+        if (id.isBlank()) return
+        val cur = state.value.curatedModels.toMutableList()
+        if (id in cur) {
+            if (cur.size <= 1) {
+                Toast.makeText(ctx, "कम से कम 1 कोडिंग मॉडल रखना ज़रूरी है", Toast.LENGTH_SHORT).show()
+                return
+            }
+            cur.remove(id)
+        } else {
+            if (cur.size >= 4) {
+                Toast.makeText(ctx, "अधिकतम 4 कोडिंग मॉडल चुन सकते हैं — पहले किसी एक को हटाएँ", Toast.LENGTH_SHORT).show()
+                return
+            }
+            cur.add(id)
+        }
+        saveCuratedModels(ctx, cur)
+    }
+
+    fun moveModelPriorityUp(ctx: Context, modelId: String) {
+        ensurePrefsLoaded(ctx)
+        val cur = state.value.curatedModels.toMutableList()
+        val idx = cur.indexOf(modelId)
+        if (idx > 0) {
+            cur.removeAt(idx)
+            cur.add(idx - 1, modelId)
+            saveCuratedModels(ctx, cur)
+        }
+    }
+
+    fun verifyModelsOnApiKey(ctx: Context, customModelToCheck: String = "") {
+        ensurePrefsLoaded(ctx)
+        val apiKey = Prefs(ctx).apiKey
+        if (apiKey.isBlank()) {
+            Toast.makeText(ctx, "पहले साइड मेन्यू से Gemini API Key डालें", Toast.LENGTH_LONG).show()
+            return
+        }
+        if (state.value.verifyingModels) return
+
+        val bgId = MeeraBackgroundMonitor.startTask(
+            "Verify Coding Models",
+            "Code Studio Health",
+            "API Key Probe",
+            "आपकी API Key पर कोडिंग मॉडल्स की जाँच हो रही है...",
+            15
+        )
+        state.value = state.value.copy(
+            verifyingModels = true,
+            verifySummary = "🔍 API Key पर लाइव कोडिंग और JSON क्षमता जाँची जा रही है..."
+        )
+
+        Thread {
+            try {
+                val discovered = LinkedHashSet<String>()
+                discovered.addAll(state.value.curatedModels)
+                val customClean = customModelToCheck.trim().removePrefix("models/")
+                if (customClean.isNotBlank()) discovered.add(customClean)
+                discovered.addAll(DEFAULT_STUDIO_MODELS)
+
+                try {
+                    val listReq = Request.Builder()
+                        .url("https://generativelanguage.googleapis.com/v1beta/models?pageSize=60")
+                        .header("x-goog-api-key", apiKey)
+                        .get()
+                        .build()
+                    probeHttp.newCall(listReq).execute().use { resp ->
+                        if (resp.isSuccessful) {
+                            val arr = JSONObject(resp.body!!.string()).optJSONArray("models") ?: JSONArray()
+                            val blockedKeywords = listOf(
+                                "tts", "audio", "transcribe", "image", "imagen",
+                                "veo", "embedding", "aqa", "1.0", "1.5", "2.0"
+                            )
+                            for (i in 0 until arr.length()) {
+                                val mObj = arr.optJSONObject(i) ?: continue
+                                val rawName = mObj.optString("name", "").removePrefix("models/").trim()
+                                val methods = mObj.optJSONArray("supportedGenerationMethods")?.toString().orEmpty()
+                                if (rawName.isNotBlank() && methods.contains("generateContent")) {
+                                    val low = rawName.lowercase()
+                                    if (blockedKeywords.none { low.contains(it) }) {
+                                        discovered.add(rawName)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+
+                val candidates = discovered.take(8)
+                val resultMap = LinkedHashMap<String, CodingModelHealth>()
+                var workingCount = 0
+
+                for ((idx, modelId) in candidates.withIndex()) {
+                    val pct = 20 + ((idx + 1) * 75 / candidates.size.coerceAtLeast(1))
+                    MeeraBackgroundMonitor.updateProgress(bgId, pct, "Testing $modelId...")
+                    val health = probeSingleCodingModel(apiKey, modelId)
+                    resultMap[modelId] = health
+                    if (health.working) workingCount++
+                }
+
+                saveVerifiedHealth(ctx, resultMap)
+                if (customClean.isNotBlank() && resultMap[customClean]?.working == true && customClean !in state.value.curatedModels) {
+                    val updated = (state.value.curatedModels + customClean).take(4)
+                    saveCuratedModels(ctx, updated)
+                }
+
+                val summary = "✅ जाँच पूरी: ${candidates.size} में से $workingCount कोडिंग मॉडल आपकी API Key पर सक्रिय हैं।"
+                MeeraBackgroundMonitor.completeTask(bgId, true, summary)
+                state.value = state.value.copy(verifyingModels = false, verifySummary = summary)
+            } catch (e: Exception) {
+                MeeraBackgroundMonitor.completeTask(bgId, false, "Model check failed: ${e.message}")
+                state.value = state.value.copy(verifyingModels = false, verifySummary = "❌ जाँच विफल: ${e.message}")
+            }
+        }.start()
+    }
+
+    private fun probeSingleCodingModel(apiKey: String, modelId: String): CodingModelHealth {
+        val start = System.currentTimeMillis()
+        return try {
+            val body = JSONObject()
+                .put(
+                    "contents", JSONArray().put(
+                        JSONObject().put("role", "user").put(
+                            "parts", JSONArray().put(JSONObject().put("text", "Reply ONLY with JSON: {\"ok\":true}"))
+                        )
+                    )
+                )
+                .put(
+                    "generationConfig", JSONObject()
+                        .put("responseMimeType", "application/json")
+                        .put("temperature", 0.0)
+                        .put("maxOutputTokens", 32)
+                )
+            val req = Request.Builder()
+                .url("https://generativelanguage.googleapis.com/v1beta/models/$modelId:generateContent")
+                .header("x-goog-api-key", apiKey)
+                .post(body.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+
+            probeHttp.newCall(req).execute().use { resp ->
+                val ms = System.currentTimeMillis() - start
+                if (resp.isSuccessful) {
+                    val txt = resp.body?.string().orEmpty()
+                    if (txt.contains("ok")) {
+                        CodingModelHealth(modelId, friendlyModelLabel(modelId), true, ms, "OK (${ms}ms)")
+                    } else {
+                        CodingModelHealth(modelId, friendlyModelLabel(modelId), false, ms, "Invalid JSON output")
+                    }
+                } else {
+                    val code = resp.code
+                    val note = when (code) {
+                        429 -> "High Load / Quota (429)"
+                        503, 504 -> "Server Overloaded ($code)"
+                        404 -> "Retired / Not Found (404)"
+                        else -> "HTTP $code"
+                    }
+                    CodingModelHealth(modelId, friendlyModelLabel(modelId), false, ms, note)
+                }
+            }
+        } catch (_: Exception) {
+            val ms = System.currentTimeMillis() - start
+            CodingModelHealth(modelId, friendlyModelLabel(modelId), false, ms, "Timeout / Network")
+        }
     }
 
     private fun ghRequest(url: String, token: String): Request.Builder {
-        val b = Request.Builder().url(url).header("Accept", "application/vnd.github+json").header("User-Agent", "MeeraAI-Patcher")
+        val b = Request.Builder()
+            .url(url)
+            .header("Accept", "application/vnd.github+json")
+            .header("User-Agent", "MeeraAI-Patcher")
         if (token.isNotBlank()) b.header("Authorization", "Bearer $token")
         return b
     }
@@ -155,16 +469,26 @@ object MeeraCodePatcher {
                 }
                 out
             }
-        } catch (_: Exception) { emptyList() }
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
 
     private fun validateSourceCode(filePath: String, code: String): Pair<Boolean, String> {
         if (code.isBlank()) return false to "फ़ाइल खाली है"
-        if (Regex("(?m)^\\s*(?://|#|/\\*)\\s*\\.\\.\\.").containsMatchIn(code)) return false to "कोड में अधूरे '...' प्लेसहोल्डर मिले हैं"
-        if (filePath.endsWith(".kt") && !code.contains("package com.meraai.app")) return false to "Kotlin फ़ाइल में 'package com.meraai.app' गायब है"
-        if (code.count { it == '{' } != code.count { it == '}' }) return false to "Curly braces '{ }' असंतुलित हैं"
-        if (code.count { it == '(' } != code.count { it == ')' }) return false to "Parentheses '( )' असंतुलित हैं"
-        return true to "सिंटैक्स और ब्रैकेट्स बिल्कुल सही हैं"
+        if (Regex("(?m)^\\s*(?://|#|/\\*)\\s*\\.\\.\\.").containsMatchIn(code)) {
+            return false to "कोड में अधूरे '...' प्लेसहोल्डर मिले हैं"
+        }
+        if (filePath.endsWith(".kt") && !code.contains("package com.meraai.app")) {
+            return false to "Kotlin फ़ाइल में 'package com.meraai.app' गायब है"
+        }
+        if (code.count { it == '{' } != code.count { it == '}' }) {
+            return false to "Curly braces '{ }' असंतुलित हैं (${code.count { it == '{' }} vs ${code.count { it == '}' }})"
+        }
+        if (code.count { it == '(' } != code.count { it == ')' }) {
+            return false to "Parentheses '( )' असंतुलित हैं (${code.count { it == '(' }} vs ${code.count { it == ')' }})"
+        }
+        return true to "सिंटैक्स और ब्रैकेट्स 100% सही हैं"
     }
 
     private fun buildCompactDiffSnippet(oldText: String, newText: String): Triple<Int, Int, String> {
@@ -183,7 +507,14 @@ object MeeraCodePatcher {
         return Triple(added.size, removed.size, sb.toString().trim())
     }
 
-    fun generateAiPatchFromInstruction(ctx: Context, instruction: String) {
+    fun generateAiPatchFromInstruction(
+        ctx: Context,
+        instruction: String,
+        preferredModel: String? = null,
+        allowAutoFallback: Boolean = false,
+        extraContext: String = ""
+    ) {
+        ensurePrefsLoaded(ctx)
         val cleanInst = instruction.trim()
         if (cleanInst.isBlank()) return
         val apiKey = Prefs(ctx).apiKey
@@ -192,24 +523,51 @@ object MeeraCodePatcher {
             return
         }
 
+        cancelWaitFlag.set(true)
+        val curated = state.value.curatedModels
+        val chosenModels = when {
+            !preferredModel.isNullOrBlank() && allowAutoFallback ->
+                (listOf(preferredModel.trim()) + curated).distinct()
+            !preferredModel.isNullOrBlank() ->
+                listOf(preferredModel.trim())
+            allowAutoFallback ->
+                curated
+            else ->
+                listOf(curated.firstOrNull() ?: "gemini-4-hydrogen")
+        }
+
+        val primaryLabel = friendlyModelLabel(chosenModels.first())
         val ghToken = MeeraTokenVault.getToken(ctx)
-        val bgId = MeeraBackgroundMonitor.startTask("AI Patch: ${cleanInst.take(40)}", "In-App Code Studio", "gemini-4-hydrogen", "GitHub से फ़ाइलें पढ़ी जा रही हैं...", 15)
-        state.value = state.value.copy(busy = true, statusText = "🔍 GitHub से ताज़ा फ़ाइलें पढ़ी जा रही हैं...", previews = emptyList(), validationErrors = emptyList())
+        val bgId = MeeraBackgroundMonitor.startTask(
+            "AI Patch ($primaryLabel): ${cleanInst.take(35)}",
+            "In-App Code Studio",
+            chosenModels.first(),
+            "GitHub से ताज़ा फ़ाइलें पढ़ी जा रही हैं...",
+            15
+        )
+        state.value = state.value.copy(
+            busy = true,
+            statusText = "🔍 GitHub से ताज़ा फ़ाइलें पढ़ी जा रही हैं...",
+            activeModelText = "$primaryLabel से तैयारी...",
+            previews = emptyList(),
+            validationErrors = emptyList(),
+            hydrogenBusyPrompt = false,
+            hydrogenWaitingAuto = false
+        )
 
         Thread {
             try {
                 val allFiles = fetchRepoFileList(ghToken)
-                val targetCandidates = chooseTargetFiles(apiKey, cleanInst, allFiles)
-                if (targetCandidates.isEmpty()) throw RuntimeException("कौन सी फ़ाइल बदलनी है यह समझ नहीं आया। लिखें कि किस फ़ाइल (जैसे Ui.kt) में बदलाव चाहिए।")
+                val targetCandidates = chooseTargetFiles(apiKey, cleanInst + "\n" + extraContext, allFiles, chosenModels)
+                if (targetCandidates.isEmpty()) {
+                    throw RuntimeException("कौन सी फ़ाइल बदलनी है यह समझ नहीं आया। निर्देश में फ़ाइल का नाम (जैसे Ui.kt) लिखें।")
+                }
 
                 val contextBuilder = StringBuilder()
                 for (path in targetCandidates) {
                     val liveCode = fetchLiveFileFromBranch(path, ghToken) ?: continue
                     contextBuilder.append("\n=== FILE: $path ===\n").append(liveCode).append("\n")
                 }
-
-                MeeraBackgroundMonitor.updateProgress(bgId, 45, "gemini-4-hydrogen सटीक टारगेटेड पैच तैयार कर रहा है...")
-                state.value = state.value.copy(statusText = "🧠 gemini-4-hydrogen सटीक बदलाव तैयार कर रहा है...")
 
                 val sysPrompt = """
 You are a Principal Android Kotlin Engineer modifying the Meera AI repository (package com.meraai.app).
@@ -229,38 +587,312 @@ RULES:
 1. For "modify", `anchor` MUST appear verbatim ONCE in the provided file content.
 2. For "create" (new file), set `action`: "create", `anchor`: "", and `replacement`: full complete Kotlin file with `package com.meraai.app`.
 3. NEVER use '...' placeholders. All `{}` and `()` must be 100% balanced.
+4. Escape all regex backslashes and newlines properly inside JSON strings.
 """.trimIndent()
 
-                val userPrompt = "USER REQUEST:\n$cleanInst\n\nAVAILABLE REPOSITORY FILES:\n${allFiles.joinToString("\n")}\n\nLIVE FILE CONTENTS:\n$contextBuilder"
+                val userPrompt = buildString {
+                    append("USER REQUEST:\n").append(cleanInst).append("\n\n")
+                    if (extraContext.isNotBlank()) {
+                        append("BUILD FAILURE & CONTEXT DETAILS:\n").append(extraContext.take(4000)).append("\n\n")
+                    }
+                    append("AVAILABLE REPOSITORY FILES:\n").append(allFiles.joinToString("\n")).append("\n\n")
+                    append("LIVE FILE CONTENTS:\n").append(contextBuilder)
+                }
 
                 val reqBody = JSONObject()
                     .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", sysPrompt))))
                     .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", JSONArray().put(JSONObject().put("text", userPrompt)))))
                     .put("generationConfig", JSONObject().put("responseMimeType", "application/json").put("temperature", 0.1))
 
-                val rawJson = callPatchModels(apiKey, reqBody)
+                var rawJson = ""
+                var usedModel = ""
+                var lastErr = ""
+                var hydrogenOverloaded = false
 
-                MeeraBackgroundMonitor.updateProgress(bgId, 80, "पैच का प्रीव्यू और सिंटैक्स जाँच हो रही है...")
-                preparePreviewFromPatchJson(ctx, rawJson, bgId)
+                for (m in chosenModels) {
+                    val mLabel = friendlyModelLabel(m)
+                    MeeraBackgroundMonitor.updateProgress(bgId, 45, "$mLabel से कनेक्ट होकर पैच तैयार किया जा रहा है...", m)
+                    state.value = state.value.copy(
+                        statusText = "🧠 $mLabel सटीक बदलाव तैयार कर रहा है (कृपया प्रतीक्षा करें)...",
+                        activeModelText = "$mLabel सक्रिय..."
+                    )
+
+                    val (ok, textOrErr, code) = executeSingleModelCall(apiKey, m, reqBody)
+                    if (ok && textOrErr.isNotBlank()) {
+                        rawJson = textOrErr
+                        usedModel = m
+                        break
+                    } else {
+                        lastErr = "$mLabel: $textOrErr"
+                        if (m == "gemini-4-hydrogen" && !allowAutoFallback && (code == 429 || code == 503 || code == 504 || code == 0)) {
+                            hydrogenOverloaded = true
+                            break
+                        }
+                    }
+                }
+
+                if (rawJson.isBlank()) {
+                    if (hydrogenOverloaded) {
+                        val pending = PendingHydrogenJob(cleanInst, extraContext, attempts = 1, lastReason = lastErr)
+                        MeeraBackgroundMonitor.completeTask(bgId, false, "Hydrogen पर ज़्यादा लोड है — यूज़र के निर्णय का इंतज़ार")
+                        state.value = state.value.copy(
+                            busy = false,
+                            activeModelText = "",
+                            hydrogenBusyPrompt = true,
+                            pendingHydrogenJob = pending,
+                            statusText = "⏳ Hydrogen पर अभी ज़्यादा लोड है ($lastErr)। नीचे चुनें कि Hydrogen का इंतज़ार करना है या अर्जेंसी में दूसरे मॉडल से अभी करवाना है:"
+                        )
+                        return@Thread
+                    }
+                    throw RuntimeException(lastErr.ifBlank { "चुने गए मॉडल से कोई जवाब नहीं मिला" })
+                }
+
+                MeeraBackgroundMonitor.updateProgress(bgId, 80, "${friendlyModelLabel(usedModel)} के पैच का प्रीव्यू और ब्रैकेट्स जाँच हो रही है...", usedModel)
+                preparePreviewFromPatchJson(ctx, rawJson, bgId, friendlyModelLabel(usedModel))
             } catch (e: Exception) {
                 MeeraBackgroundMonitor.completeTask(bgId, false, "पैच जनरेट फेल: ${e.message}")
-                state.value = state.value.copy(busy = false, statusText = "❌ एरर: ${e.message}")
+                state.value = state.value.copy(
+                    busy = false,
+                    activeModelText = "",
+                    statusText = "❌ एरर: ${e.message}"
+                )
             }
         }.start()
     }
 
-    fun preparePreviewFromPatchJson(ctx: Context, rawInput: String, existingBgId: Long = -1L) {
-        val cleanJson = rawInput.trim().removePrefix("```json").removePrefix("```").removeSuffix("```").replace("\u00A0", " ").trim()
+    fun startHydrogenBackgroundWaiter(ctx: Context) {
+        val job = state.value.pendingHydrogenJob ?: return
+        val apiKey = Prefs(ctx).apiKey
+        if (apiKey.isBlank()) return
+
+        cancelWaitFlag.set(false)
+        val waitTaskId = MeeraBackgroundMonitor.startTask(
+            "Wait for Hydrogen: ${job.instruction.take(30)}",
+            "Hydrogen Auto-Queue",
+            "gemini-4-hydrogen",
+            "Hydrogen स्लॉट खाली होने का इंतज़ार (Attempt 1/30)...",
+            10
+        )
+        state.value = state.value.copy(
+            hydrogenBusyPrompt = false,
+            hydrogenWaitingAuto = true,
+            hydrogenWaitStatus = "⏳ बैकग्राउंड में Hydrogen का इंतज़ार चालू है (Attempt 1/30)..."
+        )
+
+        Thread {
+            try {
+                for (attempt in 1..30) {
+                    if (cancelWaitFlag.get()) {
+                        MeeraBackgroundMonitor.completeTask(waitTaskId, false, "यूज़र द्वारा Hydrogen इंतज़ार रोका गया")
+                        state.value = state.value.copy(hydrogenWaitingAuto = false, hydrogenWaitStatus = "")
+                        return@Thread
+                    }
+                    val pct = (10 + attempt * 2).coerceAtMost(85)
+                    val msg = "⏳ Hydrogen का इंतज़ार (कोशिश $attempt/30) — स्लॉट मिलते ही अपने-आप शुरू होगा..."
+                    MeeraBackgroundMonitor.updateProgress(waitTaskId, pct, msg)
+                    state.value = state.value.copy(hydrogenWaitStatus = msg)
+
+                    val probe = probeSingleCodingModel(apiKey, "gemini-4-hydrogen")
+                    if (probe.working) {
+                        MeeraBackgroundMonitor.completeTask(waitTaskId, true, "100% Hydrogen उपलब्ध! अब पैच बन रहा है...")
+                        state.value = state.value.copy(
+                            hydrogenWaitingAuto = false,
+                            hydrogenWaitStatus = "",
+                            pendingHydrogenJob = null
+                        )
+                        generateAiPatchFromInstruction(
+                            ctx = ctx,
+                            instruction = job.instruction,
+                            preferredModel = "gemini-4-hydrogen",
+                            allowAutoFallback = false,
+                            extraContext = job.extraContext
+                        )
+                        return@Thread
+                    }
+                    Thread.sleep(18000L)
+                }
+                MeeraBackgroundMonitor.completeTask(waitTaskId, false, "10 मिनट तक Hydrogen व्यस्त रहा")
+                state.value = state.value.copy(
+                    hydrogenWaitingAuto = false,
+                    hydrogenBusyPrompt = true,
+                    statusText = "⚠️ 10 मिनट बाद भी Hydrogen पर भारी लोड है। आप चाहें तो नीचे से किसी दूसरे मॉडल से अभी काम पूरा करवा सकते हैं।"
+                )
+            } catch (e: Exception) {
+                MeeraBackgroundMonitor.completeTask(waitTaskId, false, "Waiter error: ${e.message}")
+                state.value = state.value.copy(hydrogenWaitingAuto = false)
+            }
+        }.start()
+    }
+
+    fun stopHydrogenWaiting() {
+        cancelWaitFlag.set(true)
+        state.value = state.value.copy(
+            hydrogenWaitingAuto = false,
+            hydrogenBusyPrompt = state.value.pendingHydrogenJob != null,
+            hydrogenWaitStatus = ""
+        )
+    }
+
+    fun triggerBuildAutoFix(ctx: Context, modelId: String, allowFallback: Boolean = false) {
+        val err = state.value.failureCompilerError.ifBlank { "Gradle compilation failed" }
+        val filesNote = if (state.value.lastPushedFiles.isNotEmpty()) {
+            "Recently modified files in failed build:\n" + state.value.lastPushedFiles.joinToString("\n")
+        } else {
+            ""
+        }
+        val prompt = buildString {
+            append("Fix this exact Kotlin compilation error in Meera AI:\n")
+            append(err)
+            if (filesNote.isNotBlank()) {
+                append("\n\n").append(filesNote)
+            }
+        }
+        generateAiPatchFromInstruction(
+            ctx = ctx,
+            instruction = prompt,
+            preferredModel = modelId,
+            allowAutoFallback = allowFallback,
+            extraContext = state.value.failureReportText.take(3500)
+        )
+    }
+
+    private fun executeSingleModelCall(apiKey: String, modelId: String, reqBody: JSONObject): Triple<Boolean, String, Int> {
+        val client = if (modelId.contains("hydrogen") || modelId.contains("thinking") || modelId.contains("pro")) {
+            hydrogenHttp
+        } else {
+            http
+        }
+        return try {
+            val bodyCopy = JSONObject(reqBody.toString())
+            if (modelId.contains("hydrogen") || modelId.contains("thinking")) {
+                bodyCopy.optJSONObject("generationConfig")
+                    ?.put("thinkingConfig", JSONObject().put("thinkingLevel", "HIGH"))
+            }
+            val req = Request.Builder()
+                .url("https://generativelanguage.googleapis.com/v1beta/models/$modelId:generateContent")
+                .header("x-goog-api-key", apiKey)
+                .post(bodyCopy.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+
+            client.newCall(req).execute().use { resp ->
+                val code = resp.code
+                if (!resp.isSuccessful) {
+                    val errSnippet = resp.body?.string()?.take(160).orEmpty()
+                    return Triple(false, "HTTP $code $errSnippet", code)
+                }
+                val j = JSONObject(resp.body!!.string())
+                val parts = j.optJSONArray("candidates")
+                    ?.optJSONObject(0)
+                    ?.optJSONObject("content")
+                    ?.optJSONArray("parts")
+                val sb = StringBuilder()
+                if (parts != null) {
+                    for (i in 0 until parts.length()) {
+                        sb.append(parts.optJSONObject(i)?.optString("text", "") ?: "")
+                    }
+                }
+                val txt = sb.toString().trim()
+                if (txt.isBlank()) Triple(false, "Empty response", 200)
+                else Triple(true, txt, 200)
+            }
+        } catch (e: Exception) {
+            Triple(false, e.message ?: "Network timeout", 0)
+        }
+    }
+
+    private fun chooseTargetFiles(
+        apiKey: String,
+        instruction: String,
+        allFiles: List<String>,
+        preferredModels: List<String>
+    ): List<String> {
+        val chosen = LinkedHashSet<String>()
+        Regex("""([A-Za-z0-9_]+\.(?:kt|xml|kts))""").findAll(instruction).forEach { m ->
+            val name = m.groupValues[1]
+            allFiles.filter { it.substringAfterLast("/") == name }.forEach { chosen.add(it) }
+        }
+        if (chosen.isNotEmpty()) return chosen.take(4)
+
+        val pickerModels = (preferredModels.reversed() + state.value.curatedModels).distinct()
+        val prompt = "You help edit an Android Kotlin repository. From the file list below, choose the files (at most 3) that must be edited to fulfil the user request. " +
+            "Reply ONLY with JSON like {\"files\": [\"path1\", \"path2\"]} using exact paths from the list.\n\nFILES:\n" +
+            allFiles.joinToString("\n") + "\n\nUSER REQUEST:\n" + instruction.take(3000)
+
+        val body = JSONObject()
+            .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", JSONArray().put(JSONObject().put("text", prompt)))))
+            .put("generationConfig", JSONObject().put("responseMimeType", "application/json").put("temperature", 0.0))
+
+        for (m in pickerModels) {
+            try {
+                val req = Request.Builder()
+                    .url("https://generativelanguage.googleapis.com/v1beta/models/$m:generateContent")
+                    .header("x-goog-api-key", apiKey)
+                    .post(body.toString().toRequestBody("application/json".toMediaType()))
+                    .build()
+                probeHttp.newCall(req).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        val j = JSONObject(resp.body!!.string())
+                        val txt = j.optJSONArray("candidates")
+                            ?.optJSONObject(0)
+                            ?.optJSONObject("content")
+                            ?.optJSONArray("parts")
+                            ?.optJSONObject(0)
+                            ?.optString("text", "")
+                            .orEmpty()
+                            .trim()
+                            .removePrefix("```json")
+                            .removePrefix("```")
+                            .removeSuffix("```")
+                            .trim()
+                        val arr = JSONObject(txt).optJSONArray("files")
+                        if (arr != null) {
+                            for (i in 0 until arr.length()) {
+                                val p = arr.optString(i)
+                                if (p in allFiles) chosen.add(p)
+                            }
+                        }
+                    }
+                }
+                if (chosen.isNotEmpty()) break
+            } catch (_: Exception) {}
+        }
+        return chosen.take(4)
+    }
+
+    fun preparePreviewFromPatchJson(
+        ctx: Context,
+        rawInput: String,
+        existingBgId: Long = -1L,
+        modelBadge: String = ""
+    ) {
+        val cleanJson = rawInput.trim()
+            .removePrefix("```json")
+            .removePrefix("```")
+            .removeSuffix("```")
+            .replace("\u00A0", " ")
+            .trim()
         if (cleanJson.isBlank()) return
         val ghToken = MeeraTokenVault.getToken(ctx)
-        val bgId = if (existingBgId > 0) existingBgId else MeeraBackgroundMonitor.startTask("Validate Patch", "In-App Code Studio", "Syntax Guard", "GitHub से फ़ाइलें मिलाकर प्रीव्यू बन रहा है...", 30)
-        state.value = state.value.copy(busy = true, statusText = "🔍 फ़ाइलों की जाँच हो रही है...", previews = emptyList(), validationErrors = emptyList())
+        val bgId = if (existingBgId > 0) existingBgId else MeeraBackgroundMonitor.startTask(
+            "Validate Patch",
+            "In-App Code Studio",
+            "Syntax Guard",
+            "GitHub से फ़ाइलें मिलाकर प्रीव्यू बन रहा है...",
+            30
+        )
+        state.value = state.value.copy(
+            busy = true,
+            statusText = "🔍 फ़ाइलों और ब्रैकेट्स की जाँच हो रही है...",
+            previews = emptyList(),
+            validationErrors = emptyList()
+        )
 
         Thread {
             try {
                 val rootObj = JSONObject(cleanJson)
                 val commitMsg = rootObj.optString("commit_message", "Update Meera AI").trim()
-                val changesArr = rootObj.optJSONArray("changes") ?: throw RuntimeException("JSON में 'changes' लिस्ट नहीं मिली।")
+                val changesArr = rootObj.optJSONArray("changes")
+                    ?: throw RuntimeException("JSON में 'changes' लिस्ट नहीं मिली।")
                 val previewList = mutableListOf<FilePatchPreview>()
                 val errorList = mutableListOf<String>()
 
@@ -309,81 +941,33 @@ RULES:
                 }
 
                 val prevSha = ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE).getString(KEY_PREV_SHA, "").orEmpty()
-                MeeraBackgroundMonitor.completeTask(bgId, errorList.isEmpty() && previewList.isNotEmpty(), if (errorList.isEmpty()) "100% प्रीव्यू तैयार" else "जाँच में ${errorList.size} त्रुटि मिली")
-                state.value = state.value.copy(busy = false, commitMessage = commitMsg, previews = previewList, validationErrors = errorList, previousCommitSha = prevSha,
-                    statusText = if (errorList.isEmpty() && previewList.isNotEmpty()) "✅ प्रीव्यू तैयार है! नीचे बदलाव देखकर 'Confirm & Push' दबाएँ।" else "⚠️ पुश रोका गया: पहले नीचे दी गई त्रुटि ठीक करें।")
+                val good = errorList.isEmpty() && previewList.isNotEmpty()
+                val byTag = if (modelBadge.isNotBlank()) " ($modelBadge)" else ""
+                MeeraBackgroundMonitor.completeTask(
+                    bgId,
+                    good,
+                    if (good) "100% प्रीव्यू तैयार$byTag" else "जाँच में ${errorList.size} त्रुटि मिली"
+                )
+                state.value = state.value.copy(
+                    busy = false,
+                    activeModelText = "",
+                    commitMessage = commitMsg,
+                    previews = previewList,
+                    validationErrors = errorList,
+                    previousCommitSha = prevSha,
+                    statusText = if (good) "✅ प्रीव्यू तैयार है$byTag! नीचे बदलाव देखकर 'Confirm & Push' दबाएँ।"
+                    else "⚠️ पुश रोका गया: पहले नीचे दी गई त्रुटि ठीक करें।"
+                )
             } catch (e: Exception) {
                 MeeraBackgroundMonitor.completeTask(bgId, false, "JSON पार्स एरर: ${e.message}")
-                state.value = state.value.copy(busy = false, validationErrors = listOf("अमान्य Patch फ़ॉर्मेट: ${e.message}"), statusText = "❌ Patch पढ़ने में दिक्कत आई")
+                state.value = state.value.copy(
+                    busy = false,
+                    activeModelText = "",
+                    validationErrors = listOf("अमान्य Patch फ़ॉर्मेट: ${e.message}"),
+                    statusText = "❌ Patch पढ़ने में दिक्कत आई"
+                )
             }
         }.start()
-    }
-
-    private val longHttp = http.newBuilder().readTimeout(180, TimeUnit.SECONDS).build()
-
-    private fun callPatchModels(apiKey: String, reqBody: JSONObject): String {
-        val models = listOf("gemini-4-hydrogen", "gemini-3.1-pro-preview", "gemini-2.5-pro")
-        var lastErr = "कोई जवाब नहीं मिला"
-        for (m in models) {
-            try {
-                val req = Request.Builder()
-                    .url("https://generativelanguage.googleapis.com/v1beta/models/$m:generateContent")
-                    .header("x-goog-api-key", apiKey)
-                    .post(reqBody.toString().toRequestBody("application/json".toMediaType()))
-                    .build()
-                val text = longHttp.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) {
-                        lastErr = "$m: HTTP ${resp.code} ${resp.body?.string()?.take(150).orEmpty()}"
-                        return@use ""
-                    }
-                    val j = JSONObject(resp.body!!.string())
-                    val parts = j.optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")
-                    val sb = StringBuilder()
-                    if (parts != null) for (i in 0 until parts.length()) sb.append(parts.optJSONObject(i)?.optString("text", "") ?: "")
-                    sb.toString().trim()
-                }
-                if (text.isNotBlank()) return text
-                if (!lastErr.startsWith("$m:")) lastErr = "$m: खाली जवाब"
-            } catch (e: Exception) {
-                lastErr = "$m: ${e.message}"
-            }
-        }
-        throw RuntimeException(lastErr)
-    }
-
-    private fun chooseTargetFiles(apiKey: String, instruction: String, allFiles: List<String>): List<String> {
-        val chosen = LinkedHashSet<String>()
-        Regex("""([A-Za-z0-9_]+\.(?:kt|xml|kts))""").findAll(instruction).forEach { m ->
-            val name = m.groupValues[1]
-            allFiles.filter { it.substringAfterLast("/") == name }.forEach { chosen.add(it) }
-        }
-        if (chosen.size < 3) {
-            try {
-                val prompt = "You help edit an Android Kotlin repository. From the file list below, choose the files (at most 3) that must be edited to fulfil the user request. " +
-                    "Reply ONLY with JSON like {\"files\": [\"path1\", \"path2\"]} using exact paths from the list.\n\nFILES:\n" +
-                    allFiles.joinToString("\n") + "\n\nUSER REQUEST:\n" + instruction.take(3000)
-                val body = JSONObject()
-                    .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", JSONArray().put(JSONObject().put("text", prompt)))))
-                    .put("generationConfig", JSONObject().put("responseMimeType", "application/json").put("temperature", 0.0))
-                val req = Request.Builder()
-                    .url("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent")
-                    .header("x-goog-api-key", apiKey)
-                    .post(body.toString().toRequestBody("application/json".toMediaType()))
-                    .build()
-                http.newCall(req).execute().use { resp ->
-                    if (resp.isSuccessful) {
-                        val j = JSONObject(resp.body!!.string())
-                        val txt = j.optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)?.optString("text", "").orEmpty()
-                        val arr = JSONObject(txt.trim()).optJSONArray("files")
-                        if (arr != null) for (i in 0 until arr.length()) {
-                            val p = arr.optString(i)
-                            if (p in allFiles) chosen.add(p)
-                        }
-                    }
-                }
-            } catch (_: Exception) {}
-        }
-        return chosen.take(4)
     }
 
     private fun fetchFileWithStatus(path: String, token: String): Pair<Int, String> {
@@ -402,17 +986,34 @@ RULES:
         val filePath = rawPath.trim().trimStart('/')
         val newCode = code.replace("\r\n", "\n")
         if (filePath.isBlank() || newCode.isBlank()) {
-            state.value = state.value.copy(statusText = "⚠️ फ़ाइल का पाथ और कोड दोनों भरें", validationErrors = emptyList(), previews = emptyList())
+            state.value = state.value.copy(
+                statusText = "⚠️ फ़ाइल का पाथ और कोड दोनों भरें",
+                validationErrors = emptyList(),
+                previews = emptyList()
+            )
             return
         }
         val ghToken = MeeraTokenVault.getToken(ctx)
-        val bgId = MeeraBackgroundMonitor.startTask("Direct File: ${filePath.substringAfterLast("/")}", "In-App Code Studio", "Raw File", "GitHub से मौजूदा फ़ाइल पढ़ी जा रही है...", 30)
-        state.value = state.value.copy(busy = true, statusText = "🔍 फ़ाइल की जाँच हो रही है...", previews = emptyList(), validationErrors = emptyList())
+        val bgId = MeeraBackgroundMonitor.startTask(
+            "Direct File: ${filePath.substringAfterLast("/")}",
+            "In-App Code Studio",
+            "Raw File",
+            "GitHub से मौजूदा फ़ाइल पढ़ी जा रही है...",
+            30
+        )
+        state.value = state.value.copy(
+            busy = true,
+            statusText = "🔍 फ़ाइल की जाँच हो रही है...",
+            previews = emptyList(),
+            validationErrors = emptyList()
+        )
 
         Thread {
             try {
                 val errorList = mutableListOf<String>()
-                if (filePath.contains("..") || filePath.contains("\\")) errorList.add("$filePath: पाथ सही नहीं है")
+                if (filePath.contains("..") || filePath.contains("\\")) {
+                    errorList.add("$filePath: पाथ सही नहीं है")
+                }
                 val (httpCode, oldText) = fetchFileWithStatus(filePath, ghToken)
                 var action = "OVERWRITE"
                 var oldContent = ""
@@ -421,14 +1022,18 @@ RULES:
                     httpCode == 404 -> {
                         action = "CREATE"
                         val sameName = fetchRepoFileList(ghToken).filter { it.substringAfterLast("/") == filePath.substringAfterLast("/") }
-                        if (sameName.isNotEmpty()) errorList.add("इस नाम की फ़ाइल पहले से यहाँ है: ${sameName.joinToString()} — पूरा सही पाथ लिखें, वरना डुप्लीकेट फ़ाइल बन जाएगी")
+                        if (sameName.isNotEmpty()) {
+                            errorList.add("इस नाम की फ़ाइल पहले से यहाँ है: ${sameName.joinToString()} — पूरा सही पाथ लिखें")
+                        }
                     }
-                    else -> errorList.add("GitHub से मौजूदा फ़ाइल पढ़ नहीं पाया (HTTP $httpCode) — पुश रोका गया ताकि फ़ाइल गलती से न मिटे")
+                    else -> errorList.add("GitHub से मौजूदा फ़ाइल पढ़ नहीं पाया (HTTP $httpCode) — पुश रोका गया")
                 }
                 if (oldContent.isNotBlank()) {
                     val oldLines = oldContent.split("\n").size
                     val newLines = newCode.split("\n").size
-                    if (newLines * 100 < oldLines * 60) errorList.add("नई फ़ाइल में $newLines लाइनें हैं, पुरानी में $oldLines थीं — शायद सिर्फ़ टुकड़ा पेस्ट हुआ है। पूरी फ़ाइल पेस्ट करें")
+                    if (newLines * 100 < oldLines * 60) {
+                        errorList.add("नई फ़ाइल में $newLines लाइनें हैं, पुरानी में $oldLines थीं — पूरी फ़ाइल पेस्ट करें")
+                    }
                 }
                 val (ok, note) = validateSourceCode(filePath, newCode)
                 if (!ok) errorList.add("$filePath: $note")
@@ -438,11 +1043,22 @@ RULES:
                 val prevSha = ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE).getString(KEY_PREV_SHA, "").orEmpty()
                 val good = errorList.isEmpty()
                 MeeraBackgroundMonitor.completeTask(bgId, good, if (good) "100% प्रीव्यू तैयार" else "जाँच में ${errorList.size} त्रुटि मिली")
-                state.value = state.value.copy(busy = false, commitMessage = "Update ${filePath.substringAfterLast("/")} via Direct Push", previews = listOf(preview), validationErrors = errorList, previousCommitSha = prevSha,
-                    statusText = if (good) "✅ प्रीव्यू तैयार है! नीचे बदलाव देखकर 'Confirm & Push' दबाएँ।" else "⚠️ पुश रोका गया: पहले नीचे दी गई त्रुटि ठीक करें।")
+                state.value = state.value.copy(
+                    busy = false,
+                    commitMessage = "Update ${filePath.substringAfterLast("/")} via Direct Push",
+                    previews = listOf(preview),
+                    validationErrors = errorList,
+                    previousCommitSha = prevSha,
+                    statusText = if (good) "✅ प्रीव्यू तैयार है! नीचे बदलाव देखकर 'Confirm & Push' दबाएँ।"
+                    else "⚠️ पुश रोका गया: पहले नीचे दी गई त्रुटि ठीक करें।"
+                )
             } catch (e: Exception) {
                 MeeraBackgroundMonitor.completeTask(bgId, false, "एरर: ${e.message}")
-                state.value = state.value.copy(busy = false, validationErrors = listOf("त्रुटि: ${e.message}"), statusText = "❌ फ़ाइल जाँच में दिक्कत आई")
+                state.value = state.value.copy(
+                    busy = false,
+                    validationErrors = listOf("त्रुटि: ${e.message}"),
+                    statusText = "❌ फ़ाइल जाँच में दिक्कत आई"
+                )
             }
         }.start()
     }
@@ -450,22 +1066,40 @@ RULES:
     fun runPythonScript(ctx: Context, scriptCode: String) {
         val script = scriptCode.replace("\r\n", "\n")
         if (script.isBlank()) return
-        if (script.contains("getpass") || script.contains("input(")) {
-            state.value = state.value.copy(statusText = "⚠️ इस स्क्रिप्ट में getpass/input() है (कीबोर्ड से टोकन पूछती है)। इस टैब में कीबोर्ड नहीं है, इसलिए यह यहाँ नहीं चलेगी। इसे सीधे Termux ऐप में चलाएँ।", pythonOutput = "")
-            return
+        val vaultToken = MeeraTokenVault.getToken(ctx)
+        val runnableScript = if (script.contains("getpass") || script.contains("input(")) {
+            if (vaultToken.isBlank()) {
+                state.value = state.value.copy(
+                    statusText = "⚠️ इस स्क्रिप्ट में getpass/input() है और Vault में GitHub Token सेव नहीं है। पहले ऊपर '🔑 Token' से टोकन सेव करें।",
+                    pythonOutput = ""
+                )
+                return
+            }
+            "import getpass\ngetpass.getpass = lambda *a, **k: '$vaultToken'\ninput = lambda *a, **k: '$vaultToken'\n" + script
+        } else {
+            script
         }
+
         val bgId = MeeraBackgroundMonitor.startTask("Python Runner", "Termux", "Python3", "स्क्रिप्ट चलाई जा रही है...", 20)
-        state.value = state.value.copy(busy = true, statusText = "⏳ स्क्रिप्ट Termux में चल रही है (2 मिनट तक इंतज़ार)...", pythonOutput = "")
+        state.value = state.value.copy(
+            busy = true,
+            statusText = "⏳ स्क्रिप्ट Termux में चल रही है (2 मिनट तक इंतज़ार)...",
+            pythonOutput = ""
+        )
 
         Thread {
             try {
                 val delim = "MEERA_PY_END_7Q2"
-                val command = "cat << '$delim' > ~/meera_run.py\n$script\n$delim\ncd ~ && python3 -u meera_run.py 2>&1"
+                val command = "cat << '$delim' > ~/meera_run.py\n$runnableScript\n$delim\ncd ~ && python3 -u meera_run.py 2>&1"
                 val res = MeeraTermuxEngine.execute(ctx, command, background = true, waitMs = 120000L, autoOpenUi = false)
                 val raw = res.rawDataForAi
                 val finished = raw.startsWith("VERIFIED_SUCCESS: Termux executed")
                 val stillRunning = raw.startsWith("VERIFIED_SUCCESS: Dispatched")
-                val out = if (raw.contains("FULL_OUTPUT:")) raw.substringAfter("FULL_OUTPUT:").substringBefore("INSTRUCTIONS:").trim() else raw
+                val out = if (raw.contains("FULL_OUTPUT:")) {
+                    raw.substringAfter("FULL_OUTPUT:").substringBefore("INSTRUCTIONS:").trim()
+                } else {
+                    raw
+                }
                 var hint = ""
                 if (!finished && !stillRunning && (out.contains("not found") || out.contains("No such file"))) {
                     hint = "\n\n💡 अगर 'python3 not found' दिखे तो Termux में यह चलाएँ: pkg install python git"
@@ -493,8 +1127,21 @@ RULES:
             return
         }
 
-        val bgId = MeeraBackgroundMonitor.startTask("GitHub Push: ${current.commitMessage.take(35)}", "GitHub Push", "Git Trees API", "v2-test का वर्तमान कमिट पढ़ा जा रहा है...", 15)
-        state.value = current.copy(busy = true, statusText = "🚀 GitHub पर एटॉमिक पुश हो रहा है...", buildStatus = "", failureReportText = "")
+        val pushedPaths = current.previews.map { it.filePath }
+        val bgId = MeeraBackgroundMonitor.startTask(
+            "GitHub Push: ${current.commitMessage.take(35)}",
+            "GitHub Push",
+            "Git Trees API",
+            "v2-test का वर्तमान कमिट पढ़ा जा रहा है...",
+            15
+        )
+        state.value = current.copy(
+            busy = true,
+            statusText = "🚀 GitHub पर एटॉमिक पुश हो रहा है...",
+            buildStatus = "",
+            failureReportText = "",
+            lastPushedFiles = pushedPaths
+        )
 
         Thread {
             try {
@@ -514,32 +1161,60 @@ RULES:
 
                 val treeArr = JSONArray()
                 for (p in current.previews) {
-                    treeArr.put(JSONObject().put("path", p.filePath).put("mode", "100644").put("type", "blob").put("content", p.finalContent))
+                    treeArr.put(
+                        JSONObject()
+                            .put("path", p.filePath)
+                            .put("mode", "100644")
+                            .put("type", "blob")
+                            .put("content", p.finalContent)
+                    )
                 }
                 val treeBody = JSONObject().put("base_tree", baseTreeSha).put("tree", treeArr)
 
-                val newTreeSha = http.newCall(ghRequest("https://api.github.com/repos/$OWNER/$REPO/git/trees", ghToken).post(treeBody.toString().toRequestBody("application/json".toMediaType())).build()).execute().use { resp ->
+                val newTreeSha = http.newCall(
+                    ghRequest("https://api.github.com/repos/$OWNER/$REPO/git/trees", ghToken)
+                        .post(treeBody.toString().toRequestBody("application/json".toMediaType()))
+                        .build()
+                ).execute().use { resp ->
                     if (!resp.isSuccessful) throw RuntimeException("Create tree failed (HTTP ${resp.code})")
                     JSONObject(resp.body!!.string()).getString("sha")
                 }
 
                 MeeraBackgroundMonitor.updateProgress(bgId, 70, "नया कमिट तैयार हो रहा है...")
 
-                val newCommitBody = JSONObject().put("message", current.commitMessage).put("tree", newTreeSha).put("parents", JSONArray().put(headSha))
-                val newCommitSha = http.newCall(ghRequest("https://api.github.com/repos/$OWNER/$REPO/git/commits", ghToken).post(newCommitBody.toString().toRequestBody("application/json".toMediaType())).build()).execute().use { resp ->
+                val newCommitBody = JSONObject()
+                    .put("message", current.commitMessage)
+                    .put("tree", newTreeSha)
+                    .put("parents", JSONArray().put(headSha))
+                val newCommitSha = http.newCall(
+                    ghRequest("https://api.github.com/repos/$OWNER/$REPO/git/commits", ghToken)
+                        .post(newCommitBody.toString().toRequestBody("application/json".toMediaType()))
+                        .build()
+                ).execute().use { resp ->
                     if (!resp.isSuccessful) throw RuntimeException("Create commit failed (HTTP ${resp.code})")
                     JSONObject(resp.body!!.string()).getString("sha")
                 }
 
                 val patchRefBody = JSONObject().put("sha", newCommitSha).put("force", false)
-                http.newCall(ghRequest(refUrl.replace("/git/ref/", "/git/refs/"), ghToken).patch(patchRefBody.toString().toRequestBody("application/json".toMediaType())).build()).execute().use { resp ->
+                http.newCall(
+                    ghRequest(refUrl.replace("/git/ref/", "/git/refs/"), ghToken)
+                        .patch(patchRefBody.toString().toRequestBody("application/json".toMediaType()))
+                        .build()
+                ).execute().use { resp ->
                     if (!resp.isSuccessful) throw RuntimeException("Update branch ref failed (HTTP ${resp.code})")
                 }
 
                 ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE).edit().putString(KEY_PREV_SHA, headSha).apply()
                 MeeraBackgroundMonitor.completeTask(bgId, true, "100% पुश सफल (${newCommitSha.take(7)})")
-                state.value = state.value.copy(busy = false, previews = emptyList(), pushedCommitSha = newCommitSha, previousCommitSha = headSha,
-                    buildStatus = "WATCHING", buildSummaryText = "⏳ Commit ${newCommitSha.take(7)} पुश हो गया! APK बिल्ड की निगरानी हो रही है...", statusText = "✅ GitHub पर पुश सफल!")
+                state.value = state.value.copy(
+                    busy = false,
+                    previews = emptyList(),
+                    pushedCommitSha = newCommitSha,
+                    previousCommitSha = headSha,
+                    buildStatus = "WATCHING",
+                    buildSummaryText = "⏳ Commit ${newCommitSha.take(7)} पुश हो गया! APK बिल्ड की निगरानी हो रही है...",
+                    statusText = "✅ GitHub पर पुश सफल!"
+                )
                 watchBuildForCommit(ctx.applicationContext, newCommitSha, ghToken)
             } catch (e: Exception) {
                 MeeraBackgroundMonitor.completeTask(bgId, false, "GitHub Push विफल: ${e.message}")
@@ -549,7 +1224,13 @@ RULES:
     }
 
     private fun watchBuildForCommit(app: Context, targetSha: String, token: String) {
-        val buildTaskId = MeeraBackgroundMonitor.startTask("APK Build (${targetSha.take(7)})", "GitHub CI", "Gradle", "GitHub Actions रनर शुरू होने का इंतज़ार...", 10)
+        val buildTaskId = MeeraBackgroundMonitor.startTask(
+            "APK Build (${targetSha.take(7)})",
+            "GitHub CI",
+            "Gradle",
+            "GitHub Actions रनर शुरू होने का इंतज़ार...",
+            10
+        )
         Thread {
             try {
                 var matchedRunId = -1L
@@ -572,11 +1253,15 @@ RULES:
                                     matchedRunNumber = r.optInt("run_number", 0)
                                     val st = r.optString("status")
                                     val conc = r.optString("conclusion")
-                                    if (st == "completed") finalConclusion = conc
-                                    else {
+                                    if (st == "completed") {
+                                        finalConclusion = conc
+                                    } else {
                                         val pct = (15 + attempt * 3).coerceAtMost(85)
                                         MeeraBackgroundMonitor.updateProgress(buildTaskId, pct, "Build #$matchedRunNumber कम्पाइल हो रहा है ($st)...")
-                                        state.value = state.value.copy(buildRunNumber = matchedRunNumber, buildSummaryText = "⚙️ Build #$matchedRunNumber चल रहा है ($pct%)...")
+                                        state.value = state.value.copy(
+                                            buildRunNumber = matchedRunNumber,
+                                            buildSummaryText = "⚙️ Build #$matchedRunNumber चल रहा है ($pct%)..."
+                                        )
                                     }
                                     break
                                 }
@@ -588,7 +1273,11 @@ RULES:
 
                 if (finalConclusion == "success") {
                     MeeraBackgroundMonitor.completeTask(buildTaskId, true, "100% पूरा — APK Build #$matchedRunNumber तैयार है!")
-                    state.value = state.value.copy(buildStatus = "SUCCESS", buildRunNumber = matchedRunNumber, buildSummaryText = "🎉 APK Build #$matchedRunNumber सफल (100%)! नीचे बटन दबाकर नया APK इंस्टॉल करें।")
+                    state.value = state.value.copy(
+                        buildStatus = "SUCCESS",
+                        buildRunNumber = matchedRunNumber,
+                        buildSummaryText = "🎉 APK Build #$matchedRunNumber सफल (100%)! नीचे बटन दबाकर नया APK इंस्टॉल करें।"
+                    )
                 } else if (finalConclusion.isNotBlank()) {
                     MeeraBackgroundMonitor.updateProgress(buildTaskId, 90, "Build #$matchedRunNumber फेल हुआ — एरर लॉग निकल रही है...")
                     generateInAppFailureComparisonReport(app, matchedRunId, matchedRunNumber, targetSha, allRunsCache, token, buildTaskId)
@@ -596,11 +1285,21 @@ RULES:
                     MeeraBackgroundMonitor.completeTask(buildTaskId, false, "Build निगरानी टाइमआउट हो गई।")
                     state.value = state.value.copy(buildStatus = "FAILURE", buildSummaryText = "⚠️ बिल्ड को 8 मिनट से ज़्यादा समय लगा।")
                 }
-            } catch (e: Exception) { MeeraBackgroundMonitor.completeTask(buildTaskId, false, "Build Watcher एरर: ${e.message}") }
+            } catch (e: Exception) {
+                MeeraBackgroundMonitor.completeTask(buildTaskId, false, "Build Watcher एरर: ${e.message}")
+            }
         }.start()
     }
 
-    private fun generateInAppFailureComparisonReport(app: Context, failedRunId: Long, failedRunNumber: Int, failSha: String, runsArr: JSONArray, token: String, buildTaskId: Long) {
+    private fun generateInAppFailureComparisonReport(
+        app: Context,
+        failedRunId: Long,
+        failedRunNumber: Int,
+        failSha: String,
+        runsArr: JSONArray,
+        token: String,
+        buildTaskId: Long
+    ) {
         try {
             var lastSuccessSha = ""
             var lastSuccessNum = 0
@@ -625,7 +1324,9 @@ RULES:
                             while (entry != null) {
                                 if (!entry.isDirectory && entry.name.endsWith(".txt") && (entry.name.contains("Build debug APK") || entry.name.contains("0_build"))) {
                                     val txt = zis.readBytes().toString(Charsets.UTF_8)
-                                    val lines = txt.lines().map { ln -> if (ln.length > 29 && ln[4] == '-' && ln[27] == 'Z') ln.substring(29) else ln }
+                                    val lines = txt.lines().map { ln ->
+                                        if (ln.length > 29 && ln[4] == '-' && ln[27] == 'Z') ln.substring(29) else ln
+                                    }
                                     for (idx in lines.indices) {
                                         val cln = lines[idx]
                                         if (cln.startsWith("e: ") || cln.contains("FAILURE:") || cln.contains("What went wrong:")) {
@@ -633,7 +1334,9 @@ RULES:
                                             if (snip !in errorLines) errorLines.add(snip)
                                         }
                                     }
-                                    if (entry.name.contains("Build debug APK")) logTail.append(lines.takeLast(120).joinToString("\n"))
+                                    if (entry.name.contains("Build debug APK")) {
+                                        logTail.append(lines.takeLast(120).joinToString("\n"))
+                                    }
                                 }
                                 zis.closeEntry()
                                 entry = zis.nextEntry
@@ -653,7 +1356,9 @@ RULES:
                         val sb = StringBuilder()
                         for (i in 0 until filesArr.length()) {
                             val f = filesArr.optJSONObject(i) ?: continue
-                            sb.append("FILE: ").append(f.optString("filename")).append(" (+").append(f.optInt("additions")).append("/-").append(f.optInt("deletions")).append(")\n")
+                            sb.append("FILE: ").append(f.optString("filename"))
+                                .append(" (+").append(f.optInt("additions"))
+                                .append("/-").append(f.optInt("deletions")).append(")\n")
                             sb.append(f.optString("patch")).append("\n\n")
                         }
                         compareDiff = sb.toString()
@@ -674,8 +1379,17 @@ RULES:
 
             val shareUri = saveFailureReportFile(app, fullReport.toByteArray(Charsets.UTF_8))
             MeeraBackgroundMonitor.completeTask(buildTaskId, false, "Build #$failedRunNumber फेल — पूरी Report तैयार!", topErrorSummary)
-            state.value = state.value.copy(buildStatus = "FAILURE", buildRunNumber = failedRunNumber, buildSummaryText = "❌ APK Build #$failedRunNumber फेल हो गया।", failureCompilerError = topErrorSummary, failureReportText = fullReport, failureReportUri = shareUri)
-        } catch (e: Exception) { MeeraBackgroundMonitor.completeTask(buildTaskId, false, "Report error: ${e.message}") }
+            state.value = state.value.copy(
+                buildStatus = "FAILURE",
+                buildRunNumber = failedRunNumber,
+                buildSummaryText = "❌ APK Build #$failedRunNumber फेल हो गया। नीचे अपनी पसंद का मॉडल चुनकर तुरंत फिक्स करवाएँ:",
+                failureCompilerError = topErrorSummary,
+                failureReportText = fullReport,
+                failureReportUri = shareUri
+            )
+        } catch (e: Exception) {
+            MeeraBackgroundMonitor.completeTask(buildTaskId, false, "Report error: ${e.message}")
+        }
     }
 
     private fun saveFailureReportFile(app: Context, data: ByteArray): Uri? {
@@ -697,11 +1411,15 @@ RULES:
             val f = File(dir, fileName)
             f.writeBytes(data)
             FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", f)
-        } catch (_: Exception) { null }
+        } catch (_: Exception) {
+            null
+        }
     }
 
     fun rollbackLastPush(ctx: Context) {
-        val prevSha = state.value.previousCommitSha.ifBlank { ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE).getString(KEY_PREV_SHA, "").orEmpty() }
+        val prevSha = state.value.previousCommitSha.ifBlank {
+            ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE).getString(KEY_PREV_SHA, "").orEmpty()
+        }
         val ghToken = MeeraTokenVault.getToken(ctx)
         if (prevSha.isBlank() || ghToken.isBlank()) return
 
@@ -710,11 +1428,22 @@ RULES:
             try {
                 val refUrl = "https://api.github.com/repos/$OWNER/$REPO/git/ref/heads/$BRANCH"
                 val body = JSONObject().put("sha", prevSha).put("force", true)
-                http.newCall(ghRequest(refUrl.replace("/git/ref/", "/git/refs/"), ghToken).patch(body.toString().toRequestBody("application/json".toMediaType())).build()).execute().use { resp ->
+                http.newCall(
+                    ghRequest(refUrl.replace("/git/ref/", "/git/refs/"), ghToken)
+                        .patch(body.toString().toRequestBody("application/json".toMediaType()))
+                        .build()
+                ).execute().use { resp ->
                     if (!resp.isSuccessful) throw RuntimeException("Rollback HTTP ${resp.code}")
                 }
-                state.value = state.value.copy(busy = false, buildStatus = "", failureCompilerError = "", statusText = "✅ Rollback सफल! v2-test पिछले वर्किंग वर्ज़न पर आ गया है।")
-            } catch (e: Exception) { state.value = state.value.copy(busy = false, statusText = "❌ Rollback फेल: ${e.message}") }
+                state.value = state.value.copy(
+                    busy = false,
+                    buildStatus = "",
+                    failureCompilerError = "",
+                    statusText = "✅ Rollback सफल! v2-test पिछले वर्किंग वर्ज़न पर आ गया है।"
+                )
+            } catch (e: Exception) {
+                state.value = state.value.copy(busy = false, statusText = "❌ Rollback फेल: ${e.message}")
+            }
         }.start()
     }
 }
@@ -722,126 +1451,624 @@ RULES:
 @Composable
 fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
     val ctx = LocalContext.current
+    LaunchedEffect(Unit) { MeeraCodePatcher.ensurePrefsLoaded(ctx) }
     val ui by MeeraCodePatcher.state.collectAsState()
     var currentTab by remember { mutableStateOf(0) }
+    var showModelManager by remember { mutableStateOf(false) }
+    var customModelId by remember { mutableStateOf("") }
     var inputBox by remember { mutableStateOf("") }
     var pyScript by remember { mutableStateOf("") }
     var rawPath by remember { mutableStateOf("") }
     var rawCode by remember { mutableStateOf("") }
     val scrollState = rememberScrollState()
     val hasToken = remember(ui.busy) { MeeraTokenVault.hasToken(ctx) }
-    val readClip = { (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).primaryClip?.getItemAt(0)?.coerceToText(ctx)?.toString().orEmpty() }
+    val readClip = {
+        (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
+            .primaryClip?.getItemAt(0)?.coerceToText(ctx)?.toString().orEmpty()
+    }
 
-    Column(Modifier.fillMaxSize().background(Color(0xFF090D18)).systemBarsPadding().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(Color(0xFF090D18))
+            .systemBarsPadding()
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        // Top Header Bar
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(color = Color(0xFF16203A), shape = CircleShape, modifier = Modifier.size(40.dp).border(1.dp, Color(0xFF26355E), CircleShape).clickable(onClick = onBack)) {
-                    Box(contentAlignment = Alignment.Center) { Text("←", color = Color.White, fontSize = 20.sp) }
+                Surface(
+                    color = Color(0xFF16203A),
+                    shape = CircleShape,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .border(1.dp, Color(0xFF26355E), CircleShape)
+                        .clickable(onClick = onBack)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text("←", color = Color.White, fontSize = 20.sp)
+                    }
                 }
                 Spacer(Modifier.width(10.dp))
                 Column {
-                    Text("Code Push & Build Studio", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
-                    Text("Target: v2-test • Live CI", color = Color(0xFF2EE6A8), fontSize = 11.sp)
+                    Text("Code Push & Build Studio", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold)
+                    Text("v2-test • ${ui.curatedModels.size} Verified Models", color = Color(0xFF2EE6A8), fontSize = 11.sp)
                 }
             }
-            Surface(color = if (hasToken) Color(0xFF16203A) else Color(0xFF3B1219), shape = RoundedCornerShape(12.dp), modifier = Modifier.border(1.dp, if (hasToken) Color(0xFF2EE6A8) else Color(0xFFFF6B6B), RoundedCornerShape(12.dp)).clickable(onClick = onOpenTokenVault)) {
-                Text(if (hasToken) "🔐 Token ✓" else "🔑 Token डालें", color = if (hasToken) Color(0xFF2EE6A8) else Color(0xFFFF9494), fontSize = 11.5.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    color = if (showModelManager) Color(0xFF5B8CFF) else Color(0xFF16203A),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .border(1.dp, Color(0xFF38BDF8), RoundedCornerShape(12.dp))
+                        .clickable { showModelManager = !showModelManager }
+                ) {
+                    Text(
+                        "⚙️ Models",
+                        color = Color.White,
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp)
+                    )
+                }
+                Surface(
+                    color = if (hasToken) Color(0xFF16203A) else Color(0xFF3B1219),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .border(1.dp, if (hasToken) Color(0xFF2EE6A8) else Color(0xFFFF6B6B), RoundedCornerShape(12.dp))
+                        .clickable(onClick = onOpenTokenVault)
+                ) {
+                    Text(
+                        if (hasToken) "🔐 Token ✓" else "🔑 Token",
+                        color = if (hasToken) Color(0xFF2EE6A8) else Color(0xFFFF9494),
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp)
+                    )
+                }
             }
         }
 
-        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color(0xFF16203A))) {
+        // Collapsible Coding Models & Fallback Priority Manager
+        if (showModelManager) {
+            Surface(
+                color = Color(0xFF12192E),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, Color(0xFF38BDF8).copy(alpha = 0.6f), RoundedCornerShape(16.dp))
+            ) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("🧠 Coding Models & Fallback (Max 4)", color = Color.White, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                        Box(
+                            Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Brush.linearGradient(listOf(Color(0xFF5B8CFF), Color(0xFF2EE6A8))))
+                                .clickable(enabled = !ui.verifyingModels) { MeeraCodePatcher.verifyModelsOnApiKey(ctx) }
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                if (ui.verifyingModels) "⏳ जाँच जारी..." else "🔍 Verify on API Key",
+                                color = Color(0xFF090D18),
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                        }
+                    }
+
+                    if (ui.verifySummary.isNotBlank()) {
+                        Text(ui.verifySummary, color = Color(0xFF2EE6A8), fontSize = 11.5.sp)
+                    }
+
+                    Text("आपकी चुनी हुई प्राथमिकता (Priority Order):", color = Color(0xFF8A94B8), fontSize = 11.sp)
+                    ui.curatedModels.forEachIndexed { idx, mId ->
+                        val h = ui.verifiedHealthMap[mId]
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .background(Color(0xFF0B1020), RoundedCornerShape(10.dp))
+                                .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(10.dp))
+                                .padding(horizontal = 10.dp, vertical = 7.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    "#${idx + 1} ${MeeraCodePatcher.friendlyModelLabel(mId)} ($mId)",
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    h?.note ?: "Not verified yet (Tap Verify)",
+                                    color = when {
+                                        h == null -> Color(0xFF8A94B8)
+                                        h.working -> Color(0xFF2EE6A8)
+                                        else -> Color(0xFFFFB84D)
+                                    },
+                                    fontSize = 10.5.sp
+                                )
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                if (idx > 0) {
+                                    Text(
+                                        "⬆️",
+                                        fontSize = 14.sp,
+                                        modifier = Modifier
+                                            .clickable { MeeraCodePatcher.moveModelPriorityUp(ctx, mId) }
+                                            .padding(4.dp)
+                                    )
+                                }
+                                if (ui.curatedModels.size > 1) {
+                                    Text(
+                                        "✕",
+                                        color = Color(0xFFFF6B6B),
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier
+                                            .clickable { MeeraCodePatcher.toggleCuratedModel(ctx, mId) }
+                                            .padding(4.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    if (ui.verifiedHealthMap.isNotEmpty()) {
+                        Text("API Key पर जाँचे गए अन्य मॉडल (जोड़ने के लिए टैप करें):", color = Color(0xFF8A94B8), fontSize = 11.sp)
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            ui.verifiedHealthMap.values.filter { it.modelId !in ui.curatedModels }.forEach { item ->
+                                val borderC = if (item.working) Color(0xFF2EE6A8) else Color(0xFF475569)
+                                Surface(
+                                    color = Color(0xFF0B1020),
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier
+                                        .border(1.dp, borderC, RoundedCornerShape(10.dp))
+                                        .clickable { MeeraCodePatcher.toggleCuratedModel(ctx, item.modelId) }
+                                ) {
+                                    Text(
+                                        "＋ ${item.label} (${item.note})",
+                                        color = if (item.working) Color.White else Color(0xFF94A3B8),
+                                        fontSize = 11.sp,
+                                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        OutlinedTextField(
+                            value = customModelId,
+                            onValueChange = { customModelId = it },
+                            placeholder = { Text("नया मॉडल ID (जैसे gemini-4-hydrogen)", color = Color(0xFF8A94B8), fontSize = 11.sp) },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Box(
+                            Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color(0xFF16203A))
+                                .border(1.dp, Color(0xFF2EE6A8), RoundedCornerShape(10.dp))
+                                .clickable(enabled = customModelId.isNotBlank() && !ui.verifyingModels) {
+                                    val toTest = customModelId.trim()
+                                    customModelId = ""
+                                    MeeraCodePatcher.verifyModelsOnApiKey(ctx, toTest)
+                                }
+                                .padding(horizontal = 10.dp, vertical = 12.dp)
+                        ) {
+                            Text("Verify & Add", color = Color(0xFF2EE6A8), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3 Studio Tabs
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color(0xFF16203A))
+        ) {
             listOf("🧠 AI Patch", "🐍 Python", "📄 Raw Kotlin").forEachIndexed { idx, title ->
                 val active = currentTab == idx
-                Box(Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(if (active) Color(0xFF5B8CFF) else Color.Transparent).clickable { if (currentTab != idx) { currentTab = idx; MeeraCodePatcher.clearPreview() } }.padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
-                    Text(title, color = if (active) Color.White else Color(0xFF8A94B8), fontSize = 12.sp, fontWeight = if (active) FontWeight.Bold else FontWeight.Normal)
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (active) Color(0xFF5B8CFF) else Color.Transparent)
+                        .clickable {
+                            if (currentTab != idx) {
+                                currentTab = idx
+                                MeeraCodePatcher.clearPreview()
+                            }
+                        }
+                        .padding(vertical = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        title,
+                        color = if (active) Color.White else Color(0xFF8A94B8),
+                        fontSize = 12.sp,
+                        fontWeight = if (active) FontWeight.Bold else FontWeight.Normal
+                    )
                 }
             }
         }
 
-        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(scrollState), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .verticalScroll(scrollState),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
             if (currentTab == 0) {
-                Surface(color = Color(0xFF12192E), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().border(1.dp, Color(0xFF26355E), RoundedCornerShape(16.dp))) {
+                Surface(
+                    color = Color(0xFF12192E),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, Color(0xFF26355E), RoundedCornerShape(16.dp))
+                ) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("1. क्या बदलाव करना है लिखें या Patch JSON पेस्ट करें:", color = Color.White, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
-                        OutlinedTextField(value = inputBox, onValueChange = { inputBox = it }, placeholder = { Text("उदाहरण: Config.kt में चैट मॉडल का नाम बदल दो", color = Color(0xFF8A94B8), fontSize = 12.sp) }, minLines = 3, maxLines = 7, modifier = Modifier.fillMaxWidth())
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Box(Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(Brush.linearGradient(listOf(Color(0xFF5B8CFF), Color(0xFF38BDF8)))).clickable(enabled = !ui.busy) { MeeraCodePatcher.generateAiPatchFromInstruction(ctx, inputBox) }.padding(vertical = 10.dp, horizontal = 8.dp), contentAlignment = Alignment.Center) { Text("✨ AI से बदलाव बनाएँ", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
-                            Box(Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(Color(0xFF16203A)).border(1.dp, Color(0xFF2EE6A8), RoundedCornerShape(12.dp)).clickable(enabled = !ui.busy) { MeeraCodePatcher.preparePreviewFromPatchJson(ctx, inputBox) }.padding(vertical = 10.dp, horizontal = 8.dp), contentAlignment = Alignment.Center) { Text("🔍 प्रीव्यू व जाँच करें", color = Color(0xFF2EE6A8), fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+                        Text("1. बदलाव लिखें और नीचे अपना पसंदीदा मॉडल चुनें:", color = Color.White, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                        OutlinedTextField(
+                            value = inputBox,
+                            onValueChange = { inputBox = it },
+                            placeholder = { Text("उदाहरण: Ui.kt में साइड मेन्यू बटन का रंग बदलो", color = Color(0xFF8A94B8), fontSize = 12.sp) },
+                            minLines = 3,
+                            maxLines = 7,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Text("किस मॉडल से पैच बनवाना है (Direct Pick):", color = Color(0xFF8A94B8), fontSize = 11.sp)
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            ui.curatedModels.forEachIndexed { idx, mId ->
+                                val isPrimary = idx == 0
+                                Box(
+                                    Modifier
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(
+                                            if (isPrimary) Brush.linearGradient(listOf(Color(0xFF5B8CFF), Color(0xFF38BDF8)))
+                                            else Brush.linearGradient(listOf(Color(0xFF1E293B), Color(0xFF16203A)))
+                                        )
+                                        .border(1.dp, if (isPrimary) Color(0xFF2EE6A8) else Color(0xFF334155), RoundedCornerShape(12.dp))
+                                        .clickable(enabled = !ui.busy && inputBox.isNotBlank()) {
+                                            MeeraCodePatcher.generateAiPatchFromInstruction(
+                                                ctx = ctx,
+                                                instruction = inputBox,
+                                                preferredModel = mId,
+                                                allowAutoFallback = false
+                                            )
+                                        }
+                                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                                ) {
+                                    Text(
+                                        MeeraCodePatcher.friendlyModelLabel(mId),
+                                        color = Color.White,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                            Box(
+                                Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color(0xFF16203A))
+                                    .border(1.dp, Color(0xFFFFB84D), RoundedCornerShape(12.dp))
+                                    .clickable(enabled = !ui.busy && inputBox.isNotBlank()) {
+                                        MeeraCodePatcher.generateAiPatchFromInstruction(
+                                            ctx = ctx,
+                                            instruction = inputBox,
+                                            preferredModel = ui.curatedModels.firstOrNull(),
+                                            allowAutoFallback = true
+                                        )
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 10.dp)
+                            ) {
+                                Text("⚡ Auto Fallback", color = Color(0xFFFFB84D), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
                         }
+
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            TextButton(onClick = { val clip = readClip(); if (clip.isNotBlank()) inputBox = clip }) { Text("📋 क्लिपबोर्ड से पेस्ट करें", color = Color(0xFF38BDF8), fontSize = 12.sp) }
-                            if (inputBox.isNotBlank() || ui.previews.isNotEmpty()) { TextButton(onClick = { inputBox = ""; MeeraCodePatcher.clearPreview() }) { Text("साफ़ करें", color = Color(0xFF8A94B8), fontSize = 12.sp) } }
+                            TextButton(onClick = { val clip = readClip(); if (clip.isNotBlank()) inputBox = clip }) {
+                                Text("📋 पेस्ट करें", color = Color(0xFF38BDF8), fontSize = 12.sp)
+                            }
+                            TextButton(
+                                enabled = !ui.busy && inputBox.trim().startsWith("{"),
+                                onClick = { MeeraCodePatcher.preparePreviewFromPatchJson(ctx, inputBox) }
+                            ) {
+                                Text("🔍 JSON प्रीव्यू", color = Color(0xFF2EE6A8), fontSize = 12.sp)
+                            }
+                            if (inputBox.isNotBlank() || ui.previews.isNotEmpty()) {
+                                TextButton(onClick = { inputBox = ""; MeeraCodePatcher.clearPreview() }) {
+                                    Text("साफ़ करें", color = Color(0xFF8A94B8), fontSize = 12.sp)
+                                }
+                            }
                         }
                     }
                 }
             }
 
             if (currentTab == 1) {
-                Surface(color = Color(0xFF12192E), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().border(1.dp, Color(0xFF26355E), RoundedCornerShape(16.dp))) {
+                Surface(
+                    color = Color(0xFF12192E),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, Color(0xFF26355E), RoundedCornerShape(16.dp))
+                ) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("Python स्क्रिप्ट पेस्ट करें (Termux में चलेगी):", color = Color.White, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
-                        Text("ध्यान: इस टैब में कीबोर्ड नहीं है, इसलिए getpass / input() वाली स्क्रिप्ट यहाँ नहीं चलेगी। Termux में python और git लगे होने चाहिए।", color = Color(0xFF8A94B8), fontSize = 11.sp)
-                        OutlinedTextField(value = pyScript, onValueChange = { pyScript = it }, placeholder = { Text("print('hello')", color = Color(0xFF8A94B8), fontSize = 12.sp, fontFamily = FontFamily.Monospace) }, minLines = 6, maxLines = 14, modifier = Modifier.fillMaxWidth())
-                        Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Brush.linearGradient(listOf(Color(0xFF10B981), Color(0xFF059669)))).clickable(enabled = !ui.busy) { MeeraCodePatcher.runPythonScript(ctx, pyScript) }.padding(vertical = 12.dp), contentAlignment = Alignment.Center) { Text("▶️ Termux में स्क्रिप्ट चलाएँ", color = Color.White, fontSize = 13.5.sp, fontWeight = FontWeight.Bold) }
+                        Text("Vault में सेव GitHub Token अपने-आप getpass/input() में जुड़ जाएगा।", color = Color(0xFF2EE6A8), fontSize = 11.sp)
+                        OutlinedTextField(
+                            value = pyScript,
+                            onValueChange = { pyScript = it },
+                            placeholder = { Text("print('hello')", color = Color(0xFF8A94B8), fontSize = 12.sp, fontFamily = FontFamily.Monospace) },
+                            minLines = 6,
+                            maxLines = 14,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Brush.linearGradient(listOf(Color(0xFF10B981), Color(0xFF059669))))
+                                .clickable(enabled = !ui.busy) { MeeraCodePatcher.runPythonScript(ctx, pyScript) }
+                                .padding(vertical = 12.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("▶️ Termux में स्क्रिप्ट चलाएँ", color = Color.White, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                        }
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            TextButton(onClick = { val clip = readClip(); if (clip.isNotBlank()) pyScript = clip }) { Text("📋 क्लिपबोर्ड से पेस्ट करें", color = Color(0xFF38BDF8), fontSize = 12.sp) }
-                            if (pyScript.isNotBlank()) { TextButton(onClick = { pyScript = "" }) { Text("साफ़ करें", color = Color(0xFF8A94B8), fontSize = 12.sp) } }
+                            TextButton(onClick = { val clip = readClip(); if (clip.isNotBlank()) pyScript = clip }) {
+                                Text("📋 क्लिपबोर्ड से पेस्ट करें", color = Color(0xFF38BDF8), fontSize = 12.sp)
+                            }
+                            if (pyScript.isNotBlank()) {
+                                TextButton(onClick = { pyScript = "" }) {
+                                    Text("साफ़ करें", color = Color(0xFF8A94B8), fontSize = 12.sp)
+                                }
+                            }
                         }
                     }
                 }
                 if (ui.pythonOutput.isNotBlank()) {
-                    Box(Modifier.fillMaxWidth().background(Color(0xFF070B14), RoundedCornerShape(10.dp)).border(1.dp, Color(0xFF1E293B), RoundedCornerShape(10.dp)).padding(10.dp).horizontalScroll(rememberScrollState())) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .background(Color(0xFF070B14), RoundedCornerShape(10.dp))
+                            .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(10.dp))
+                            .padding(10.dp)
+                            .horizontalScroll(rememberScrollState())
+                    ) {
                         Text(ui.pythonOutput, color = Color(0xFF94A3B8), fontSize = 11.sp, fontFamily = FontFamily.Monospace)
                     }
                 }
             }
 
             if (currentTab == 2) {
-                Surface(color = Color(0xFF12192E), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().border(1.dp, Color(0xFF26355E), RoundedCornerShape(16.dp))) {
+                Surface(
+                    color = Color(0xFF12192E),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, Color(0xFF26355E), RoundedCornerShape(16.dp))
+                ) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("फ़ाइल का पूरा पाथ और उसका पूरा नया कोड पेस्ट करें:", color = Color.White, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
-                        Text("सुरक्षा: नई फ़ाइल पुरानी से बहुत छोटी हो, या पुरानी फ़ाइल पढ़ी न जा सके, तो पुश रुक जाएगा।", color = Color(0xFF8A94B8), fontSize = 11.sp)
-                        OutlinedTextField(value = rawPath, onValueChange = { rawPath = it }, placeholder = { Text("app/src/main/java/com/meraai/app/Config.kt", color = Color(0xFF8A94B8), fontSize = 12.sp) }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                        OutlinedTextField(value = rawCode, onValueChange = { rawCode = it }, placeholder = { Text("package com.meraai.app", color = Color(0xFF8A94B8), fontSize = 12.sp, fontFamily = FontFamily.Monospace) }, minLines = 6, maxLines = 14, modifier = Modifier.fillMaxWidth())
-                        Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color(0xFF16203A)).border(1.dp, Color(0xFF2EE6A8), RoundedCornerShape(12.dp)).clickable(enabled = !ui.busy) { MeeraCodePatcher.prepareRawFilePreview(ctx, rawPath, rawCode) }.padding(vertical = 12.dp), contentAlignment = Alignment.Center) { Text("🔍 प्रीव्यू व जाँच करें", color = Color(0xFF2EE6A8), fontSize = 13.5.sp, fontWeight = FontWeight.Bold) }
+                        OutlinedTextField(
+                            value = rawPath,
+                            onValueChange = { rawPath = it },
+                            placeholder = { Text("app/src/main/java/com/meraai/app/Config.kt", color = Color(0xFF8A94B8), fontSize = 12.sp) },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = rawCode,
+                            onValueChange = { rawCode = it },
+                            placeholder = { Text("package com.meraai.app", color = Color(0xFF8A94B8), fontSize = 12.sp, fontFamily = FontFamily.Monospace) },
+                            minLines = 6,
+                            maxLines = 14,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0xFF16203A))
+                                .border(1.dp, Color(0xFF2EE6A8), RoundedCornerShape(12.dp))
+                                .clickable(enabled = !ui.busy) { MeeraCodePatcher.prepareRawFilePreview(ctx, rawPath, rawCode) }
+                                .padding(vertical = 12.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("🔍 प्रीव्यू व ब्रैकेट जाँच करें", color = Color(0xFF2EE6A8), fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                        }
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            TextButton(onClick = { val clip = readClip(); if (clip.isNotBlank()) rawCode = clip }) { Text("📋 कोड क्लिपबोर्ड से पेस्ट करें", color = Color(0xFF38BDF8), fontSize = 12.sp) }
-                            if (rawCode.isNotBlank() || rawPath.isNotBlank()) { TextButton(onClick = { rawCode = ""; rawPath = ""; MeeraCodePatcher.clearPreview() }) { Text("साफ़ करें", color = Color(0xFF8A94B8), fontSize = 12.sp) } }
+                            TextButton(onClick = { val clip = readClip(); if (clip.isNotBlank()) rawCode = clip }) {
+                                Text("📋 कोड पेस्ट करें", color = Color(0xFF38BDF8), fontSize = 12.sp)
+                            }
+                            if (rawCode.isNotBlank() || rawPath.isNotBlank()) {
+                                TextButton(onClick = { rawCode = ""; rawPath = ""; MeeraCodePatcher.clearPreview() }) {
+                                    Text("साफ़ करें", color = Color(0xFF8A94B8), fontSize = 12.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Smart Hydrogen Busy / Wait vs Urgent Switch Card
+            if (ui.hydrogenBusyPrompt || ui.hydrogenWaitingAuto) {
+                Surface(
+                    color = Color(0xFF241B0B),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, Color(0xFFFFB84D), RoundedCornerShape(16.dp))
+                ) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("🧪 Hydrogen High-Load Control", color = Color(0xFFFFB84D), fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
+                        if (ui.hydrogenWaitingAuto) {
+                            Text(ui.hydrogenWaitStatus, color = Color.White, fontSize = 12.5.sp)
+                            TextButton(onClick = { MeeraCodePatcher.stopHydrogenWaiting() }) {
+                                Text("⏹️ इंतज़ार रोकें (दूसरा मॉडल चुनने के लिए)", color = Color(0xFFFF9494), fontSize = 12.sp)
+                            }
+                        } else {
+                            Text(
+                                "Hydrogen ने अभी जनरेशन शुरू नहीं किया है (ज़्यादा लोड)। आप Hydrogen के फ्री होने का इंतज़ार कर सकते हैं या अर्जेंसी में नीचे से दूसरा मॉडल चुन सकते हैं:",
+                                color = Color(0xFFFDE68A),
+                                fontSize = 12.sp
+                            )
+                            Box(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color(0xFF3B2B0E))
+                                    .border(1.dp, Color(0xFFFFB84D), RoundedCornerShape(12.dp))
+                                    .clickable { MeeraCodePatcher.startHydrogenBackgroundWaiter(ctx) }
+                                    .padding(vertical = 10.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("⏳ Wait for Hydrogen (Auto-Resume)", color = Color(0xFFFFB84D), fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+                            }
+
+                            val urgentAlternatives = ui.curatedModels.filter { it != "gemini-4-hydrogen" }
+                            val pendingJob = ui.pendingHydrogenJob
+                            if (urgentAlternatives.isNotEmpty() && pendingJob != null) {
+                                Text("⚡ Urgent — अभी दूसरे मॉडल से करवाएँ:", color = Color.White, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                Row(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    urgentAlternatives.forEach { altId ->
+                                        Box(
+                                            Modifier
+                                                .clip(RoundedCornerShape(10.dp))
+                                                .background(Color(0xFF5B8CFF))
+                                                .clickable {
+                                                    MeeraCodePatcher.generateAiPatchFromInstruction(
+                                                        ctx = ctx,
+                                                        instruction = pendingJob.instruction,
+                                                        preferredModel = altId,
+                                                        allowAutoFallback = false,
+                                                        extraContext = pendingJob.extraContext
+                                                    )
+                                                }
+                                                .padding(horizontal = 12.dp, vertical = 9.dp)
+                                        ) {
+                                            Text(
+                                                "⚡ ${MeeraCodePatcher.friendlyModelLabel(altId)}",
+                                                color = Color.White,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
 
             if (ui.statusText.isNotBlank()) {
-                Surface(color = Color(0xFF16203A), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth().border(1.dp, Color(0xFF26355E), RoundedCornerShape(14.dp))) { Text(ui.statusText, color = Color.White, fontSize = 12.5.sp, modifier = Modifier.padding(12.dp)) }
+                Surface(
+                    color = Color(0xFF16203A),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, Color(0xFF26355E), RoundedCornerShape(14.dp))
+                ) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (ui.activeModelText.isNotBlank()) {
+                            Text(ui.activeModelText, color = Color(0xFF2EE6A8), fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Text(ui.statusText, color = Color.White, fontSize = 12.5.sp)
+                    }
+                }
             }
 
             if (ui.validationErrors.isNotEmpty()) {
-                Surface(color = Color(0xFF260D14), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth().border(1.dp, Color(0xFFFF6B6B), RoundedCornerShape(14.dp))) {
+                Surface(
+                    color = Color(0xFF260D14),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, Color(0xFFFF6B6B), RoundedCornerShape(14.dp))
+                ) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text("⚠️ जाँच में ये समस्याएँ मिलीं:", color = Color(0xFFFF6B6B), fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
-                        ui.validationErrors.forEach { err -> Text("• $err", color = Color(0xFFFFB4B4), fontSize = 12.sp) }
+                        ui.validationErrors.forEach { err ->
+                            Text("• $err", color = Color(0xFFFFB4B4), fontSize = 12.sp)
+                        }
                     }
                 }
             }
 
             if (ui.previews.isNotEmpty()) {
-                Surface(color = Color(0xFF12192E), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().border(1.dp, Color(0xFF2EE6A8).copy(alpha = 0.55f), RoundedCornerShape(16.dp))) {
+                Surface(
+                    color = Color(0xFF12192E),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, Color(0xFF2EE6A8).copy(alpha = 0.55f), RoundedCornerShape(16.dp))
+                ) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("2. बदलावों का प्रीव्यू (${ui.previews.size} फ़ाइलें):", color = Color(0xFF2EE6A8), fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
                         Text("Commit: ${ui.commitMessage}", color = Color(0xFFCBD5E1), fontSize = 12.sp)
                         ui.previews.forEach { p ->
-                            Column(Modifier.fillMaxWidth().background(Color(0xFF070B14), RoundedCornerShape(10.dp)).border(1.dp, Color(0xFF1E293B), RoundedCornerShape(10.dp)).padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Column(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .background(Color(0xFF070B14), RoundedCornerShape(10.dp))
+                                    .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(10.dp))
+                                    .padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     Text("${p.action}: ${p.filePath.substringAfterLast("/")}", color = Color.White, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
                                     Text("+${p.linesAdded} / -${p.linesRemoved}", color = Color(0xFF2EE6A8), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                 }
                                 Text(p.validationNote, color = if (p.valid) Color(0xFF2EE6A8) else Color(0xFFFF6B6B), fontSize = 11.sp)
-                                Box(Modifier.horizontalScroll(rememberScrollState())) { Text(p.diffSnippet, color = Color(0xFF94A3B8), fontSize = 11.sp, fontFamily = FontFamily.Monospace) }
+                                Box(Modifier.horizontalScroll(rememberScrollState())) {
+                                    Text(p.diffSnippet, color = Color(0xFF94A3B8), fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                                }
                             }
                         }
                         if (ui.validationErrors.isEmpty()) {
-                            Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Brush.linearGradient(listOf(Color(0xFF10B981), Color(0xFF059669)))).clickable(enabled = !ui.busy) { MeeraCodePatcher.confirmAndPushAtomic(ctx, onOpenTokenVault) }.padding(vertical = 13.dp), contentAlignment = Alignment.Center) {
+                            Box(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(Brush.linearGradient(listOf(Color(0xFF10B981), Color(0xFF059669))))
+                                    .clickable(enabled = !ui.busy) { MeeraCodePatcher.confirmAndPushAtomic(ctx, onOpenTokenVault) }
+                                    .padding(vertical = 13.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
                                 Text("🚀 Confirm & Push to v2-test", color = Color.White, fontSize = 14.5.sp, fontWeight = FontWeight.ExtraBold)
                             }
                         }
@@ -850,21 +2077,97 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
             }
 
             if (ui.buildStatus.isNotBlank()) {
-                val borderCol = when (ui.buildStatus) { "SUCCESS" -> Color(0xFF2EE6A8); "FAILURE" -> Color(0xFFFF6B6B); else -> Color(0xFFFFB84D) }
-                Surface(color = Color(0xFF12192E), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().border(1.dp, borderCol, RoundedCornerShape(16.dp))) {
+                val borderCol = when (ui.buildStatus) {
+                    "SUCCESS" -> Color(0xFF2EE6A8)
+                    "FAILURE" -> Color(0xFFFF6B6B)
+                    else -> Color(0xFFFFB84D)
+                }
+                Surface(
+                    color = Color(0xFF12192E),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, borderCol, RoundedCornerShape(16.dp))
+                ) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("3. GitHub Actions APK Build Status:", color = borderCol, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
                         Text(ui.buildSummaryText, color = Color.White, fontSize = 12.5.sp)
                         if (ui.buildStatus == "SUCCESS") {
-                            Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color(0xFF2EE6A8)).clickable { MeeraUpdater.checkAndInstallUpdate(ctx) }.padding(vertical = 11.dp), contentAlignment = Alignment.Center) { Text("⬇️ नया APK इंस्टॉल करें (1-Tap Update)", color = Color(0xFF090D18), fontSize = 13.5.sp, fontWeight = FontWeight.ExtraBold) }
+                            Box(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color(0xFF2EE6A8))
+                                    .clickable { MeeraUpdater.checkAndInstallUpdate(ctx) }
+                                    .padding(vertical = 11.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("⬇️ नया APK इंस्टॉल करें (1-Tap Update)", color = Color(0xFF090D18), fontSize = 13.5.sp, fontWeight = FontWeight.ExtraBold)
+                            }
                         }
                         if (ui.buildStatus == "FAILURE") {
                             if (ui.failureCompilerError.isNotBlank()) {
-                                Text(ui.failureCompilerError, color = Color(0xFFFF9494), fontSize = 11.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.fillMaxWidth().background(Color(0xFF1F0A10), RoundedCornerShape(8.dp)).padding(8.dp))
+                                Text(
+                                    ui.failureCompilerError,
+                                    color = Color(0xFFFF9494),
+                                    fontSize = 11.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(Color(0xFF1F0A10), RoundedCornerShape(8.dp))
+                                        .padding(8.dp)
+                                )
                             }
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Box(Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).background(Color(0xFF16203A)).border(1.dp, Color(0xFF38BDF8), RoundedCornerShape(10.dp)).clickable { val uri = ui.failureReportUri; if (uri != null) MeeraRepoExporter.launchShareSheet(ctx, uri) else { val cb = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager; cb.setPrimaryClip(ClipData.newPlainText("BuildFailureReport", ui.failureReportText)); Toast.makeText(ctx, "Report कॉपी हो गई!", Toast.LENGTH_SHORT).show() } }.padding(vertical = 9.dp), contentAlignment = Alignment.Center) { Text("📤 Error Report शेयर करें", color = Color(0xFF38BDF8), fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
-                                Box(Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).background(Color(0xFF5B8CFF)).clickable(enabled = !ui.busy) { currentTab = 0; MeeraCodePatcher.generateAiPatchFromInstruction(ctx, "Fix this exact Kotlin compilation error:\n${ui.failureCompilerError}") }.padding(vertical = 9.dp), contentAlignment = Alignment.Center) { Text("🤖 Hydrogen Auto-Fix", color = Color.White, fontSize = 11.5.sp, fontWeight = FontWeight.Bold) }
+
+                            Text("🤖 किस मॉडल से Build Error फिक्स करवाना है चुनें:", color = Color(0xFF2EE6A8), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                ui.curatedModels.forEachIndexed { idx, mId ->
+                                    Box(
+                                        Modifier
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(if (idx == 0) Color(0xFF5B8CFF) else Color(0xFF16203A))
+                                            .border(1.dp, if (idx == 0) Color(0xFF2EE6A8) else Color(0xFF38BDF8), RoundedCornerShape(10.dp))
+                                            .clickable(enabled = !ui.busy) {
+                                                currentTab = 0
+                                                MeeraCodePatcher.triggerBuildAutoFix(ctx, mId, allowFallback = false)
+                                            }
+                                            .padding(horizontal = 11.dp, vertical = 9.dp)
+                                    ) {
+                                        Text(
+                                            "${MeeraCodePatcher.friendlyModelLabel(mId)} Fix",
+                                            color = Color.White,
+                                            fontSize = 11.5.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+
+                            Box(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0xFF16203A))
+                                    .border(1.dp, Color(0xFF38BDF8), RoundedCornerShape(10.dp))
+                                    .clickable {
+                                        val uri = ui.failureReportUri
+                                        if (uri != null) {
+                                            MeeraRepoExporter.launchShareSheet(ctx, uri)
+                                        } else {
+                                            val cb = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                            cb.setPrimaryClip(ClipData.newPlainText("BuildFailureReport", ui.failureReportText))
+                                            Toast.makeText(ctx, "Report कॉपी हो गई!", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                    .padding(vertical = 9.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("📤 Error Report शेयर / कॉपी करें", color = Color(0xFF38BDF8), fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -872,8 +2175,19 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
             }
 
             if (ui.previousCommitSha.isNotBlank()) {
-                TextButton(enabled = !ui.busy, onClick = { MeeraCodePatcher.rollbackLastPush(ctx) }, modifier = Modifier.fillMaxWidth()) { Text("↩️ Undo Last Push (पिछला वर्किंग वर्ज़न ${ui.previousCommitSha.take(7)} वापस लाएँ)", color = Color(0xFFFFB84D), fontSize = 12.sp) }
+                TextButton(
+                    enabled = !ui.busy,
+                    onClick = { MeeraCodePatcher.rollbackLastPush(ctx) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        "↩️ Undo Last Push (पिछला वर्किंग वर्ज़न ${ui.previousCommitSha.take(7)} वापस लाएँ)",
+                        color = Color(0xFFFFB84D),
+                        fontSize = 12.sp
+                    )
+                }
             }
         }
     }
 }
+
