@@ -47,18 +47,51 @@ object Cfg {
     )
 
     val VOICES = listOf(
+        // --- 14 Feminine Voices (Meera) ---
         "Aoede" to "Aoede (Meera — मधुर और एक्सप्रेसिव)",
         "Kore" to "Kore (Meera — साफ़ और संतुलित)",
         "Leda" to "Leda (Meera — सौम्य और नेचुरल)",
         "Zephyr" to "Zephyr (Meera — हल्की और ऊर्जावान)",
         "Despina" to "Despina (Meera — वार्म और फ्रेंडली)",
         "Callirrhoe" to "Callirrhoe (Meera — शांत और स्पष्ट)",
+        "Autonoe" to "Autonoe (Meera — खुशनुमा और जिंदादिल)",
+        "Erinome" to "Erinome (Meera — बेहद साफ़ और मीठी)",
+        "Laomedeia" to "Laomedeia (Meera — नटखट और चंचल)",
+        "Pulcherrima" to "Pulcherrima (Meera — बेबाक और एक्सप्रेसिव)",
+        "Vindemiatrix" to "Vindemiatrix (Meera — कोमल और सुकून भरी)",
+        "Sulafat" to "Sulafat (Meera — प्यार और अपनापन भरी)",
+        "Achernar" to "Achernar (Meera — मुलायम और मधुर)",
+        "Gacrux" to "Gacrux (Meera — परिपक्व और शालीन)",
+        // --- 16 Masculine Voices (Jarvis & Rudra) ---
         "Orus" to "Orus (Jarvis — स्पष्ट और कमांडिंग)",
+        "Schedar" to "Schedar (Jarvis — संतुलित और प्रोफेशनल)",
+        "Iapetus" to "Iapetus (Jarvis — सटीक और स्पष्ट)",
+        "Sadaltager" to "Sadaltager (Jarvis — समझदार और शांत)",
+        "Achird" to "Achird (Jarvis — दोस्ताना और सहज)",
+        "Sadachbia" to "Sadachbia (Jarvis — एनर्जेटिक और चुस्त)",
         "Puck" to "Puck (Jarvis/Rudra — तेज़ और दोस्ताना)",
         "Fenrir" to "Fenrir (Rudra — गहरी और दमदार)",
         "Charon" to "Charon (Rudra — गंभीर और भारी)",
-        "Alnilam" to "Alnilam (Rudra — बोल्ड और स्ट्रॉन्ग)"
+        "Alnilam" to "Alnilam (Rudra — बोल्ड और स्ट्रॉन्ग)",
+        "Algenib" to "Algenib (Rudra — भारी और रौबदार)",
+        "Enceladus" to "Enceladus (Rudra — गहरी और सॉफ्ट-इंटीमेट)",
+        "Rasalgethi" to "Rasalgethi (Rudra — दमदार और मैच्योर)",
+        "Algieba" to "Algieba (Rudra — स्मूद और गंभीर)",
+        "Umbriel" to "Umbriel (Rudra — गहरी और रिलैक्स्ड)",
+        "Zubenelgenubi" to "Zubenelgenubi (Rudra — बेबाक और देसी टच)"
     )
+
+    val VOICE_STYLE_PRESETS = listOf(
+        "AUTO" to "🎭 Auto (Persona के हिसाब से नेचुरल)",
+        "ROMANTIC_SOFT" to "💖 Romantic & Soft (प्यार भरी और नर्म)",
+        "PLAYFUL_NAKHRA" to "😜 Playful & Natkhat (नटखट और चुलबुली)",
+        "WHISPER_INTIMATE" to "🤫 Soft Whisper (धीमी और करीब से)",
+        "ENERGETIC_CHEERFUL" to "⚡ Energetic & Excited (जोश और खुशी भरी)",
+        "CALM_SOOTHING" to "🌿 Calm & Soothing (शांत और सुकून देने वाली)",
+        "BOLD_COMMANDING" to "🔥 Bold & Commanding (दमदार और रौबदार)"
+    )
+
+    @Volatile var activeVoiceStyle: String = "AUTO" 
 
     const val IN_RATE = 16000
     const val OUT_RATE = 24000
@@ -128,6 +161,13 @@ class Prefs(ctx: Context) {
     var voice: String
         get() = sp.getString("voice", "Aoede") ?: "Aoede"
         set(v) { sp.edit().putString("voice", v).apply() }
+
+    var voiceStyle: String
+        get() = (sp.getString("voice_style", "AUTO") ?: "AUTO").also { Cfg.activeVoiceStyle = it }
+        set(v) {
+            Cfg.activeVoiceStyle = v
+            sp.edit().putString("voice_style", v).apply()
+        }
 
     var liveModel: String
         get() = sp.getString("live_model", Cfg.LIVE_MODELS.first()) ?: Cfg.LIVE_MODELS.first()

@@ -420,14 +420,32 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
 
                     val vTag = Cfg.VOICES.firstOrNull { it.first == ui.voice }?.second?.substringAfter("(")?.substringBefore(" —") ?: ""
                     val vWarn = if (vTag.isNotEmpty() && !vTag.split("/").contains(ui.persona)) "  ⚠️ $vTag की आवाज़" else ""
-                    DropSection("आवाज़ चुनें (Google Voices)", "🔊 ${ui.voice}$vWarn", openSec == "voice", { openSec = if (openSec == "voice") "" else "voice" }) {
-                        listOf("Meera" to "Meera की आवाज़ें", "Jarvis" to "Jarvis की आवाज़ें", "Jarvis/Rudra" to "Jarvis / Rudra दोनों की आवाज़", "Rudra" to "Rudra की आवाज़ें").forEach { (tag, heading) ->
+                    DropSection("आवाज़ चुनें (All 30 Google Voices)", "🔊 ${ui.voice}$vWarn", openSec == "voice", { openSec = if (openSec == "voice") "" else "voice" }) {
+                        listOf(
+                            "Meera" to "Meera की आवाज़ें (14 Feminine Voices)",
+                            "Jarvis" to "Jarvis की आवाज़ें (6 Masculine Voices)",
+                            "Jarvis/Rudra" to "Jarvis / Rudra दोनों की आवाज़",
+                            "Rudra" to "Rudra की आवाज़ें (9 Deep Masculine Voices)"
+                        ).forEach { (tag, heading) ->
                             val group = Cfg.VOICES.filter { it.second.substringAfter("(").substringBefore(" —") == tag }
                             if (group.isNotEmpty()) {
                                 Text("— $heading —", color = AccentCyan, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 24.dp, vertical = 6.dp))
                                 group.forEach { (vCode, vLabel) ->
                                     ModeRow("🔊 $vCode", vLabel, ui.voice == vCode) { vm.setVoice(vCode); openSec = "" }
                                 }
+                            }
+                        }
+                    }
+
+                    val voicePrefs = remember { Prefs(orbCtx) }
+                    var curVoiceStyle by remember { mutableStateOf(voicePrefs.voiceStyle) }
+                    val curStyleLabel = Cfg.VOICE_STYLE_PRESETS.firstOrNull { it.first == curVoiceStyle }?.second ?: "🎭 Auto"
+                    DropSection("आवाज़ का अंदाज़ (HD Voice Emotion)", curStyleLabel, openSec == "voice_style", { openSec = if (openSec == "voice_style") "" else "voice_style" }) {
+                        Cfg.VOICE_STYLE_PRESETS.forEach { (stCode, stLabel) ->
+                            ModeRow(stLabel, "Modular HD TTS Expression Style", curVoiceStyle == stCode) {
+                                curVoiceStyle = stCode
+                                voicePrefs.voiceStyle = stCode
+                                openSec = ""
                             }
                         }
                     }

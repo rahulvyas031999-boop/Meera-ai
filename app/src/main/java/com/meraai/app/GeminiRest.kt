@@ -333,10 +333,18 @@ Reply with ONLY valid compact JSON: {"tool":"...","args":{...},"mark_done_step":
         gfMode: Boolean = true
     ): ByteArray = withContext(Dispatchers.IO) {
         var last: Exception? = null
-        val stylePrompt = when (persona) {
-            "Jarvis" -> "crisp, composed, intelligent, confident, and sharp"
-            "Rudra" -> "deep, bold, commanding, fearless, and grounded"
-            else -> if (gfMode) "warm, playful, affectionate, expressive, and natural like a close companion" else "warm, friendly, natural, and conversational"
+        val stylePrompt = when (Cfg.activeVoiceStyle) {
+            "ROMANTIC_SOFT" -> "very soft, romantic, deeply affectionate, warm, and tender"
+            "PLAYFUL_NAKHRA" -> "playful, teasing, cute, lively, and expressive with a light smile"
+            "WHISPER_INTIMATE" -> "soft, breathy, close-mic whisper, gentle, and intimate"
+            "ENERGETIC_CHEERFUL" -> "bright, energetic, excited, upbeat, and cheerful"
+            "CALM_SOOTHING" -> "calm, slow-paced, soothing, peaceful, and comforting"
+            "BOLD_COMMANDING" -> "deep, bold, authoritative, powerful, and fearless"
+            else -> when (persona) {
+                "Jarvis" -> "crisp, composed, intelligent, confident, and sharp"
+                "Rudra" -> "deep, bold, commanding, fearless, and grounded"
+                else -> if (gfMode) "warm, playful, affectionate, expressive, and natural like a close companion" else "warm, friendly, natural, and conversational"
+            }
         }
         val ttsList = (listOf(preferredTts) + Cfg.TTS_MODELS).distinct()
         for (ttsModel in ttsList) {
