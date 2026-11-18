@@ -311,7 +311,7 @@ Reply with ONLY valid compact JSON: {"tool":"...","args":{...},"mark_done_step":
         }
     }
 
-    // ---------- 2.9 Vision Analysis ----------
+    // ---------- 2.9 Vision Analysis (Multi-Model Fallback so HTTP 503 never breaks UI Vision) ----------
     suspend fun analyzeScreenVisually(bitmap: android.graphics.Bitmap, prompt: String): String = withContext(Dispatchers.IO) {
         val bos = java.io.ByteArrayOutputStream()
         bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, bos)
@@ -320,8 +320,20 @@ Reply with ONLY valid compact JSON: {"tool":"...","args":{...},"mark_done_step":
             JSONObject().put("role", "user").put("parts", JSONArray()
                 .put(JSONObject().put("inlineData", JSONObject().put("mimeType", "image/jpeg").put("data", b64Img)))
                 .put(JSONObject().put("text", prompt)))))
-        val resp = http.newCall(request("gemini-3.8-flash", "generateContent", body)).await().okOrThrow()
-        resp.use { textOf(JSONObject(it.body!!.string())).trim() }
+        var lastErr: Exception? = null
+        for (vm in listOf("gemini-3.8-flash", "gemini-3.5-flash", "gemini-flash-lite-latest")) {
+            try {
+                val resp = http.newCall(request(vm, "generateContent", body)).await().okOrThrow()
+                val out = resp.use { textOf(JSONObject(it.body!!.string())).trim() }
+                if (out.isNotBlank()) return@withContext out
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                lastErr = e
+                MeeraDebugLog.log("VISION_FALLBACK", "Model $vm failed: ${e.message}")
+            }
+        }
+        throw (lastErr ?: IOException("Vision analysis failed on all fallback models"))
     }
 
     // ---------- 3. Expressive TTS (Persona Style Directing + Glitch-Free WAV Parser) ----------

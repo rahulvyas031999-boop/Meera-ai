@@ -23,6 +23,7 @@ object MeeraDebugLog {
     @Volatile private var hooked = false
 
     fun log(tag: String, msg: String) {
+        if (tag == "WAKE" && (msg.startsWith("peak score 0.0") || msg.startsWith("peak score 0.1"))) return
         val t = SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date())
         lines.add("$t [$tag] ${msg.take(300)}")
         while (lines.size > 200) lines.removeAt(0)

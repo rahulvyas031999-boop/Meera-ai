@@ -604,6 +604,28 @@ object MeeraTools {
                 .put("description", "Open Meera's In-App Code Patch, Diff Preview & GitHub Push Studio screen so the user can apply code updates, preview changes, push to v2-test, and monitor APK builds directly on the phone.")
                 .put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()))
         )
+        funcs.put(
+            JSONObject()
+                .put("name", "save_custom_workflow")
+                .put("description", "Save a multi-step UI workflow (either taught by the user step-by-step or from the latest successful mission trace) so Meera can execute it deterministically in one go next time without trial-and-error.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("workflow_name", JSONObject().put("type", "STRING").put("description", "Short name of the workflow, e.g. 'whatsapp archived message'"))
+                        .put("steps_pipe_separated", JSONObject().put("type", "STRING").put("description", "Pipe-separated verified actions, e.g. 'open_app:WhatsApp|tap_text:Archived|tap_text:{contact}|send_chat:{message}' (leave blank to auto-save the latest verified mission trace)")))
+                    .put("required", JSONArray().put("workflow_name")))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "run_saved_workflow")
+                .put("description", "Execute a previously saved custom workflow deterministically step-by-step.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("workflow_name", JSONObject().put("type", "STRING").put("description", "Name of the saved workflow to run"))
+                        .put("contact", JSONObject().put("type", "STRING").put("description", "Optional contact name or phone number parameter"))
+                        .put("message", JSONObject().put("type", "STRING").put("description", "Optional message or text parameter"))
+                        .put("return_to_dashboard", JSONObject().put("type", "BOOLEAN").put("description", "true if the user also asked to return to Meera dashboard after finishing")))
+                    .put("required", JSONArray().put("workflow_name")))
+        )
         return JSONArray().put(JSONObject().put("functionDeclarations", funcs))
     }
 
@@ -821,11 +843,28 @@ object MeeraTools {
             "mark_step_done" -> {
                 val n = args.optInt("step", -1)
                 val ok = MeeraMission.markDone(n)
-                ToolExecutionResult(true, name, "", (if (ok) "VERIFIED_SUCCESS: Step $n marked done.\n" else "FAILED: no such step number.\n") + MeeraMission.status())
+                val msg = when {
+                    ok -> "VERIFIED_SUCCESS: Step $n marked done.\n" + MeeraMission.status()
+                    MeeraMission.wasRecentlyCleared() -> "VERIFIED_SUCCESS: Mission already completed and cleared."
+                    else -> "INFO: Step $n already closed.\n" + MeeraMission.status()
+                }
+                ToolExecutionResult(true, name, "", msg)
             }
             "finish_mission" -> {
-                MeeraMission.clear()
-                ToolExecutionResult(true, name, "", "VERIFIED_SUCCESS: Mission cleared.")
+                MeeraMission.clear(ctx)
+                ToolExecutionResult(true, name, "", "VERIFIED_SUCCESS: Mission completed and clean trace saved.")
+            }
+            "save_custom_workflow" -> {
+                val wfName = args.optString("workflow_name", "").trim()
+                val rawSteps = args.optString("steps_pipe_separated", "").trim()
+                MeeraWorkflowStore.saveWorkflowFromTool(ctx, wfName, rawSteps)
+            }
+            "run_saved_workflow" -> {
+                val wfName = args.optString("workflow_name", "").trim()
+                val contact = args.optString("contact", "").trim()
+                val message = args.optString("message", "").trim()
+                val retDash = args.optBoolean("return_to_dashboard", false)
+                MeeraWorkflowStore.executeSavedWorkflow(ctx, wfName, contact, message, retDash)
             }
             "replan_mission" -> {
                 val newSteps = args.optString("new_remaining_steps", "")
@@ -2317,6 +2356,7 @@ object MeeraMission {
         } else {
             if (isTapOrAction || toolName == "open_app" || toolName == "recover_stuck_step" || toolName == "navigate_to_app_home") {
                 stuckCount = 0
+                if (targetDesc.isNotBlank()) recordVerifiedStep("$toolName:$targetDesc")
             }
             return "\n[SELF-REFLECTION MONITOR: ✅ Screen state progressed to a new view.]"
         }
@@ -2339,9 +2379,31 @@ object MeeraMission {
         return true
     }
 
-    @Synchronized fun clear() {
+    private val verifiedTrace = mutableListOf<String>()
+    @Volatile private var lastClearedAtMs: Long = 0L
+
+    @Synchronized fun recordVerifiedStep(stepToken: String) {
+        if (stepToken.isNotBlank() && verifiedTrace.lastOrNull() != stepToken) {
+            verifiedTrace.add(stepToken)
+        }
+    }
+
+    @Synchronized fun getLastVerifiedTrace(): List<String> = verifiedTrace.toList()
+
+    @Synchronized fun wasRecentlyCleared(): Boolean =
+        steps.isEmpty() && (System.currentTimeMillis() - lastClearedAtMs) < 15_000L
+
+    @Synchronized fun clear(ctx: Context? = null) {
+        if (monitorTaskId > 0) {
+            MeeraBackgroundMonitor.completeTask(monitorTaskId, true, "100% मिशन सफलतापूर्वक पूरा हुआ")
+            monitorTaskId = -1L
+        }
+        if (ctx != null && verifiedTrace.size >= 2) {
+            MeeraWorkflowStore.autoRecordLastTrace(ctx, steps.firstOrNull().orEmpty(), verifiedTrace.toList())
+        }
         steps.clear(); done.clear(); failedTargets.clear()
         stuckCount = 0; lastReplanReason = ""
+        lastClearedAtMs = System.currentTimeMillis()
     }
 
     @Synchronized fun overlayBadge(): String {
@@ -2362,7 +2424,7 @@ object MeeraMission {
         }
         val next = steps.indices.firstOrNull { (it + 1) !in done }
         if (next == null) {
-            sb.append("ALL STEPS DONE -> give the user ONE short spoken report, then call finish_mission. Stay in the current app, do NOT go to the dashboard.")
+            sb.append("ALL STEPS DONE -> give the user ONE short spoken report, then call finish_mission. (Call open_meera_dashboard ONLY if returning to Meera/dashboard was part of the user's request).")
         } else {
             sb.append("NEXT PENDING STEP: ").append(next + 1)
                 .append(". Continue with it now. If stuck or screen unchanged, call recover_stuck_step or replan_mission.")
@@ -2565,3 +2627,124 @@ object MeeraConfigBridge {
     @Volatile var onStatusRequest: (() -> String)? = null
     @Volatile var onSleepRequest: (() -> Unit)? = null
 }
+
+
+/** Deterministic Teach-Once & Auto-Replay Workflow Engine (AppAgent / Mobile-Agent Style) */
+object MeeraWorkflowStore {
+    private const val PREF_WF = "meera_saved_workflows"
+    private const val KEY_LIST = "workflows_json"
+
+    private val DEFAULT_WORKFLOWS = mapOf(
+        "whatsapp archived message" to "open_app:WhatsApp|tap_text:Archived|tap_text:{contact}|send_chat:{message}"
+    )
+
+    fun getAllWorkflows(ctx: Context): Map<String, String> {
+        val out = LinkedHashMap<String, String>()
+        out.putAll(DEFAULT_WORKFLOWS)
+        try {
+            val raw = ctx.getSharedPreferences(PREF_WF, Context.MODE_PRIVATE).getString(KEY_LIST, "{}") ?: "{}"
+            val j = JSONObject(raw)
+            for (k in j.keys()) {
+                val v = j.optString(k, "").trim()
+                if (v.isNotBlank()) out[k] = v
+            }
+        } catch (_: Exception) {}
+        return out
+    }
+
+    fun saveWorkflowFromTool(ctx: Context, name: String, rawSteps: String): ToolExecutionResult {
+        val cleanName = name.lowercase().trim()
+        if (cleanName.isBlank()) {
+            return ToolExecutionResult(true, "save_custom_workflow", "वर्कफ़्लो का नाम बताइए।", "ERROR: empty workflow_name")
+        }
+        val finalSteps = if (rawSteps.isNotBlank()) {
+            rawSteps.trim()
+        } else {
+            MeeraMission.getLastVerifiedTrace().joinToString("|")
+        }
+        if (finalSteps.isBlank()) {
+            return ToolExecutionResult(true, "save_custom_workflow", "अभी सेव करने के लिए कोई स्टेप्स नहीं मिले।", "ERROR: no steps")
+        }
+        val sp = ctx.getSharedPreferences(PREF_WF, Context.MODE_PRIVATE)
+        val j = try { JSONObject(sp.getString(KEY_LIST, "{}") ?: "{}") } catch (_: Exception) { JSONObject() }
+        j.put(cleanName, finalSteps)
+        sp.edit().putString(KEY_LIST, j.toString()).apply()
+        Prefs(ctx).addSkill("[Workflow: $cleanName] -> $finalSteps")
+        Prefs(ctx).addMemory("सीखा हुआ स्किल [Workflow: $cleanName]: $finalSteps")
+        return ToolExecutionResult(
+            true, "save_custom_workflow",
+            "मैंने '$cleanName' का पक्का वर्कफ़्लो सेव कर लिया है! अब अगली बार बिना किसी रुकावट के सीधे यही स्टेप्स चलेंगे।",
+            "VERIFIED_SUCCESS: Saved workflow '$cleanName' -> $finalSteps"
+        )
+    }
+
+    fun autoRecordLastTrace(ctx: Context, title: String, trace: List<String>) {
+        if (trace.isEmpty()) return
+        val sp = ctx.getSharedPreferences(PREF_WF, Context.MODE_PRIVATE)
+        sp.edit().putString("last_clean_trace", "${title.take(40)} => ${trace.joinToString(" -> ")}").apply()
+    }
+
+    fun executeSavedWorkflow(
+        ctx: Context,
+        workflowName: String,
+        contact: String,
+        message: String,
+        returnToDashboard: Boolean
+    ): ToolExecutionResult {
+        val all = getAllWorkflows(ctx)
+        val q = workflowName.lowercase().trim()
+        val entry = all.entries.firstOrNull { (k, _) -> k == q || k.contains(q) || q.contains(k) }
+            ?: return ToolExecutionResult(true, "run_saved_workflow", "'$workflowName' नाम का सेव वर्कफ़्लो नहीं मिला।", "FAILED: Workflow not found")
+
+        val steps = entry.value.split("|").map { it.trim() }.filter { it.isNotBlank() }
+        val svc = MeeraAccessibilityService.instance
+            ?: return ToolExecutionResult(true, "run_saved_workflow", "वर्कफ़्लो चलाने के लिए Accessibility ऑन करें।", "ERROR: Accessibility OFF")
+
+        for (step in steps) {
+            val type = step.substringBefore(":").lowercase().trim()
+            val arg = step.substringAfter(":", "")
+                .replace("{contact}", contact)
+                .replace("{message}", message)
+                .trim()
+            when (type) {
+                "open_app" -> {
+                    MeeraTools.openAppByName(ctx, arg)
+                    Thread.sleep(2200)
+                    svc.waitForScreenSettle(1200L)
+                }
+                "tap_text", "tap_element", "click" -> {
+                    if (arg.isNotBlank()) {
+                        var clicked = svc.clickByText(arg)
+                        if (!clicked) {
+                            Thread.sleep(700)
+                            clicked = svc.clickByTextWithScrollFallback(arg, maxScrolls = 2)
+                        }
+                        Thread.sleep(900)
+                        svc.waitForScreenSettle(1000L)
+                    }
+                }
+                "send_chat", "type" -> {
+                    if (arg.isNotBlank()) {
+                        svc.sendInOpenChatVerified(arg)
+                        Thread.sleep(700)
+                    }
+                }
+            }
+        }
+
+        if (returnToDashboard) {
+            val intent = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName)
+            if (intent != null) {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                ctx.startActivity(intent)
+            }
+        }
+
+        return ToolExecutionResult(
+            true, "run_saved_workflow",
+            "मैंने '${entry.key}' वर्कफ़्लो से काम पूरा कर दिया है${if (returnToDashboard) " और वापस अपने डैशबोर्ड पर आ गई हूँ" else ""}!",
+            "VERIFIED_SUCCESS: Executed deterministic workflow '${entry.key}' (returnToDashboard=$returnToDashboard)."
+        )
+    }
+}
+

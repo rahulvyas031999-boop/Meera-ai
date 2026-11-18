@@ -258,10 +258,15 @@ class MeeraAccessibilityService : AccessibilityService() {
             if (label.length in 1..180) {
                 val rect = Rect()
                 node.getBoundsInScreen(rect)
+                val lowLbl = label.lowercase()
+                val isTopLeftBackBtn = rect.centerX() < 215 && rect.centerY() in 55..320 && rect.width() < 210 &&
+                    (lowLbl.contains("navigate up") || lowLbl == "back" || lowLbl.contains("पीछे") || lowLbl.contains("वापस") ||
+                        resId.lowercase().let { it.contains("back") || it.contains("up") || it.contains("nav") || it == "toolbar" })
                 val kind = when {
                     label == "image(no text)" -> "Image"
                     node.isEditable -> "Input"
                     isMenuDots(label, resId) -> "MenuIcon"
+                    isTopLeftBackBtn -> "TopNavBack"
                     isLeftAvatar(rect, label, resId) -> "Avatar"
                     node.isClickable || node.parent?.isClickable == true -> "Button"
                     else -> "Text"
@@ -278,10 +283,33 @@ class MeeraAccessibilityService : AccessibilityService() {
         }
     }
 
-    /** Tap an element by its #id */
+    @Volatile private var lastSubfolderEnterMs: Long = 0L
+
+    /** Tap an element by its #id (with TopNavBack anti-ping-pong lock & native node click priority) */
     fun tapElementById(id: Int): Boolean {
         if (lastElements.isEmpty()) readScreenElements()
         val el = lastElements.find { it.id == id } ?: return false
+        val lowLabel = el.label.lowercase()
+        val isBackZone = el.kind == "TopNavBack" ||
+            (el.bounds.centerX() < 215 && el.bounds.centerY() in 55..320 && el.bounds.width() < 210 &&
+                (lowLabel.contains("navigate up") || lowLabel == "back" || lowLabel.startsWith("icon:")))
+        if (isBackZone && (System.currentTimeMillis() - lastSubfolderEnterMs) < 10_000L) {
+            MeeraDebugLog.log("GUARD", "Blocked accidental TopNavBack tap on #$id (${el.label}) inside subfolder")
+            return false
+        }
+        if (lowLabel.contains("archived") || lowLabel.contains("archive_header") || lowLabel.contains("आर्काइव")) {
+            lastSubfolderEnterMs = System.currentTimeMillis()
+        }
+        if (!lowLabel.startsWith("icon:") && lowLabel != "clickable_area" && !isBackZone) {
+            val root = rootInActiveWindow
+            val matchedNode = if (root != null) {
+                findExactNode(root, el.label, requireClickable = true)
+                    ?: findExactNode(root, el.label, requireClickable = false)
+            } else null
+            if (matchedNode != null && performClickOnNode(matchedNode)) {
+                return true
+            }
+        }
         if (!el.bounds.isEmpty) {
             return tapCoordinates(el.bounds.exactCenterX(), el.bounds.exactCenterY())
         }
