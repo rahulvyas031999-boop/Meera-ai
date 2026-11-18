@@ -197,7 +197,7 @@ class GeminiRest(private val http: OkHttpClient, private val key: () -> String) 
 
     // ---------- Modular मोड: बोले वाक्य से फोन-टूल पहचानना (Live के function-calling जैसा) ----------
     suspend fun routeCommand(userText: String): Pair<String, JSONObject>? {
-        val sys = """You are a phone-command router for an Android voice assistant. The user text is a speech transcript (Hindi, Hinglish or English) and may contain punctuation or small recognition mistakes. Decide whether the user wants the phone to DO something. Reply with ONLY compact JSON like {"tool":"open_app","args":{"app_name":"WhatsApp"}}. Tools: open_app {app_name}; read_screen {}; screen_action {action_type: click|type|home|back|scroll_down|scroll_up|notifications, target_or_text}; whatsapp_message {contact_name, message}; make_phone_call {contact_name}; play_or_search {query, platform: youtube|google}. If the text is normal conversation, a question, or not a phone action, reply {"tool":"none"}. Never explain."""
+        val sys = """You are a phone-command router for an Android voice assistant. The user text is a speech transcript (Hindi, Hinglish or English) and may contain punctuation or small recognition mistakes. Decide whether the user wants the phone to DO something. Reply with ONLY compact JSON like {"tool":"open_app","args":{"app_name":"WhatsApp"}}. Tools: open_app {app_name}; read_screen {}; screen_action {action_type: click|type|paste|home|back|scroll_down|scroll_up|notifications, target_or_text}; copy_debug_log {}; whatsapp_message {contact_name, message}; make_phone_call {contact_name}; play_or_search {query, platform: youtube|google}. If the text is normal conversation, a question, or not a phone action, reply {"tool":"none"}. Never explain."""
         val body = JSONObject()
             .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", sys))))
             .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", JSONArray().put(JSONObject().put("text", userText)))))
@@ -242,7 +242,8 @@ Given the user's OVERALL GOAL, CURRENT MISSION CHECKLIST, LAST ACTION REFLECTION
    - open_app {"app_name":"..."}
    - navigate_to_app_home {"want_search":true}
    - tap_element {"id":12, "text":"..."}
-   - screen_action {"action_type":"click|type|scroll_down|scroll_up|back", "target_or_text":"..."}
+   - screen_action {"action_type":"click|type|paste|scroll_down|scroll_up|back", "target_or_text":"... (use target_or_text='send' with paste to paste & send immediately)"}
+   - copy_debug_log {}
    - recover_stuck_step {"target_text":"..."}
    - wait_for_screen_text {"text":"...", "mode":"appear", "timeout_seconds":15}
    - whatsapp_message {"contact_name":"...", "message":"..."}
@@ -310,7 +311,7 @@ Reply with ONLY valid compact JSON: {"tool":"...","args":{...},"mark_done_step":
         }
     }
 
-    // ---------- 2.9 Vision Analysis ----------
+    // ---------- 2.9 Vision Analysis (Multi-Model Fallback so HTTP 503 never breaks UI Vision) ----------
     suspend fun analyzeScreenVisually(bitmap: android.graphics.Bitmap, prompt: String): String = withContext(Dispatchers.IO) {
         val bos = java.io.ByteArrayOutputStream()
         bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, bos)
@@ -319,8 +320,20 @@ Reply with ONLY valid compact JSON: {"tool":"...","args":{...},"mark_done_step":
             JSONObject().put("role", "user").put("parts", JSONArray()
                 .put(JSONObject().put("inlineData", JSONObject().put("mimeType", "image/jpeg").put("data", b64Img)))
                 .put(JSONObject().put("text", prompt)))))
-        val resp = http.newCall(request("gemini-3.8-flash", "generateContent", body)).await().okOrThrow()
-        resp.use { textOf(JSONObject(it.body!!.string())).trim() }
+        var lastErr: Exception? = null
+        for (vm in listOf("gemini-3.8-flash", "gemini-3.5-flash", "gemini-flash-lite-latest")) {
+            try {
+                val resp = http.newCall(request(vm, "generateContent", body)).await().okOrThrow()
+                val out = resp.use { textOf(JSONObject(it.body!!.string())).trim() }
+                if (out.isNotBlank()) return@withContext out
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                lastErr = e
+                MeeraDebugLog.log("VISION_FALLBACK", "Model $vm failed: ${e.message}")
+            }
+        }
+        throw (lastErr ?: IOException("Vision analysis failed on all fallback models"))
     }
 
     // ---------- 3. Expressive TTS (Persona Style Directing + Glitch-Free WAV Parser) ----------
@@ -332,10 +345,18 @@ Reply with ONLY valid compact JSON: {"tool":"...","args":{...},"mark_done_step":
         gfMode: Boolean = true
     ): ByteArray = withContext(Dispatchers.IO) {
         var last: Exception? = null
-        val stylePrompt = when (persona) {
-            "Jarvis" -> "crisp, composed, intelligent, confident, and sharp"
-            "Rudra" -> "deep, bold, commanding, fearless, and grounded"
-            else -> if (gfMode) "warm, playful, affectionate, expressive, and natural like a close companion" else "warm, friendly, natural, and conversational"
+        val stylePrompt = when (Cfg.activeVoiceStyle) {
+            "ROMANTIC_SOFT" -> "very soft, romantic, deeply affectionate, warm, and tender"
+            "PLAYFUL_NAKHRA" -> "playful, teasing, cute, lively, and expressive with a light smile"
+            "WHISPER_INTIMATE" -> "soft, breathy, close-mic whisper, gentle, and intimate"
+            "ENERGETIC_CHEERFUL" -> "bright, energetic, excited, upbeat, and cheerful"
+            "CALM_SOOTHING" -> "calm, slow-paced, soothing, peaceful, and comforting"
+            "BOLD_COMMANDING" -> "deep, bold, authoritative, powerful, and fearless"
+            else -> when (persona) {
+                "Jarvis" -> "crisp, composed, intelligent, confident, and sharp"
+                "Rudra" -> "deep, bold, commanding, fearless, and grounded"
+                else -> if (gfMode) "warm, playful, affectionate, expressive, and natural like a close companion" else "warm, friendly, natural, and conversational"
+            }
         }
         val ttsList = (listOf(preferredTts) + Cfg.TTS_MODELS).distinct()
         for (ttsModel in ttsList) {

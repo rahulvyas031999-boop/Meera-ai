@@ -244,7 +244,7 @@ object MeeraTools {
                         .put("type", "OBJECT")
                         .put(
                             "properties", JSONObject()
-                                .put("action_type", JSONObject().put("type", "STRING").put("description", "One of: click, type, home, back, scroll_down, scroll_up, notifications"))
+                                .put("action_type", JSONObject().put("type", "STRING").put("description", "One of: click, type, paste, home, back, scroll_down, scroll_up, notifications (with paste, set target_or_text='send' to paste and send)"))
                                 .put("target_or_text", JSONObject().put("type", "STRING").put("description", "Button text to click, or message text to type"))
                         )
                         .put("required", JSONArray().put("action_type"))
@@ -497,7 +497,7 @@ object MeeraTools {
         funcs.put(
             JSONObject()
                 .put("name", "switch_system_config")
-                .put("description", "Switch personality (Meera, Jarvis, Rudra), change voice (Aoede, Orus, Fenrir, Kore, Leda, Zephyr, Despina, Callirrhoe, Puck, Charon, Alnilam), toggle Girlfriend mode, or switch engine mode (LIVE or MODULAR) WITHOUT turning off the microphone. Call this immediately when the user says 'Jarvis se baat karao', 'Jarvis mode on karo', 'Rudra ko bulao', 'Meera ko bulao', 'aawaz badlo', or 'Modular/Live mode me aao'.")
+                .put("description", "Switch personality (Meera, Jarvis, Rudra), change voice (Aoede, Orus, Fenrir, Kore, Leda, Zephyr, Despina, Callirrhoe, Puck, Charon, Alnilam), toggle Girlfriend mode, or switch engine mode (LIVE or MODULAR) WITHOUT turning off the microphone. Call this ONLY when the user is clearly commanding a switch right now (never for questions or casual mentions; if unsure, ask the user to confirm first), for example when the user says 'Jarvis se baat karao', 'Jarvis mode on karo', 'Rudra ko bulao', 'Meera ko bulao', 'aawaz badlo', or 'Modular/Live mode me aao'.")
                 .put("parameters", JSONObject().put("type", "OBJECT")
                     .put("properties", JSONObject()
                         .put("persona", JSONObject().put("type", "STRING").put("description", "Meera, Jarvis, or Rudra"))
@@ -519,6 +519,112 @@ object MeeraTools {
                 .put("name", "get_system_status")
                 .put("description", "Get complete real-time status of Meera AI's architecture, active personality, all 3 personalities (Meera, Jarvis, Rudra), voices, Live/Modular mode, active AI models, tabs, and granted Android permissions.")
                 .put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()))
+        )
+                funcs.put(
+            JSONObject()
+                .put("name", "copy_debug_log")
+                .put("description", "Copy Meera AI's internal debugging logs directly to the Android system clipboard so they can be pasted into any app.")
+                .put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()))
+        )
+                funcs.put(
+            JSONObject()
+                .put("name", "spawn_custom_agent")
+                .put("description", "EXPLICIT-ONLY: Create and run a custom domain-expert sub-agent ONLY when the user explicitly asks to create or use an agent (e.g. 'agent banao'). NEVER call automatically. If the user only wants a model such as Hydrogen to write or answer something, do NOT use this, use ask_hydrogen instead. If you are not sure whether the user wants an agent created, ask one short confirmation question first.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("profession", JSONObject().put("type", "STRING").put("description", "Exact specialist role needed, e.g. 'Stand-Up Comedian', 'Suspense Scriptwriter', 'Chartered Accountant', 'Python Architect'"))
+                        .put("task_details", JSONObject().put("type", "STRING").put("description", "Complete details, topic, tone, and requirements of the user's request"))
+                        .put("delivery_mode", JSONObject().put("type", "STRING").put("description", "'speak' for comedy/shayari/short performance, 'document' for code/scripts/plans, or 'auto' (default)")))
+                    .put("required", JSONArray().put("profession").put("task_details")))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "run_termux_command")
+                .put("description", "Run a quick local shell or Python command in Termux on the phone. Only after the user clearly confirmed the exact command.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("command", JSONObject().put("type", "STRING").put("description", "Shell command to run in Termux")))
+                    .put("required", JSONArray().put("command")))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "run_colab_task")
+                .put("description", "Send a heavy coding, Excel/PDF generation, data analysis, or GitHub automation task to the user's connected Google Colab Cloud Backend server.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("task_type", JSONObject().put("type", "STRING").put("description", "Type of task: 'python_exec', 'excel_report', 'github_ops', or 'general'"))
+                        .put("instruction", JSONObject().put("type", "STRING").put("description", "Clear instruction of what Colab should execute"))
+                        .put("payload", JSONObject().put("type", "STRING").put("description", "Optional Python code, JSON data, or script content")))
+                    .put("required", JSONArray().put("instruction")))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "set_colab_url")
+                .put("description", "Save the public HTTPS tunnel URL and the secret word of the user's running Google Colab server so Meera can send heavy tasks to it.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("url", JSONObject().put("type", "STRING").put("description", "Public HTTPS URL from Google Colab (e.g., https://xxx.trycloudflare.com)"))
+                        .put("secret", JSONObject().put("type", "STRING").put("description", "The secret word printed by the Colab cell")))
+                    .put("required", JSONArray().put("url")))
+        )
+                funcs.put(
+            JSONObject()
+                .put("name", "generate_professional_code")
+                .put("description", "Generate complete, production-ready, syntax-verified code (Python, Kotlin, Google Colab FastAPI tunnel, Termux scripts) using Gemini Hydrogen & Pro deep reasoning. Saves code cleanly to Chat Tab & Clipboard without reading raw symbols aloud.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("task_details", JSONObject().put("type", "STRING").put("description", "Exact coding requirement, language, and features needed"))
+                        .put("target_platform", JSONObject().put("type", "STRING").put("description", "Target environment, e.g. 'Google Colab Python', 'Termux Bash', 'Android Kotlin'")))
+                    .put("required", JSONArray().put("task_details")))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "get_task_progress")
+                .put("description", "Get the exact real-time completion percentage (0% to 100%), active step, model used, and elapsed time of Meera's current or latest background task.")
+                .put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "open_background_monitor")
+                .put("description", "Open Meera's Live Background Activity Monitor screen so the user can visually inspect live percentage progress, step logs, and outputs.")
+                .put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()))
+        )
+                funcs.put(
+            JSONObject()
+                .put("name", "ask_hydrogen")
+                .put("description", "Send a writing or thinking task straight to the Gemini Hydrogen model and get its answer, with NO agent or role created. Use this when the user wants Hydrogen (or a strong model) to write or answer something, such as a story, script, article, plan or explanation. For code use generate_professional_code instead. The full answer is saved to the Chat tab and clipboard.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("request", JSONObject().put("type", "STRING").put("description", "The full request as the user wants it: topic, length, language and tone")))
+                    .put("required", JSONArray().put("request")))
+        )
+                funcs.put(
+            JSONObject()
+                .put("name", "open_code_pusher")
+                .put("description", "Open Meera's In-App Code Patch, Diff Preview & GitHub Push Studio screen so the user can apply code updates, preview changes, push to v2-test, and monitor APK builds directly on the phone.")
+                .put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "save_custom_workflow")
+                .put("description", "Save a multi-step UI workflow (either taught by the user step-by-step or from the latest successful mission trace) so Meera can execute it deterministically in one go next time without trial-and-error.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("workflow_name", JSONObject().put("type", "STRING").put("description", "Short name of the workflow, e.g. 'whatsapp archived message'"))
+                        .put("steps_pipe_separated", JSONObject().put("type", "STRING").put("description", "Pipe-separated verified actions, e.g. 'open_app:WhatsApp|tap_text:Archived|tap_text:{contact}|send_chat:{message}' (leave blank to auto-save the latest verified mission trace)")))
+                    .put("required", JSONArray().put("workflow_name")))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "run_saved_workflow")
+                .put("description", "Execute a previously saved custom workflow deterministically step-by-step.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("workflow_name", JSONObject().put("type", "STRING").put("description", "Name of the saved workflow to run"))
+                        .put("contact", JSONObject().put("type", "STRING").put("description", "Optional contact name or phone number parameter"))
+                        .put("message", JSONObject().put("type", "STRING").put("description", "Optional message or text parameter"))
+                        .put("return_to_dashboard", JSONObject().put("type", "BOOLEAN").put("description", "true if the user also asked to return to Meera dashboard after finishing")))
+                    .put("required", JSONArray().put("workflow_name")))
         )
         return JSONArray().put(JSONObject().put("functionDeclarations", funcs))
     }
@@ -571,11 +677,14 @@ object MeeraTools {
     private fun executeFunctionCallInner(ctx: Context, name: String, args: JSONObject): ToolExecutionResult {
         return when (name) {
             "open_meera_dashboard" -> {
+                MeeraTermuxEngine.closeTerminal()
+                MeeraBackgroundMonitor.closeMonitor()
+                MeeraCodePatcher.closeScreen()
                 val intent = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName)
                 if (intent != null) {
                     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
                     ctx.startActivity(intent)
-                    ToolExecutionResult(true, name, "मैं अपने डैशबोर्ड (Meera AI) पर आ गई हूँ।", "VERIFIED_SUCCESS: Opened Meera Dashboard")
+                    ToolExecutionResult(true, name, "ठीक है चलो, वापस डैशबोर्ड पर आ गई हूँ!", "VERIFIED_SUCCESS: Closed Terminal and returned to Meera Home Dashboard")
                 } else ToolExecutionResult(true, name, "डैशबोर्ड नहीं मिला।", "ERROR")
             }
             @Suppress("NewApi")
@@ -685,6 +794,7 @@ object MeeraTools {
                     val ok = when (act) {
                         "click" -> svc.clickByTextWithScrollFallback(target, maxScrolls = 2)
                         "type" -> svc.inputText(target, autoSend = true)
+                        "paste" -> svc.pasteClipboardText(ctx, autoSend = target.equals("send", ignoreCase = true) || target.isEmpty()).first
                         "main_home", "app_home" -> svc.navigateToAppMainScreen(false).isNotBlank()
                         else -> svc.performSystemAction(act)
                     }
@@ -733,11 +843,28 @@ object MeeraTools {
             "mark_step_done" -> {
                 val n = args.optInt("step", -1)
                 val ok = MeeraMission.markDone(n)
-                ToolExecutionResult(true, name, "", (if (ok) "VERIFIED_SUCCESS: Step $n marked done.\n" else "FAILED: no such step number.\n") + MeeraMission.status())
+                val msg = when {
+                    ok -> "VERIFIED_SUCCESS: Step $n marked done.\n" + MeeraMission.status()
+                    MeeraMission.wasRecentlyCleared() -> "VERIFIED_SUCCESS: Mission already completed and cleared."
+                    else -> "INFO: Step $n already closed.\n" + MeeraMission.status()
+                }
+                ToolExecutionResult(true, name, "", msg)
             }
             "finish_mission" -> {
-                MeeraMission.clear()
-                ToolExecutionResult(true, name, "", "VERIFIED_SUCCESS: Mission cleared.")
+                MeeraMission.clear(ctx)
+                ToolExecutionResult(true, name, "", "VERIFIED_SUCCESS: Mission completed and clean trace saved.")
+            }
+            "save_custom_workflow" -> {
+                val wfName = args.optString("workflow_name", "").trim()
+                val rawSteps = args.optString("steps_pipe_separated", "").trim()
+                MeeraWorkflowStore.saveWorkflowFromTool(ctx, wfName, rawSteps)
+            }
+            "run_saved_workflow" -> {
+                val wfName = args.optString("workflow_name", "").trim()
+                val contact = args.optString("contact", "").trim()
+                val message = args.optString("message", "").trim()
+                val retDash = args.optBoolean("return_to_dashboard", false)
+                MeeraWorkflowStore.executeSavedWorkflow(ctx, wfName, contact, message, retDash)
             }
             "replan_mission" -> {
                 val newSteps = args.optString("new_remaining_steps", "")
@@ -843,6 +970,63 @@ object MeeraTools {
             "find_my_phone" -> {
                 findMyPhoneTool(ctx)
             }
+            "copy_debug_log" -> {
+                MeeraDebugLog.copyNow(ctx)
+                val cnt = MeeraDebugLog.lineCount()
+                ToolExecutionResult(
+                    true, name,
+                    "मैंने अपने डीबग लॉग ($cnt लाइनें) क्लिपबोर्ड पर कॉपी कर लिए हैं!",
+                    "VERIFIED_SUCCESS: Copied $cnt lines of Meera debug log to Android system clipboard. Ready to paste."
+                )
+            }
+            "generate_professional_code" -> {
+                val details = args.optString("task_details", "").trim()
+                val plat = args.optString("target_platform", "Python / Google Colab").trim()
+                MeeraAgentFactory.generateProfessionalCode(ctx, details, plat)
+            }
+            "get_task_progress" -> {
+                val report = MeeraBackgroundMonitor.getVoiceProgressReport()
+                ToolExecutionResult(true, name, report, "VERIFIED_SUCCESS: $report")
+            }
+            "open_code_pusher" -> {
+                MeeraCodePatcher.openScreen()
+                ToolExecutionResult(true, name, "मैंने इन-ऐप कोड पुश और बिल्ड स्टूडियो खोल दिया है! आप यहाँ बदलाव लिखकर या पेस्ट करके प्रीव्यू देख सकते हैं और सीधे GitHub पर पुश कर सकते हैं।", "VERIFIED_SUCCESS: Opened Meera Code Push & Build Studio.")
+            }
+            "open_background_monitor" -> {
+                MeeraBackgroundMonitor.openMonitor()
+                val report = MeeraBackgroundMonitor.getVoiceProgressReport()
+                ToolExecutionResult(true, name, "मैंने बैकग्राउंड एक्टिविटी मॉनिटर स्क्रीन खोल दी है। $report", "VERIFIED_SUCCESS: Opened Background Activity Monitor. $report")
+            }
+            "ask_hydrogen" -> {
+                val hReq = args.optString("request", "").trim()
+                MeeraAgentFactory.askHydrogen(ctx, hReq)
+            }
+            "spawn_custom_agent" -> {
+                val prof = args.optString("profession", "Specialist").trim()
+                val details = args.optString("task_details", "").trim()
+                val mode = args.optString("delivery_mode", "auto").trim()
+                MeeraAgentFactory.spawnAndRun(ctx, prof, details, mode)
+            }
+            "run_termux_command" -> {
+                val cmd = args.optString("command", "").trim()
+                MeeraColabBridge.runTermuxCommand(ctx, cmd)
+            }
+            "run_colab_task" -> {
+                val tType = args.optString("task_type", "general").trim()
+                val inst = args.optString("instruction", "").trim()
+                val pay = args.optString("payload", "").trim()
+                MeeraColabBridge.runColabTask(ctx, tType, inst, pay)
+            }
+            "set_colab_url" -> {
+                val u = args.optString("url", "").trim()
+                val sec = args.optString("secret", "meera123").trim()
+                MeeraColabBridge.setServerConfig(ctx, u, sec)
+                ToolExecutionResult(
+                    true, name,
+                    "Google Colab क्लाउड सर्वर का लिंक सेव कर लिया है! अब भारी काम मैं सीधे Colab पर चला सकूँगी।",
+                    "VERIFIED_SUCCESS: Saved Google Colab server URL -> $u"
+                )
+            }
             "play_macro" -> {
                 val macroName = args.optString("name", "").trim()
                 val param = args.optString("param", "").trim()
@@ -926,6 +1110,44 @@ object MeeraTools {
     }
 
     /** Direct Voice Router with Strict Scroll Guard & Smart Intent Separation */
+    private fun classifySwitchIntent(ctx: Context, text: String): String {
+        return try {
+            val key = Prefs(ctx).apiKey
+            if (key.isBlank()) return "not_switch"
+            val prompt = "A voice assistant app has personalities (Meera, Jarvis, Rudra), a Girlfriend mode, and two engine modes (LIVE and MODULAR). " +
+                "Decide what the user's sentence means. Answer with exactly one word: " +
+                "SWITCH if the user is clearly commanding the assistant to change personality, voice, girlfriend mode or engine mode right now; " +
+                "NOT_SWITCH if the user is only asking about, discussing or mentioning these things, or talking about something else; " +
+                "UNSURE if it could be a command but it is not clear.\nUser sentence: " + text
+            val body = JSONObject()
+                .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", JSONArray().put(JSONObject().put("text", prompt)))))
+                .put("generationConfig", JSONObject().put("temperature", 0.0))
+            val mt = with(okhttp3.MediaType.Companion) { "application/json".toMediaType() }
+            val rb = with(okhttp3.RequestBody.Companion) { body.toString().toRequestBody(mt) }
+            val client = okhttp3.OkHttpClient.Builder()
+                .callTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+            val req = okhttp3.Request.Builder()
+                .url("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent")
+                .header("x-goog-api-key", key)
+                .post(rb)
+                .build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@use "not_switch"
+                val j = JSONObject(resp.body?.string() ?: "")
+                val ans = j.optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content")
+                    ?.optJSONArray("parts")?.optJSONObject(0)?.optString("text", "")?.trim()?.uppercase() ?: ""
+                when {
+                    ans.startsWith("UNSURE") -> "unsure"
+                    ans.startsWith("SWITCH") -> "switch"
+                    else -> "not_switch"
+                }
+            }
+        } catch (e: Exception) {
+            "not_switch"
+        }
+    }
+
     fun tryDirectVoiceCommand(ctx: Context, userText: String): ToolExecutionResult {
         val raw = userText.trim().trimEnd('।', '.', '!', '?', ',', ' ')
         val low = raw.lowercase()
@@ -950,7 +1172,15 @@ object MeeraTools {
             low.contains("बात कराओ") || low.contains("baat karao") || low.contains("स्विच") || low.contains("switch") ||
             low.contains("एक्टिवेट") || low.contains("activate") || low.contains("ऑन करो") || low.contains("on karo") ||
             low.contains("बन जाओ") || low.contains("ban jao") || low.contains("पर्सनैलिटी") || low.contains("personality")
-        if (wantsSwitch) {
+        val switchIntent = if (wantsSwitch) classifySwitchIntent(ctx, raw) else "not_switch"
+        if (switchIntent == "unsure") {
+            return ToolExecutionResult(
+                true, "confirm_switch",
+                "क्या आप चाहते हैं कि मैं मोड या पर्सनैलिटी बदल दूँ? अगर हाँ, तो साफ़ बोलिए, जैसे मॉड्यूलर मोड पर चलो।",
+                "VERIFIED_SUCCESS: Asked the user to confirm a mode or personality switch"
+            )
+        }
+        if (switchIntent == "switch") {
             when {
                 low.contains("जारविस") || low.contains("जार्विस") || low.contains("jarvis") -> {
                     val r = MeeraConfigBridge.onConfigChange?.invoke("Jarvis", null, null, null, null)
@@ -1008,6 +1238,10 @@ object MeeraTools {
                 ?: "तुम्हारी याद में नींद कहाँ आती है... ✨❤️"
             return postWhatsAppStatusTool(ctx, customQuote)
         }
+        // 0C. Instagram Reel Auto-Post // (((((((
+        if ((low.contains("reel") || low.contains("रील")) && (low.contains("पोस्ट") || low.contains("डाल") || low.contains("लगा") || low.contains("बना") || low.contains("post") || low.contains("upload") || low.contains("share"))) {
+            return MeeraReelManager.startReelWorkflow(ctx, raw)
+        }
         // 1. Strict Scroll Guard: ONLY scroll when user explicitly says scroll / नीचे स्क्रॉल / ऊपर स्क्रॉल
         if (low.contains("स्क्रॉल डाउन") || low.contains("नीचे स्क्रॉल") || low == "नीचे करो" || low.contains("scroll down")) {
             val ok = MeeraAccessibilityService.instance?.performSystemAction("scroll_down") == true
@@ -1049,6 +1283,16 @@ object MeeraTools {
             if (promptClean.isNotBlank()) return runBuiltinMacro(ctx, "gemini image", promptClean)
         }
 
+        // 2C. Direct Voice Progress % & Background Monitor Check
+        if (low.contains("कितना परसेंट") || low.contains("kitna percent") || low.contains("कितना प्रतिशत") ||
+            low.contains("कितना काम हुआ") || low.contains("kitna kaam hua") || low.contains("प्रोग्रेस क्या") || low.contains("progress kya")
+        ) {
+            return executeFunctionCallInner(ctx, "get_task_progress", JSONObject())
+        }
+        if (low.contains("बैकग्राउंड एक्टिविटी") || low.contains("background activity") || low.contains("क्या कर रही हो दिखाओ") || low.contains("बैकग्राउंड में क्या")) {
+            return executeFunctionCallInner(ctx, "open_background_monitor", JSONObject())
+        }
+
         // 3. Screen Read & Notifications
         if (low.contains("स्क्रीन पढ़") || low.contains("screen padh") || low.contains("स्क्रीन पर क्या") ||
             low.contains("screen par kya") || low.contains("read screen")
@@ -1060,11 +1304,23 @@ object MeeraTools {
             return ToolExecutionResult(true, "read_notifications", "", "RECENT NOTIFICATIONS:\n$notifSummary")
         }
 
-        // 4. Home Screen
-        if (low == "होम स्क्रीन पे आओ" || low == "होम स्क्रीन पर आओ" || low == "go home" || low == "home screen") {
+        // 4. Terminal Auto-Return on "नहीं / और कुछ नहीं करना" + Dashboard/Desktop Navigation
+        val terminalDonePhrases = setOf(
+            "नहीं", "नहीं बस", "नहीं कुछ नहीं", "और कुछ नहीं", "और कुछ नहीं करना", "कुछ नहीं करना",
+            "कुछ नहीं", "बस इतना ही", "बस हो गया", "हो गया", "खत्म", "अब कुछ नहीं",
+            "nahi", "nahin", "nahi bas", "aur kuch nahi", "aur kuch nahi karna", "kuch nahi karna",
+            "kuch nahi", "bas itna hi", "bas", "ho gaya", "no", "nothing", "nothing else", "that's it"
+        )
+        if (MeeraTermuxEngine.terminalVisible.value && (low in terminalDonePhrases || low.contains("और कुछ नहीं") || low.contains("aur kuch nahi") || low.contains("kuch nahi karna"))) {
+            return executeFunctionCallInner(ctx, "open_meera_dashboard", JSONObject())
+        }
+        if (low == "डैशबोर्ड पे जाओ" || low == "डैशबोर्ड पर जाओ" || low == "अपने डैशबोर्ड पर आओ" || low == "dashboard pe jao" || low == "dashboard par jao" || low == "टर्मिनल बंद करो" || low == "terminal band karo") {
+            return executeFunctionCallInner(ctx, "open_meera_dashboard", JSONObject())
+        }
+        if (low == "होम स्क्रीन पे आओ" || low == "होम स्क्रीन पर आओ" || low == "डेस्कटॉप पे जाओ" || low == "डेस्कटॉप पर जाओ" || low == "desktop pe jao" || low == "desktop par jao" || low == "go home" || low == "home screen") {
             val svc = MeeraAccessibilityService.instance
             if (svc != null && svc.performSystemAction("home")) {
-                return ToolExecutionResult(true, "screen_action", "आ गई होम स्क्रीन पर, बताइए अब क्या करना है?", "SUCCESS: Navigated Home")
+                return ToolExecutionResult(true, "screen_action", "आ गई फोन की होम स्क्रीन (डेस्कटॉप) पर, बताइए अब क्या करना है?", "SUCCESS: Navigated to Phone Desktop/Home")
             }
         }
 
@@ -1997,6 +2253,7 @@ object MeeraTools {
 /** Lambe kaam ki checklist + Anti-PingPong Loop & Per-Screen Tap Memory */
 object MeeraMission {
     private val steps = mutableListOf<String>()
+    @Volatile private var monitorTaskId: Long = -1L
     private val done = mutableSetOf<Int>()
     private val failedTargets = mutableSetOf<String>()
     private val recentScreens = ArrayDeque<String>()
@@ -2041,6 +2298,15 @@ object MeeraMission {
             .forEach { steps.add(it) }
         updatedAt = System.currentTimeMillis()
         lastGuidePkg = ""
+        if (steps.isNotEmpty()) {
+            monitorTaskId = MeeraBackgroundMonitor.startTask(
+                title = steps.first().take(50),
+                category = "UI Automation Mission",
+                modelUsed = "Agentic Loop",
+                initialStep = "1/${steps.size}: ${steps.first()}",
+                initialPercent = 5
+            )
+        }
     }
 
     @Synchronized fun replanRemaining(newStepsRaw: String, reason: String = "") {
@@ -2090,6 +2356,7 @@ object MeeraMission {
         } else {
             if (isTapOrAction || toolName == "open_app" || toolName == "recover_stuck_step" || toolName == "navigate_to_app_home") {
                 stuckCount = 0
+                if (targetDesc.isNotBlank()) recordVerifiedStep("$toolName:$targetDesc")
             }
             return "\n[SELF-REFLECTION MONITOR: ✅ Screen state progressed to a new view.]"
         }
@@ -2100,12 +2367,43 @@ object MeeraMission {
         done.add(n)
         stuckCount = 0
         updatedAt = System.currentTimeMillis()
+        if (monitorTaskId > 0 && steps.isNotEmpty()) {
+            val pct = ((done.size * 100) / steps.size).coerceIn(5, 100)
+            val nextStep = steps.indices.firstOrNull { (it + 1) !in done }?.let { "${it + 1}/${steps.size}: ${steps[it]}" } ?: "सभी चरण पूरे हुए"
+            if (done.size >= steps.size) {
+                MeeraBackgroundMonitor.completeTask(monitorTaskId, true, "100% पूरा (${done.size}/${steps.size} चरण)")
+            } else {
+                MeeraBackgroundMonitor.updateProgress(monitorTaskId, pct, nextStep)
+            }
+        }
         return true
     }
 
-    @Synchronized fun clear() {
+    private val verifiedTrace = mutableListOf<String>()
+    @Volatile private var lastClearedAtMs: Long = 0L
+
+    @Synchronized fun recordVerifiedStep(stepToken: String) {
+        if (stepToken.isNotBlank() && verifiedTrace.lastOrNull() != stepToken) {
+            verifiedTrace.add(stepToken)
+        }
+    }
+
+    @Synchronized fun getLastVerifiedTrace(): List<String> = verifiedTrace.toList()
+
+    @Synchronized fun wasRecentlyCleared(): Boolean =
+        steps.isEmpty() && (System.currentTimeMillis() - lastClearedAtMs) < 15_000L
+
+    @Synchronized fun clear(ctx: Context? = null) {
+        if (monitorTaskId > 0) {
+            MeeraBackgroundMonitor.completeTask(monitorTaskId, true, "100% मिशन सफलतापूर्वक पूरा हुआ")
+            monitorTaskId = -1L
+        }
+        if (ctx != null && verifiedTrace.size >= 2) {
+            MeeraWorkflowStore.autoRecordLastTrace(ctx, steps.firstOrNull().orEmpty(), verifiedTrace.toList())
+        }
         steps.clear(); done.clear(); failedTargets.clear()
         stuckCount = 0; lastReplanReason = ""
+        lastClearedAtMs = System.currentTimeMillis()
     }
 
     @Synchronized fun overlayBadge(): String {
@@ -2126,7 +2424,7 @@ object MeeraMission {
         }
         val next = steps.indices.firstOrNull { (it + 1) !in done }
         if (next == null) {
-            sb.append("ALL STEPS DONE -> give the user ONE short spoken report, then call finish_mission. Stay in the current app, do NOT go to the dashboard.")
+            sb.append("ALL STEPS DONE -> give the user ONE short spoken report, then call finish_mission. (Call open_meera_dashboard ONLY if returning to Meera/dashboard was part of the user's request).")
         } else {
             sb.append("NEXT PENDING STEP: ").append(next + 1)
                 .append(". Continue with it now. If stuck or screen unchanged, call recover_stuck_step or replan_mission.")
@@ -2136,6 +2434,10 @@ object MeeraMission {
 
     @Synchronized fun extraContext(pkg: String): String {
         val sb = StringBuilder()
+        val nowStr = java.text.SimpleDateFormat("EEE, dd MMM yyyy hh:mm a", java.util.Locale.getDefault()).format(java.util.Date())
+        val svcInst = MeeraAccessibilityService.instance
+        val hasInputOnScreen = svcInst?.readScreenElements(60, updateCache = false)?.contains("[Input]") == true
+        sb.append("\n[LIVE ENVIRONMENT: ActiveApp=$pkg | Time=$nowStr | InputBoxVisibleOnScreen=$hasInputOnScreen | DebugLogCopied=${MeeraDebugLog.lastCopiedText.isNotBlank()}]")
         val freshNotif = MeeraNotificationService.getFreshUnreadAlert()
         if (freshNotif.isNotEmpty()) sb.append(freshNotif)
         val st = status()
@@ -2325,3 +2627,124 @@ object MeeraConfigBridge {
     @Volatile var onStatusRequest: (() -> String)? = null
     @Volatile var onSleepRequest: (() -> Unit)? = null
 }
+
+
+/** Deterministic Teach-Once & Auto-Replay Workflow Engine (AppAgent / Mobile-Agent Style) */
+object MeeraWorkflowStore {
+    private const val PREF_WF = "meera_saved_workflows"
+    private const val KEY_LIST = "workflows_json"
+
+    private val DEFAULT_WORKFLOWS = mapOf(
+        "whatsapp archived message" to "open_app:WhatsApp|tap_text:Archived|tap_text:{contact}|send_chat:{message}"
+    )
+
+    fun getAllWorkflows(ctx: Context): Map<String, String> {
+        val out = LinkedHashMap<String, String>()
+        out.putAll(DEFAULT_WORKFLOWS)
+        try {
+            val raw = ctx.getSharedPreferences(PREF_WF, Context.MODE_PRIVATE).getString(KEY_LIST, "{}") ?: "{}"
+            val j = JSONObject(raw)
+            for (k in j.keys()) {
+                val v = j.optString(k, "").trim()
+                if (v.isNotBlank()) out[k] = v
+            }
+        } catch (_: Exception) {}
+        return out
+    }
+
+    fun saveWorkflowFromTool(ctx: Context, name: String, rawSteps: String): ToolExecutionResult {
+        val cleanName = name.lowercase().trim()
+        if (cleanName.isBlank()) {
+            return ToolExecutionResult(true, "save_custom_workflow", "वर्कफ़्लो का नाम बताइए।", "ERROR: empty workflow_name")
+        }
+        val finalSteps = if (rawSteps.isNotBlank()) {
+            rawSteps.trim()
+        } else {
+            MeeraMission.getLastVerifiedTrace().joinToString("|")
+        }
+        if (finalSteps.isBlank()) {
+            return ToolExecutionResult(true, "save_custom_workflow", "अभी सेव करने के लिए कोई स्टेप्स नहीं मिले।", "ERROR: no steps")
+        }
+        val sp = ctx.getSharedPreferences(PREF_WF, Context.MODE_PRIVATE)
+        val j = try { JSONObject(sp.getString(KEY_LIST, "{}") ?: "{}") } catch (_: Exception) { JSONObject() }
+        j.put(cleanName, finalSteps)
+        sp.edit().putString(KEY_LIST, j.toString()).apply()
+        Prefs(ctx).addSkill("[Workflow: $cleanName] -> $finalSteps")
+        Prefs(ctx).addMemory("सीखा हुआ स्किल [Workflow: $cleanName]: $finalSteps")
+        return ToolExecutionResult(
+            true, "save_custom_workflow",
+            "मैंने '$cleanName' का पक्का वर्कफ़्लो सेव कर लिया है! अब अगली बार बिना किसी रुकावट के सीधे यही स्टेप्स चलेंगे।",
+            "VERIFIED_SUCCESS: Saved workflow '$cleanName' -> $finalSteps"
+        )
+    }
+
+    fun autoRecordLastTrace(ctx: Context, title: String, trace: List<String>) {
+        if (trace.isEmpty()) return
+        val sp = ctx.getSharedPreferences(PREF_WF, Context.MODE_PRIVATE)
+        sp.edit().putString("last_clean_trace", "${title.take(40)} => ${trace.joinToString(" -> ")}").apply()
+    }
+
+    fun executeSavedWorkflow(
+        ctx: Context,
+        workflowName: String,
+        contact: String,
+        message: String,
+        returnToDashboard: Boolean
+    ): ToolExecutionResult {
+        val all = getAllWorkflows(ctx)
+        val q = workflowName.lowercase().trim()
+        val entry = all.entries.firstOrNull { (k, _) -> k == q || k.contains(q) || q.contains(k) }
+            ?: return ToolExecutionResult(true, "run_saved_workflow", "'$workflowName' नाम का सेव वर्कफ़्लो नहीं मिला।", "FAILED: Workflow not found")
+
+        val steps = entry.value.split("|").map { it.trim() }.filter { it.isNotBlank() }
+        val svc = MeeraAccessibilityService.instance
+            ?: return ToolExecutionResult(true, "run_saved_workflow", "वर्कफ़्लो चलाने के लिए Accessibility ऑन करें।", "ERROR: Accessibility OFF")
+
+        for (step in steps) {
+            val type = step.substringBefore(":").lowercase().trim()
+            val arg = step.substringAfter(":", "")
+                .replace("{contact}", contact)
+                .replace("{message}", message)
+                .trim()
+            when (type) {
+                "open_app" -> {
+                    MeeraTools.openAppByName(ctx, arg)
+                    Thread.sleep(2200)
+                    svc.waitForScreenSettle(1200L)
+                }
+                "tap_text", "tap_element", "click" -> {
+                    if (arg.isNotBlank()) {
+                        var clicked = svc.clickByText(arg)
+                        if (!clicked) {
+                            Thread.sleep(700)
+                            clicked = svc.clickByTextWithScrollFallback(arg, maxScrolls = 2)
+                        }
+                        Thread.sleep(900)
+                        svc.waitForScreenSettle(1000L)
+                    }
+                }
+                "send_chat", "type" -> {
+                    if (arg.isNotBlank()) {
+                        svc.sendInOpenChatVerified(arg)
+                        Thread.sleep(700)
+                    }
+                }
+            }
+        }
+
+        if (returnToDashboard) {
+            val intent = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName)
+            if (intent != null) {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                ctx.startActivity(intent)
+            }
+        }
+
+        return ToolExecutionResult(
+            true, "run_saved_workflow",
+            "मैंने '${entry.key}' वर्कफ़्लो से काम पूरा कर दिया है${if (returnToDashboard) " और वापस अपने डैशबोर्ड पर आ गई हूँ" else ""}!",
+            "VERIFIED_SUCCESS: Executed deterministic workflow '${entry.key}' (returnToDashboard=$returnToDashboard)."
+        )
+    }
+}
+

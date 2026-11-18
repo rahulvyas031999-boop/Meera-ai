@@ -50,6 +50,7 @@ import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -61,6 +62,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -173,6 +175,12 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
     var currentTab by remember { mutableStateOf(NavTab.HOME) }
     var showKey by remember { mutableStateOf(false) }
     var showA11yHub by remember { mutableStateOf(false) }
+    var showGitHubVault by remember { mutableStateOf(false) }
+    var privateRepoPrompt by remember { mutableStateOf(false) }
+    val showTerminal by MeeraTermuxEngine.terminalVisible.collectAsState()
+    val orbCtx = LocalContext.current
+    var orbStyle by remember { mutableStateOf(MeeraOrbPrefs.getStyle(orbCtx)) }
+    var orbSizeDp by remember { mutableFloatStateOf(MeeraOrbPrefs.getSizeDp(orbCtx)) }
     LaunchedEffect(ui.askKey) { if (ui.askKey) { showKey = true; vm.consumeAskKey() } }
 
     val active = ui.state != VState.IDLE && ui.state != VState.ERROR
@@ -224,6 +232,18 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
                     )
 
                     NavigationDrawerItem(
+                        label = { Text("Terminal (Termux Live)") },
+                        icon = { Text("💻") },
+                        badge = {
+                            val termuxOk = MeeraTermuxEngine.hasPermission(orbCtx)
+                            Text(if (termuxOk) "रेडी ✓" else "सेटअप", color = if (termuxOk) AccentCyan else Color(0xFFFFB84D))
+                        },
+                        selected = false,
+                        onClick = { scope.launch { drawer.close() }; MeeraTermuxEngine.openTerminal() },
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    )
+
+                    NavigationDrawerItem(
                         label = { Text("Permissions & Setup (परमिशंस)") },
                         icon = { Text("🛡️") },
                         badge = { Text("Mint UI", color = AccentCyan) },
@@ -243,6 +263,78 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
                         modifier = Modifier.padding(horizontal = 12.dp)
                     )
 
+                    val exportUi by MeeraRepoExporter.state.collectAsState()
+                    var hasGhToken by remember(showGitHubVault) { mutableStateOf(MeeraTokenVault.hasToken(logCtx)) }
+                    NavigationDrawerItem(
+                        label = { Text("पूरा कोड डाउनलोड करें") },
+                        icon = { Text("📥") },
+                        badge = {
+                            Text(
+                                if (exportUi.running) "बन रहा है..." else "Code Dump",
+                                color = if (exportUi.running) Color(0xFFFFB84D) else AccentCyan
+                            )
+                        },
+                        selected = false,
+                        onClick = {
+                            scope.launch { drawer.close() }
+                            MeeraRepoExporter.exportFullCode(logCtx) {
+                                privateRepoPrompt = true
+                                showGitHubVault = true
+                            }
+                        },
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    )
+
+                    NavigationDrawerItem(
+                        label = { Text("GitHub Token (Encrypted Vault)") },
+                        icon = { Text("🔐") },
+                        badge = {
+                            Text(
+                                if (hasGhToken) "Encrypted ✓" else "Optional",
+                                color = if (hasGhToken) AccentCyan else Muted
+                            )
+                        },
+                        selected = false,
+                        onClick = {
+                            scope.launch { drawer.close() }
+                            privateRepoPrompt = false
+                            showGitHubVault = true
+                        },
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    )
+
+                    val bgTasks by MeeraBackgroundMonitor.tasks.collectAsState()
+                    val bgRunning = bgTasks.firstOrNull { it.status == "RUNNING" }
+                    val bgBadge = when {
+                        bgRunning != null -> "⚡ ${bgRunning.percent}%"
+                        bgTasks.firstOrNull()?.status == "COMPLETED" -> "100% ✓"
+                        else -> "Idle"
+                    }
+                    NavigationDrawerItem(
+                        label = { Text("बैकग्राउंड एक्टिविटी (Live %)") },
+                        icon = { Text("📊") },
+                        badge = { Text(bgBadge, color = if (bgRunning != null) Color(0xFFFFB84D) else AccentCyan, fontWeight = FontWeight.Bold) },
+                        selected = false,
+                        onClick = { scope.launch { drawer.close() }; MeeraBackgroundMonitor.openMonitor() },
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    )
+
+                    val patcherUi by MeeraCodePatcher.state.collectAsState()
+                    val patcherBadge = when (patcherUi.buildStatus) {
+                        "WATCHING" -> "⏳ CI..."
+                        "SUCCESS" -> "APK ✓"
+                        "FAILURE" -> "Err !"
+                        else -> "GitHub"
+                    }
+                    NavigationDrawerItem(
+                        label = { Text("कोड पुश और बिल्ड (Studio)") },
+                        icon = { Text("🚀") },
+                        badge = { Text(patcherBadge, color = AccentCyan, fontWeight = FontWeight.Bold) },
+                        selected = false,
+                        onClick = { scope.launch { drawer.close() }; MeeraCodePatcher.openScreen() },
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    )
+
                     NavigationDrawerItem(
                         label = { Text("Debug log कॉपी करें") },
                         icon = { Text("📋") },
@@ -253,6 +345,30 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
 
                     HorizontalDivider(Modifier.padding(vertical = 10.dp), color = Color(0xFF232C52))
                     var openSec by remember { mutableStateOf("") }
+                    DropSection("3D Orb डिज़ाइन (Visualizer)", MeeraOrbPrefs.styleLabel(orbStyle), openSec == "orb_style", { openSec = if (openSec == "orb_style") "" else "orb_style" }) {
+                        MeeraOrbPrefs.STYLES.forEach { (sCode, sLabel) ->
+                            ModeRow(sLabel, "60 FPS Native 3D Audio Reactive Shader", orbStyle == sCode) {
+                                orbStyle = sCode
+                                MeeraOrbPrefs.setStyle(orbCtx, sCode)
+                                openSec = ""
+                            }
+                        }
+                    }
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 10.dp)) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("📏 3D Orb का साइज़", color = Muted, fontSize = 12.sp)
+                            Text("${orbSizeDp.toInt()} dp", color = AccentCyan, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Slider(
+                            value = orbSizeDp,
+                            onValueChange = {
+                                orbSizeDp = it
+                                MeeraOrbPrefs.setSizeDp(orbCtx, it)
+                            },
+                            valueRange = 150f..310f
+                        )
+                    }
+                    HorizontalDivider(color = Color(0xFF232C52))
                     DropSection("पर्सनैलिटी चुनें", "🎭 ${ui.persona}", openSec == "persona", { openSec = if (openSec == "persona") "" else "persona" }) {
                         Cfg.PERSONAS.forEach { (pCode, pDesc, _) ->
                             ModeRow("🎭 $pCode", pDesc, ui.persona == pCode) { vm.setPersona(pCode); openSec = "" }
@@ -304,8 +420,13 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
 
                     val vTag = Cfg.VOICES.firstOrNull { it.first == ui.voice }?.second?.substringAfter("(")?.substringBefore(" —") ?: ""
                     val vWarn = if (vTag.isNotEmpty() && !vTag.split("/").contains(ui.persona)) "  ⚠️ $vTag की आवाज़" else ""
-                    DropSection("आवाज़ चुनें (Google Voices)", "🔊 ${ui.voice}$vWarn", openSec == "voice", { openSec = if (openSec == "voice") "" else "voice" }) {
-                        listOf("Meera" to "Meera की आवाज़ें", "Jarvis" to "Jarvis की आवाज़ें", "Jarvis/Rudra" to "Jarvis / Rudra दोनों की आवाज़", "Rudra" to "Rudra की आवाज़ें").forEach { (tag, heading) ->
+                    DropSection("आवाज़ चुनें (All 30 Google Voices)", "🔊 ${ui.voice}$vWarn", openSec == "voice", { openSec = if (openSec == "voice") "" else "voice" }) {
+                        listOf(
+                            "Meera" to "Meera की आवाज़ें (14 Feminine Voices)",
+                            "Jarvis" to "Jarvis की आवाज़ें (6 Masculine Voices)",
+                            "Jarvis/Rudra" to "Jarvis / Rudra दोनों की आवाज़",
+                            "Rudra" to "Rudra की आवाज़ें (9 Deep Masculine Voices)"
+                        ).forEach { (tag, heading) ->
                             val group = Cfg.VOICES.filter { it.second.substringAfter("(").substringBefore(" —") == tag }
                             if (group.isNotEmpty()) {
                                 Text("— $heading —", color = AccentCyan, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 24.dp, vertical = 6.dp))
@@ -315,12 +436,33 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
                             }
                         }
                     }
+
+                    val voicePrefs = remember { Prefs(orbCtx) }
+                    var curVoiceStyle by remember { mutableStateOf(voicePrefs.voiceStyle) }
+                    val curStyleLabel = Cfg.VOICE_STYLE_PRESETS.firstOrNull { it.first == curVoiceStyle }?.second ?: "🎭 Auto"
+                    DropSection("आवाज़ का अंदाज़ (HD Voice Emotion)", curStyleLabel, openSec == "voice_style", { openSec = if (openSec == "voice_style") "" else "voice_style" }) {
+                        Cfg.VOICE_STYLE_PRESETS.forEach { (stCode, stLabel) ->
+                            ModeRow(stLabel, "Modular HD TTS Expression Style", curVoiceStyle == stCode) {
+                                curVoiceStyle = stCode
+                                voicePrefs.voiceStyle = stCode
+                                openSec = ""
+                            }
+                        }
+                    }
                 }
             }
         }
     ) {
-        if (showA11yHub) {
+        val bgMonitorOpen by MeeraBackgroundMonitor.monitorVisible.collectAsState()
+        val codePatcherOpen by MeeraCodePatcher.screenVisible.collectAsState()
+        if (showTerminal) {
+            MeeraTerminalScreen(onBack = { MeeraTermuxEngine.closeTerminal() })
+        } else if (showA11yHub) {
             AccessibilityHubScreen(onBack = { showA11yHub = false })
+        } else if (bgMonitorOpen) {
+            MeeraBackgroundActivityScreen(onBack = { MeeraBackgroundMonitor.closeMonitor() })
+        } else if (codePatcherOpen) {
+            MeeraCodePatcherScreen(onBack = { MeeraCodePatcher.closeScreen() }, onOpenTokenVault = { MeeraCodePatcher.closeScreen(); showGitHubVault = true })
         } else {
             Column(
                 Modifier.fillMaxSize().background(Bg).systemBarsPadding()
@@ -372,7 +514,7 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
                 // ---------- Active Tab Content ----------
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     when (currentTab) {
-                        NavTab.HOME -> HomeTabContent(ui, vm, active)
+                        NavTab.HOME -> HomeTabContent(ui, vm, active, orbStyle, orbSizeDp)
                         NavTab.VISION -> VisionCameraTab(vm)
                         NavTab.YAADEIN -> YaadeinTabContent(vm)
                         NavTab.CHAT -> ChatTabContent(ui, vm)
@@ -416,10 +558,85 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
             onDismiss = { showKey = false }
         )
     }
+
+    val exportDialogState by MeeraRepoExporter.state.collectAsState()
+    if (showGitHubVault) {
+        GitHubTokenVaultDialog(
+            hasSavedToken = MeeraTokenVault.hasToken(orbCtx),
+            isForPrivateDownload = privateRepoPrompt,
+            onSaveAndDownload = { tok, shouldSave ->
+                if (shouldSave) {
+                    MeeraTokenVault.saveToken(orbCtx, tok)
+                    Toast.makeText(orbCtx, "Token encrypted save ho gaya!", Toast.LENGTH_SHORT).show()
+                }
+                showGitHubVault = false
+                privateRepoPrompt = false
+                MeeraRepoExporter.exportFullCode(orbCtx, explicitToken = tok) {
+                    Toast.makeText(orbCtx, "Token invalid hai ya repo access nahi mila.", Toast.LENGTH_LONG).show()
+                }
+            },
+            onSaveOnly = { tok ->
+                MeeraTokenVault.saveToken(orbCtx, tok)
+                showGitHubVault = false
+                Toast.makeText(orbCtx, "GitHub Token encrypted save ho gaya!", Toast.LENGTH_SHORT).show()
+            },
+            onDeleteToken = {
+                MeeraTokenVault.clearToken(orbCtx)
+                showGitHubVault = false
+                privateRepoPrompt = false
+                Toast.makeText(orbCtx, "Saved GitHub Token hata diya gaya.", Toast.LENGTH_SHORT).show()
+            },
+            onDismiss = {
+                showGitHubVault = false
+                privateRepoPrompt = false
+            }
+        )
+    }
+
+    if (exportDialogState.completedFileName != null || exportDialogState.errorMsg != null) {
+        AlertDialog(
+            onDismissRequest = { MeeraRepoExporter.dismissCompletedDialog() },
+            title = {
+                Text(
+                    if (exportDialogState.errorMsg != null) "⚠️ Code Export Error"
+                    else "✅ Poora Code Download Ho Gaya!"
+                )
+            },
+            text = {
+                Text(
+                    exportDialogState.errorMsg
+                        ?: "File: Downloads/${exportDialogState.completedFileName}\nTotal Code Files: ${exportDialogState.completedFileCount} | Size: ${exportDialogState.completedSizeKb} KB\n\nAb aap isse direct share kar sakte hain.",
+                    fontSize = 13.5.sp
+                )
+            },
+            confirmButton = {
+                val sUri = exportDialogState.shareUri
+                if (sUri != null && exportDialogState.errorMsg == null) {
+                    TextButton(onClick = {
+                        MeeraRepoExporter.launchShareSheet(orbCtx, sUri)
+                        MeeraRepoExporter.dismissCompletedDialog()
+                    }) {
+                        Text("📤 Share / Send Karein", fontWeight = FontWeight.Bold)
+                    }
+                } else {
+                    TextButton(onClick = { MeeraRepoExporter.dismissCompletedDialog() }) {
+                        Text("Theek Hai")
+                    }
+                }
+            },
+            dismissButton = {
+                if (exportDialogState.errorMsg == null) {
+                    TextButton(onClick = { MeeraRepoExporter.dismissCompletedDialog() }) {
+                        Text("Band Karein")
+                    }
+                }
+            }
+        )
+    }
 }
 
 @Composable
-private fun HomeTabContent(ui: UiState, vm: VoiceViewModel, active: Boolean) {
+private fun HomeTabContent(ui: UiState, vm: VoiceViewModel, active: Boolean, orbStyle: String = "LIQUID_PLASMA", orbSizeDp: Float = 225f) {
     var quickInput by remember { mutableStateOf("") }
     val ctx = LocalContext.current
 
@@ -453,8 +670,14 @@ private fun HomeTabContent(ui: UiState, vm: VoiceViewModel, active: Boolean) {
 
         Spacer(Modifier.weight(0.6f))
 
-        // Center Glowing Orb
-        Orb(ui.state, vm, Modifier.size(220.dp))
+        // Center Stage: Clean 3D Dynamic Orb (Controlled via Side Drawer Menu)
+        MeeraDynamicOrb(
+            state = ui.state,
+            vm = vm,
+            orbStyle = orbStyle,
+            persona = ui.persona,
+            modifier = Modifier.size(orbSizeDp.dp)
+        )
 
         Spacer(Modifier.height(10.dp))
         Text(

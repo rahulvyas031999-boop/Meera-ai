@@ -86,6 +86,10 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
 
     init {
         installConfigBridge()
+        MeeraAgentFactory.onDeliverToChat = { roleTitle, fullOut ->
+            appendChatLog("model", fullOut)
+            _ui.update { it.copy(lastToolStatus = "🤖 $roleTitle") }
+        }
     }
 
     private fun buildFullSystemPrompt(): String =
@@ -518,6 +522,8 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
             return
         }
         sleepRequested.set(false)
+        MeeraMission.clear()
+        MeeraWake.pause()
         installConfigBridge()
         active = true
         requestInFlight.set(false)
@@ -648,6 +654,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
         MeeraNotificationService.onIncomingMessage = null
         MeeraSiren.stop()
         MeeraKeepAliveService.stop(getApplication())
+        MeeraWake.resume()
         MeeraOverlayService.stop(getApplication())
         setState(VState.IDLE)
     }
@@ -806,6 +813,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
                 }
             }
             if (finishedAiText.isNotBlank()) appendChatLog("model", finishedAiText)
+            userBuf.clear(); aiBuf.clear()
             toolCalledThisTurn = false
             liveTurnOpen = false; newUserTurn = true; dropAudio = false
         }
