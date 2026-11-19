@@ -184,12 +184,35 @@ class MeeraAccessibilityService : AccessibilityService() {
         return if (rootPkg.isNotBlank()) rootPkg else currentPackage
     }
 
-    /** Maya UN.java style: Read screen elements with #id numbers */
+    /** Multi-Window root collector: active app + PiP / floating popups / system dialogs */
+    private fun allInteractiveRoots(): List<AccessibilityNodeInfo> {
+        val roots = ArrayList<AccessibilityNodeInfo>()
+        val active = rootInActiveWindow
+        if (active != null) roots.add(active)
+        try {
+            val winList = windows
+            if (winList != null) {
+                for (w in winList) {
+                    val r = w.root ?: continue
+                    val wPkg = r.packageName?.toString().orEmpty()
+                    if (wPkg == packageName || wPkg == "com.android.systemui") continue
+                    if (roots.none { it == r }) roots.add(r)
+                }
+            }
+        } catch (_: Exception) {}
+        return roots
+    }
+
+    /** Maya UN.java style: Read screen elements with #id numbers across active & floating windows */
     fun readScreenElements(maxItems: Int = 200, updateCache: Boolean = true): String {
-        val root = rootInActiveWindow ?: return ""
-        val pkg = root.packageName?.toString().orEmpty()
+        val roots = allInteractiveRoots()
+        if (roots.isEmpty()) return ""
+        val pkg = roots.first().packageName?.toString().orEmpty()
         val rawList = ArrayList<ScreenElement>()
-        collectElements(root, rawList, maxItems)
+        for (r in roots) {
+            if (rawList.size >= maxItems) break
+            collectElements(r, rawList, maxItems)
+        }
         val truncated = rawList.size >= maxItems
         val sorted = rawList
             .sortedWith(compareBy({ it.bounds.top / 40 }, { it.bounds.left }))
@@ -262,9 +285,18 @@ class MeeraAccessibilityService : AccessibilityService() {
                 val isTopLeftBackBtn = rect.centerX() < 215 && rect.centerY() in 55..320 && rect.width() < 210 &&
                     (lowLbl.contains("navigate up") || lowLbl == "back" || lowLbl.contains("पीछे") || lowLbl.contains("वापस") ||
                         resId.lowercase().let { it.contains("back") || it.contains("up") || it.contains("nav") || it == "toolbar" })
+                val rLow = resId.lowercase()
+                val isOverlayCloseBtn = !isTopLeftBackBtn && (
+                    lowLbl.contains("close miniplayer") || lowLbl.contains("close player") ||
+                    lowLbl.contains("close ad") || lowLbl.contains("skip ad") ||
+                    lowLbl == "close" || lowLbl == "dismiss" || lowLbl == "बंद करें" ||
+                    rLow.contains("miniplayer_close") || rLow.contains("floaty_close") ||
+                    rLow.contains("close_button") || rLow.contains("ad_skip") || rLow.contains("skip_ad")
+                )
                 val kind = when {
                     label == "image(no text)" -> "Image"
                     node.isEditable -> "Input"
+                    isOverlayCloseBtn -> "OverlayClose"
                     isMenuDots(label, resId) -> "MenuIcon"
                     isTopLeftBackBtn -> "TopNavBack"
                     isLeftAvatar(rect, label, resId) -> "Avatar"
@@ -299,6 +331,9 @@ class MeeraAccessibilityService : AccessibilityService() {
         }
         if (lowLabel.contains("archived") || lowLabel.contains("archive_header") || lowLabel.contains("आर्काइव")) {
             lastSubfolderEnterMs = System.currentTimeMillis()
+        }
+        if (el.kind == "OverlayClose" && !el.bounds.isEmpty) {
+            return tapCoordinates(el.bounds.exactCenterX(), el.bounds.exactCenterY())
         }
         if (!lowLabel.startsWith("icon:") && lowLabel != "clickable_area" && !isBackZone) {
             val root = rootInActiveWindow
@@ -336,6 +371,13 @@ class MeeraAccessibilityService : AccessibilityService() {
         if (isPaymentAppActive()) return false
         val path = Path().apply { moveTo(x, y) }
         val stroke = GestureDescription.StrokeDescription(path, 0, 95)
+        return dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
+    }
+
+    fun swipeCoordinates(startX: Float, startY: Float, endX: Float, endY: Float, durationMs: Long = 260L): Boolean {
+        if (isPaymentAppActive()) return false
+        val path = Path().apply { moveTo(startX, startY); lineTo(endX, endY) }
+        val stroke = GestureDescription.StrokeDescription(path, 0, durationMs.coerceIn(100L, 800L))
         return dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
     }
 
@@ -387,19 +429,96 @@ class MeeraAccessibilityService : AccessibilityService() {
         return "$pkg::$snap"
     }
 
-    /** Error Recovery Level 1: अचानक आए पॉपअप (Allow, Skip, Not now, Close, Later) को हटाना */
+    private fun findNodeByViewIdPart(node: AccessibilityNodeInfo?, idParts: List<String>): AccessibilityNodeInfo? {
+        if (node == null) return null
+        if (node.isVisibleToUser) {
+            val rid = node.viewIdResourceName?.lowercase().orEmpty()
+            if (rid.isNotBlank() && idParts.any { rid.contains(it) }) {
+                val r = Rect()
+                node.getBoundsInScreen(r)
+                if (r.width() > 12 && r.height() > 12) return node
+            }
+        }
+        for (i in 0 until node.childCount) {
+            val found = findNodeByViewIdPart(node.getChild(i), idParts)
+            if (found != null) return found
+        }
+        return null
+    }
+
+    /** Universal Overlay / Miniplayer / PiP / Popup Dismisser (Gesture Tap + Swipe-to-Dismiss) */
     fun dismissBlockingPopup(): String? {
-        val root = rootInActiveWindow ?: return null
-        val dismissLabels = listOf(
-            "Not now", "Skip", "Close", "Dismiss", "No thanks", "Later", "Got it", "Cancel",
-            "अभी नहीं", "छोड़ें", "बंद करें", "हटाएँ", "बाद में", "ठीक है"
+        val roots = allInteractiveRoots()
+        if (roots.isEmpty()) return null
+
+        val closeViewIds = listOf(
+            "miniplayer_close", "floaty_close", "close_miniplayer",
+            "skip_ad_button", "ad_skip", "close_button", "dismiss_button"
         )
-        for (label in dismissLabels) {
-            val node = findExactNode(root, label, requireClickable = true)
-                ?: findExactNode(root, label, requireClickable = false)
-            if (node != null && performClickOnNode(node)) {
-                try { Thread.sleep(450) } catch (_: Exception) {}
-                return label
+        val partialCloseLabels = listOf(
+            "Close miniplayer", "Close player", "Close ad", "Skip ad", "Skip ads",
+            "Dismiss", "Not now", "No thanks", "Later", "Skip", "Close", "Got it", "Cancel",
+            "मिनीप्लेयर बंद करें", "अभी नहीं", "छोड़ें", "बंद करें", "हटाएँ", "बाद में"
+        )
+
+        val beforeSig = getScreenSignature()
+
+        // Step 1: Try viewId & partial label match across ALL interactive windows using real touch gesture
+        for (root in roots) {
+            val idNode = findNodeByViewIdPart(root, closeViewIds)
+            if (idNode != null) {
+                val r = Rect()
+                idNode.getBoundsInScreen(r)
+                val tapped = if (!r.isEmpty) tapCoordinates(r.exactCenterX(), r.exactCenterY()) else performClickOnNode(idNode)
+                if (tapped) {
+                    try { Thread.sleep(500) } catch (_: Exception) {}
+                    if (getScreenSignature() != beforeSig) return "viewId:${idNode.viewIdResourceName?.substringAfterLast("/")}"
+                    if (performClickOnNode(idNode)) {
+                        try { Thread.sleep(450) } catch (_: Exception) {}
+                        if (getScreenSignature() != beforeSig) return "viewId-click:${idNode.viewIdResourceName?.substringAfterLast("/")}"
+                    }
+                }
+            }
+
+            for (label in partialCloseLabels) {
+                val node = findExactNode(root, label, requireClickable = true)
+                    ?: findExactNode(root, label, requireClickable = false)
+                    ?: findContainsNode(root, label, requireClickable = true)
+                    ?: findContainsNode(root, label, requireClickable = false)
+                if (node != null) {
+                    val r = Rect()
+                    node.getBoundsInScreen(r)
+                    // Avoid accidentally tapping top-left Back arrow when searching for generic "Close"
+                    if (r.centerX() < 180 && r.centerY() < 260 && label.equals("Close", true)) continue
+                    val tapped = if (!r.isEmpty) tapCoordinates(r.exactCenterX(), r.exactCenterY()) else performClickOnNode(node)
+                    if (tapped) {
+                        try { Thread.sleep(500) } catch (_: Exception) {}
+                        if (getScreenSignature() != beforeSig) return label
+                        if (performClickOnNode(node)) {
+                            try { Thread.sleep(450) } catch (_: Exception) {}
+                            if (getScreenSignature() != beforeSig) return label
+                        }
+                    }
+                }
+            }
+        }
+
+        // Step 2: Swipe-to-Dismiss fallback for draggable floating miniplayers / PiP containers
+        val dm = resources.displayMetrics
+        val miniplayerIds = listOf("miniplayer", "floaty", "watch_while_time_bar", "pip_controls")
+        for (root in roots) {
+            val mpNode = findNodeByViewIdPart(root, miniplayerIds)
+            if (mpNode != null) {
+                val r = Rect()
+                mpNode.getBoundsInScreen(r)
+                if (r.width() > 150 && r.height() in 70..(dm.heightPixels / 2)) {
+                    val cx = r.exactCenterX()
+                    val cy = r.exactCenterY()
+                    // Swipe down toward bottom edge (dismisses YouTube floating miniplayer & PiP)
+                    swipeCoordinates(cx, cy, cx, dm.heightPixels * 0.96f, 280L)
+                    try { Thread.sleep(550) } catch (_: Exception) {}
+                    if (getScreenSignature() != beforeSig) return "swipe_dismiss_miniplayer"
+                }
             }
         }
         return null

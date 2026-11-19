@@ -431,7 +431,8 @@ $systemArchitectureBlock
      * CASE A (User's request includes returning to Meera / dashboard after completing the task): Include returning to Meera AI dashboard as the FINAL step in `set_mission_plan`, and MUST call `open_meera_dashboard` AFTER the task succeeds and BEFORE `finish_mission`.
      * CASE B (User did NOT ask to return to dashboard): Stay in the external app after finishing the task and ask ONE short natural follow-up (whether anything else is needed or if you should return to the dashboard).
      * CASE C (User only mentions 'dashboard' or 'wapas' in general conversation without intending navigation): Do NOT call `open_meera_dashboard`.
-9. VISION FALLBACK (MAYA STYLE):
+9. VISION FALLBACK & OVERLAY/MINIPLAYER DISMISSAL:
+   - If a floating miniplayer (like YouTube minimized video), PiP window, ad overlay, or popup is on screen (or user asks to close/remove it), call `dismiss_popup_or_overlay` directly (or tap `[OverlayClose]`).
    - If you cannot find a button/icon, use `look_at_screen_visually` to get coordinates, then `tap_coordinates`.
 10. LONG TASKS (COMPLEX PLANNING, SELF-REFLECTION & ERROR RECOVERY):
    - If the user's request has 2 or more steps or apps, FIRST call `set_mission_plan` with clear numbered steps, then execute them one by one.

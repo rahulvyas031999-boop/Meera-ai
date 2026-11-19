@@ -396,6 +396,14 @@ object MeeraTools {
         )
         funcs.put(
             JSONObject()
+                .put("name", "dismiss_popup_or_overlay")
+                .put("description", "Close or dismiss any floating miniplayer (like YouTube minimized video with X/Play), PiP window, ad overlay, bottom-sheet, or blocking popup using multi-window gesture tap, swipe-to-dismiss, and Vision X-button fallback.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("target_hint", JSONObject().put("type", "STRING").put("description", "Optional hint of what to close, e.g. 'YouTube miniplayer', 'ad popup', 'PiP video'"))))
+        )
+        funcs.put(
+            JSONObject()
                 .put("name", "recover_stuck_step")
                 .put("description", "Run 3-level automatic error recovery when a tap fails or the screen does not change: 1) dismiss blocking popups, 2) scroll and search for target_text, 3) use Vision AI to locate and tap coordinates.")
                 .put("parameters", JSONObject().put("type", "OBJECT")
@@ -631,7 +639,7 @@ object MeeraTools {
 
     private val SCREEN_AFTER_TOOLS = setOf(
         "open_app", "tap_element", "screen_action", "tap_coordinates",
-        "set_mission_plan", "replan_mission", "recover_stuck_step", "wait_for_screen_text",
+        "set_mission_plan", "replan_mission", "recover_stuck_step", "dismiss_popup_or_overlay", "wait_for_screen_text",
         "play_or_search", "youtube_search_and_play",
         "whatsapp_message", "whatsapp_send_in_open_chat"
     )
@@ -874,6 +882,10 @@ object MeeraTools {
                     true, name, "",
                     "VERIFIED_SUCCESS: Mission replanned ($reason).\n" + MeeraMission.status() + "\nProceed with the next pending step now."
                 )
+            }
+            "dismiss_popup_or_overlay" -> {
+                val hint = args.optString("target_hint", "floating miniplayer, popup, or ad").trim()
+                dismissPopupOrOverlayTool(ctx, hint)
             }
             "recover_stuck_step" -> {
                 val target = args.optString("target_text", "").trim()
@@ -2184,6 +2196,68 @@ object MeeraTools {
     }
 }
 
+    /** 3-Step Universal Overlay, Miniplayer & Popup Dismisser (Multi-Window Gesture Tap -> Swipe-to-Dismiss -> Vision X Tap) */
+    private fun dismissPopupOrOverlayTool(ctx: Context, targetHint: String): ToolExecutionResult {
+        val svc = MeeraAccessibilityService.instance
+            ?: return ToolExecutionResult(true, "dismiss_popup_or_overlay", "Accessibility बंद है।", "ERROR: Accessibility OFF")
+
+        // Level 1 & 2: Multi-window viewId/label gesture tap + swipe-to-dismiss
+        val dismissedBy = svc.dismissBlockingPopup()
+        if (dismissedBy != null) {
+            return ToolExecutionResult(
+                true, "dismiss_popup_or_overlay",
+                "मैंने स्क्रीन पर दिख रहे पॉपअप या मिनीप्लेयर को हटा दिया है!",
+                "VERIFIED_SUCCESS: Dismissed overlay/miniplayer via $dismissedBy."
+            )
+        }
+
+        // Level 3: Vision AI fallback specifically locating the X / Close icon on the floating player or popup
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            val beforeSig = svc.getScreenSignature()
+            val bmp = kotlinx.coroutines.runBlocking {
+                kotlinx.coroutines.suspendCancellableCoroutine<android.graphics.Bitmap?> { cont ->
+                    svc.captureScreenshot { b -> cont.resumeWith(Result.success(b)) }
+                }
+            }
+            if (bmp != null) {
+                val dm = ctx.resources.displayMetrics
+                val vPrompt = "Screen size is ${dm.widthPixels}x${dm.heightPixels} px. Look for a floating miniplayer, PiP video, ad, or popup ($targetHint). Find the exact pixel center of its 'X' / Close / Skip / Dismiss button. Reply ONLY with compact JSON: {\"found\":true,\"x\":950,\"y\":1850} or {\"found\":false}."
+                val rest = GeminiRest(okhttp3.OkHttpClient(), { Prefs(ctx).apiKey })
+                val ans = try { kotlinx.coroutines.runBlocking { rest.analyzeScreenVisually(bmp, vPrompt) } } catch (_: Exception) { "" }
+                val cleanJson = ans.removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
+                val j = try { JSONObject(cleanJson) } catch (_: Exception) { null }
+                if (j != null && j.optBoolean("found", false)) {
+                    val x = j.optInt("x", -1).toFloat()
+                    val y = j.optInt("y", -1).toFloat()
+                    if (x > 0 && y > 0 && svc.tapCoordinates(x, y)) {
+                        try { Thread.sleep(600) } catch (_: Exception) {}
+                        if (svc.getScreenSignature() != beforeSig) {
+                            return ToolExecutionResult(
+                                true, "dismiss_popup_or_overlay",
+                                "मैंने स्क्रीन देखकर क्रॉस बटन ($x,$y) दबाया और उसे हटा दिया है!",
+                                "VERIFIED_SUCCESS: Vision X-button fallback dismissed overlay at ($x,$y)."
+                            )
+                        }
+                        // If single tap only woke controls, tap once more on X
+                        svc.tapCoordinates(x, y)
+                        try { Thread.sleep(500) } catch (_: Exception) {}
+                        return ToolExecutionResult(
+                            true, "dismiss_popup_or_overlay",
+                            "मैंने विज़न से क्रॉस आइकॉन पर टैप कर दिया है।",
+                            "VERIFIED_SUCCESS: Vision double-tap attempted at ($x,$y)."
+                        )
+                    }
+                }
+            }
+        }
+
+        return ToolExecutionResult(
+            true, "dismiss_popup_or_overlay",
+            "स्क्रीन पर कोई हटाने लायक पॉपअप या क्रॉस बटन नहीं मिला।",
+            "FAILED: Could not find or dismiss '$targetHint'."
+        )
+    }
+
     /** 3-Level Autonomous Error Recovery Cascade (Popup Dismiss -> Scroll & Tap -> Vision Coordinate Tap) */
     private fun recoverStuckStepTool(ctx: Context, targetText: String): ToolExecutionResult {
         val svc = MeeraAccessibilityService.instance
@@ -2456,7 +2530,8 @@ object AppGuides {
     private val youtube = listOf(
         "- To open/play a video from feed or search results: tap the [Button] element with the BIGGEST height/width whose label holds the video title (long text with channel, views, duration). NEVER tap [MenuIcon] More options (3 dots), channel icon or Shorts buttons.",
         "- After the video opens the player is at the top. Comments are BELOW the player: scroll_down once or twice, find Comments / Add a comment, tap it, type with screen_action(type), then tap Send/Post.",
-        "- Tapping the player once shows pause/seek controls. If the same screen comes back after a tap, try the title element or use look_at_screen_visually."
+        "- Tapping the player once shows pause/seek controls. If the same screen comes back after a tap, try the title element or use look_at_screen_visually.",
+        "- If a minimized floating video player (miniplayer with Play and X buttons) is visible on screen and needs to be closed/removed, call `dismiss_popup_or_overlay` directly (or tap its `[OverlayClose]` element)."
     ).joinToString("\n")
 
     private val whatsapp = listOf(
