@@ -90,10 +90,31 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
             appendChatLog("model", fullOut)
             _ui.update { it.copy(lastToolStatus = "🤖 $roleTitle") }
         }
+        viewModelScope.launch(Dispatchers.IO) {
+            val savedChats = MeeraMemoryManager.loadRecentChats(appCtx, limit = 200)
+            if (savedChats.isNotEmpty()) {
+                _ui.update { it.copy(chatMessages = savedChats) }
+                synchronized(history) {
+                    if (history.isEmpty()) {
+                        savedChats.takeLast(10).forEach { m ->
+                            history.add(m.role to m.text)
+                        }
+                    }
+                }
+            }
+            val memCount = prefs.getMemories().size
+            _ui.update { it.copy(memoryCount = memCount) }
+        }
     }
 
-    private fun buildFullSystemPrompt(): String =
-        SystemPrompt.build(prefs.persona, prefs.girlfriendMode, prefs.getMemories() + prefs.getSkills(), appCtx, prefs)
+    private fun buildFullSystemPrompt(queryHint: String = ""): String {
+        val retrieved = if (queryHint.isNotBlank()) {
+            (MeeraMemoryManager.hybridSearch(appCtx, queryHint, topK = 12) + prefs.getSkills()).distinct()
+        } else {
+            (prefs.getMemories() + prefs.getSkills()).distinct()
+        }
+        return SystemPrompt.build(prefs.persona, prefs.girlfriendMode, retrieved, appCtx, prefs)
+    }
 
     private val sleepRequested = AtomicBoolean(false)
 
@@ -231,15 +252,22 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
     private fun appendChatLog(role: String, text: String) {
         val clean = text.trim()
         if (clean.isBlank()) return
+        val tLabel = nowTime()
         _ui.update { cur ->
-            val updated = (cur.chatMessages + ChatMessage(role, clean, nowTime())).takeLast(60)
+            val updated = (cur.chatMessages + ChatMessage(role, clean, tLabel)).takeLast(200)
             cur.copy(chatMessages = updated)
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            MeeraMemoryManager.saveChatMessage(appCtx, role, clean, tLabel)
         }
     }
 
     fun clearChatLog() {
         history.clear()
         _ui.update { it.copy(chatMessages = emptyList(), user = "", ai = "") }
+        viewModelScope.launch(Dispatchers.IO) {
+            MeeraMemoryManager.clearAllChats(appCtx)
+        }
     }
 
     fun toggleMute() {
@@ -321,7 +349,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
             } else clean
 
             history.add("user" to effectivePrompt)
-            val sysPrompt = buildFullSystemPrompt()
+            val sysPrompt = buildFullSystemPrompt(clean)
             val full = StringBuilder()
             try {
                 rest.streamChat(history.takeLast(12), sysPrompt, prefs.chatModel) { s ->
@@ -918,7 +946,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
 
                 history.add("user" to effectiveUserMsg); userAdded = true
 
-                val sysPrompt = buildFullSystemPrompt()
+                val sysPrompt = buildFullSystemPrompt(text)
                 val ttsJobs = Channel<Deferred<ByteArray>>(capacity = 3)
                 val voice = prefs.voice
                 val selectedTts = prefs.ttsModel
