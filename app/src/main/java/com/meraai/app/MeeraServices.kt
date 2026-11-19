@@ -446,37 +446,116 @@ class MeeraAccessibilityService : AccessibilityService() {
         return null
     }
 
-    /** Universal Overlay / Miniplayer / PiP / Popup Dismisser (Gesture Tap + Swipe-to-Dismiss) */
+    private fun findMiniplayerContainer(roots: List<AccessibilityNodeInfo>): AccessibilityNodeInfo? {
+        val dm = resources.displayMetrics
+        val mpIds = listOf("modern_miniplayer", "miniplayer", "floaty", "pip_controls")
+        for (root in roots) {
+            val node = findNodeByViewIdPart(root, mpIds)
+            if (node != null) {
+                val r = Rect()
+                node.getBoundsInScreen(r)
+                if (r.width() > 140 && r.height() in 70..(dm.heightPixels / 2) && r.bottom > (dm.heightPixels * 0.50f)) {
+                    return node
+                }
+            }
+            val closeLblNode = findContainsNode(root, "Close miniplayer", requireClickable = false)
+                ?: findContainsNode(root, "Close player", requireClickable = false)
+                ?: findContainsNode(root, "मिनीप्लेयर बंद करें", requireClickable = false)
+            if (closeLblNode != null) return closeLblNode.parent ?: closeLblNode
+        }
+        return null
+    }
+
+    fun hasFloatingMiniplayer(): Boolean = findMiniplayerContainer(allInteractiveRoots()) != null
+
+    private fun findCloseButtonInside(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        if (node == null) return null
+        if (node.isVisibleToUser) {
+            val rid = node.viewIdResourceName?.lowercase().orEmpty()
+            val lbl = (node.text?.toString().orEmpty() + " " + node.contentDescription?.toString().orEmpty()).lowercase()
+            if (rid.contains("close") || rid.contains("dismiss") ||
+                lbl.contains("close") || lbl.contains("dismiss") || lbl.contains("बंद")) {
+                val r = Rect()
+                node.getBoundsInScreen(r)
+                if (r.width() in 24..240 && r.height() in 24..240) return node
+            }
+        }
+        for (i in 0 until node.childCount) {
+            val found = findCloseButtonInside(node.getChild(i))
+            if (found != null) return found
+        }
+        return null
+    }
+
+    /** Universal Overlay / Miniplayer / PiP / Popup Dismisser (Exact X -> Corner X -> Full Bottom Push -> Strict Verify) */
     fun dismissBlockingPopup(): String? {
         val roots = allInteractiveRoots()
         if (roots.isEmpty()) return null
+        val dm = resources.displayMetrics
 
-        val closeViewIds = listOf(
-            "miniplayer_close", "floaty_close", "close_miniplayer",
-            "skip_ad_button", "ad_skip", "close_button", "dismiss_button"
-        )
+        // PRIORITY 1: Dedicated Floating Miniplayer / PiP Dismisser with STRICT removal verification
+        val mpContainer = findMiniplayerContainer(roots)
+        if (mpContainer != null) {
+            val mpRect = Rect()
+            mpContainer.getBoundsInScreen(mpRect)
+
+            // 1A: Tap exact X node inside miniplayer subtree
+            val xNode = findCloseButtonInside(mpContainer)
+            if (xNode != null) {
+                val xr = Rect()
+                xNode.getBoundsInScreen(xr)
+                if (!xr.isEmpty) tapCoordinates(xr.exactCenterX(), xr.exactCenterY()) else performClickOnNode(xNode)
+                try { Thread.sleep(650) } catch (_: Exception) {}
+                if (!hasFloatingMiniplayer()) return "miniplayer_x_node"
+                performClickOnNode(xNode)
+                try { Thread.sleep(550) } catch (_: Exception) {}
+                if (!hasFloatingMiniplayer()) return "miniplayer_x_click"
+            }
+
+            // 1B: Tap exact top-right X corner of the floating miniplayer box
+            if (!mpRect.isEmpty && mpRect.width() > 160 && mpRect.height() > 80) {
+                val cornerX = mpRect.right - (mpRect.width() * 0.11f)
+                val cornerY = mpRect.top + (mpRect.height() * 0.22f)
+                tapCoordinates(cornerX, cornerY)
+                try { Thread.sleep(650) } catch (_: Exception) {}
+                if (!hasFloatingMiniplayer()) return "miniplayer_top_right_x"
+
+                // 1C: Full slow drag/push from miniplayer center all the way to the VERY bottom edge
+                val cx = mpRect.exactCenterX()
+                val cy = mpRect.exactCenterY()
+                val bottomEdge = dm.heightPixels.toFloat() - 4f
+                swipeCoordinates(cx, cy, cx, bottomEdge, 520L)
+                try { Thread.sleep(750) } catch (_: Exception) {}
+                if (!hasFloatingMiniplayer()) return "miniplayer_full_bottom_push"
+
+                // 1D: Fast downward flick to bottom edge
+                swipeCoordinates(cx, mpRect.top + 30f, cx, bottomEdge, 220L)
+                try { Thread.sleep(650) } catch (_: Exception) {}
+                if (!hasFloatingMiniplayer()) return "miniplayer_flick_down"
+            }
+            // Miniplayer is STILL on screen — DO NOT lie and report success!
+            return null
+        }
+
+        // PRIORITY 2: General Popups / Ads / Dialogs (excluding top search bar clear 'X')
+        val closeViewIds = listOf("skip_ad_button", "ad_skip", "close_button", "dismiss_button")
         val partialCloseLabels = listOf(
-            "Close miniplayer", "Close player", "Close ad", "Skip ad", "Skip ads",
-            "Dismiss", "Not now", "No thanks", "Later", "Skip", "Close", "Got it", "Cancel",
-            "मिनीप्लेयर बंद करें", "अभी नहीं", "छोड़ें", "बंद करें", "हटाएँ", "बाद में"
+            "Close ad", "Skip ad", "Skip ads",
+            "Dismiss", "Not now", "No thanks", "Later", "Skip", "Got it", "Cancel", "Close",
+            "अभी नहीं", "छोड़ें", "बंद करें", "हटाएँ", "बाद में"
         )
 
         val beforeSig = getScreenSignature()
-
-        // Step 1: Try viewId & partial label match across ALL interactive windows using real touch gesture
         for (root in roots) {
             val idNode = findNodeByViewIdPart(root, closeViewIds)
             if (idNode != null) {
                 val r = Rect()
                 idNode.getBoundsInScreen(r)
+                if (r.centerY() < 260) continue
                 val tapped = if (!r.isEmpty) tapCoordinates(r.exactCenterX(), r.exactCenterY()) else performClickOnNode(idNode)
                 if (tapped) {
                     try { Thread.sleep(500) } catch (_: Exception) {}
                     if (getScreenSignature() != beforeSig) return "viewId:${idNode.viewIdResourceName?.substringAfterLast("/")}"
-                    if (performClickOnNode(idNode)) {
-                        try { Thread.sleep(450) } catch (_: Exception) {}
-                        if (getScreenSignature() != beforeSig) return "viewId-click:${idNode.viewIdResourceName?.substringAfterLast("/")}"
-                    }
                 }
             }
 
@@ -484,40 +563,16 @@ class MeeraAccessibilityService : AccessibilityService() {
                 val node = findExactNode(root, label, requireClickable = true)
                     ?: findExactNode(root, label, requireClickable = false)
                     ?: findContainsNode(root, label, requireClickable = true)
-                    ?: findContainsNode(root, label, requireClickable = false)
                 if (node != null) {
                     val r = Rect()
                     node.getBoundsInScreen(r)
-                    // Avoid accidentally tapping top-left Back arrow when searching for generic "Close"
-                    if (r.centerX() < 180 && r.centerY() < 260 && label.equals("Close", true)) continue
+                    // Skip top toolbar/search-bar X or Back buttons (y < 260)
+                    if (r.centerY() < 260 && (label.equals("Close", true) || label.equals("Dismiss", true))) continue
                     val tapped = if (!r.isEmpty) tapCoordinates(r.exactCenterX(), r.exactCenterY()) else performClickOnNode(node)
                     if (tapped) {
                         try { Thread.sleep(500) } catch (_: Exception) {}
                         if (getScreenSignature() != beforeSig) return label
-                        if (performClickOnNode(node)) {
-                            try { Thread.sleep(450) } catch (_: Exception) {}
-                            if (getScreenSignature() != beforeSig) return label
-                        }
                     }
-                }
-            }
-        }
-
-        // Step 2: Swipe-to-Dismiss fallback for draggable floating miniplayers / PiP containers
-        val dm = resources.displayMetrics
-        val miniplayerIds = listOf("miniplayer", "floaty", "watch_while_time_bar", "pip_controls")
-        for (root in roots) {
-            val mpNode = findNodeByViewIdPart(root, miniplayerIds)
-            if (mpNode != null) {
-                val r = Rect()
-                mpNode.getBoundsInScreen(r)
-                if (r.width() > 150 && r.height() in 70..(dm.heightPixels / 2)) {
-                    val cx = r.exactCenterX()
-                    val cy = r.exactCenterY()
-                    // Swipe down toward bottom edge (dismisses YouTube floating miniplayer & PiP)
-                    swipeCoordinates(cx, cy, cx, dm.heightPixels * 0.96f, 280L)
-                    try { Thread.sleep(550) } catch (_: Exception) {}
-                    if (getScreenSignature() != beforeSig) return "swipe_dismiss_miniplayer"
                 }
             }
         }

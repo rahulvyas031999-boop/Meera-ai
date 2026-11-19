@@ -2196,22 +2196,24 @@ object MeeraTools {
     }
 }
 
-    /** 3-Step Universal Overlay, Miniplayer & Popup Dismisser (Multi-Window Gesture Tap -> Swipe-to-Dismiss -> Vision X Tap) */
+    /** 4-Step Universal Overlay, Miniplayer & Popup Dismisser with STRICT Post-Action Verification (Zero False Claims) */
     private fun dismissPopupOrOverlayTool(ctx: Context, targetHint: String): ToolExecutionResult {
         val svc = MeeraAccessibilityService.instance
             ?: return ToolExecutionResult(true, "dismiss_popup_or_overlay", "Accessibility बंद है।", "ERROR: Accessibility OFF")
 
-        // Level 1 & 2: Multi-window viewId/label gesture tap + swipe-to-dismiss
+        val hadMiniplayerBefore = svc.hasFloatingMiniplayer()
+
+        // Level 1 & 2: Exact X node -> Top-Right X corner -> Full Bottom Push (verified via hasFloatingMiniplayer)
         val dismissedBy = svc.dismissBlockingPopup()
         if (dismissedBy != null) {
             return ToolExecutionResult(
                 true, "dismiss_popup_or_overlay",
-                "मैंने स्क्रीन पर दिख रहे पॉपअप या मिनीप्लेयर को हटा दिया है!",
+                "मैंने स्क्रीन पर दिख रहे मिनीप्लेयर/पॉपअप को हटा दिया है और वेरीफाई भी कर लिया है!",
                 "VERIFIED_SUCCESS: Dismissed overlay/miniplayer via $dismissedBy."
             )
         }
 
-        // Level 3: Vision AI fallback specifically locating the X / Close icon on the floating player or popup
+        // Level 3: Vision AI fallback locating BOTH the X button AND the miniplayer center (ignoring top search bar X!)
         if (android.os.Build.VERSION.SDK_INT >= 30) {
             val beforeSig = svc.getScreenSignature()
             val bmp = kotlinx.coroutines.runBlocking {
@@ -2221,7 +2223,7 @@ object MeeraTools {
             }
             if (bmp != null) {
                 val dm = ctx.resources.displayMetrics
-                val vPrompt = "Screen size is ${dm.widthPixels}x${dm.heightPixels} px. Look for a floating miniplayer, PiP video, ad, or popup ($targetHint). Find the exact pixel center of its 'X' / Close / Skip / Dismiss button. Reply ONLY with compact JSON: {\"found\":true,\"x\":950,\"y\":1850} or {\"found\":false}."
+                val vPrompt = "Screen size is ${dm.widthPixels}x${dm.heightPixels} px. Look for a floating miniplayer, PiP video, ad, or popup ($targetHint) — IGNORE the top search bar X button (y < 260)! Find the exact pixel center of the floating overlay's 'X'/Close button (x,y) AND the center of the floating box itself (box_x,box_y). Reply ONLY with compact JSON: {\"found\":true,\"x\":950,\"y\":1850,\"box_x\":750,\"box_y\":1900} or {\"found\":false}."
                 val rest = GeminiRest(okhttp3.OkHttpClient(), { Prefs(ctx).apiKey })
                 val ans = try { kotlinx.coroutines.runBlocking { rest.analyzeScreenVisually(bmp, vPrompt) } } catch (_: Exception) { "" }
                 val cleanJson = ans.removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
@@ -2229,32 +2231,45 @@ object MeeraTools {
                 if (j != null && j.optBoolean("found", false)) {
                     val x = j.optInt("x", -1).toFloat()
                     val y = j.optInt("y", -1).toFloat()
-                    if (x > 0 && y > 0 && svc.tapCoordinates(x, y)) {
-                        try { Thread.sleep(600) } catch (_: Exception) {}
-                        if (svc.getScreenSignature() != beforeSig) {
+                    val bx = j.optInt("box_x", x.toInt()).toFloat()
+                    val by = j.optInt("box_y", y.toInt()).toFloat()
+
+                    // 3A: Tap the Vision-located X button (must not be in top search bar y < 260)
+                    if (x > 0 && y > 260f) {
+                        svc.tapCoordinates(x, y)
+                        try { Thread.sleep(700) } catch (_: Exception) {}
+                        val goneAfterTap = if (hadMiniplayerBefore) !svc.hasFloatingMiniplayer() else (svc.getScreenSignature() != beforeSig)
+                        if (goneAfterTap) {
                             return ToolExecutionResult(
                                 true, "dismiss_popup_or_overlay",
-                                "मैंने स्क्रीन देखकर क्रॉस बटन ($x,$y) दबाया और उसे हटा दिया है!",
-                                "VERIFIED_SUCCESS: Vision X-button fallback dismissed overlay at ($x,$y)."
+                                "मैंने स्क्रीन देखकर क्रॉस बटन पर टैप करके उसे हटा दिया है!",
+                                "VERIFIED_SUCCESS: Vision X-tap dismissed overlay at ($x,$y)."
                             )
                         }
-                        // If single tap only woke controls, tap once more on X
-                        svc.tapCoordinates(x, y)
-                        try { Thread.sleep(500) } catch (_: Exception) {}
-                        return ToolExecutionResult(
-                            true, "dismiss_popup_or_overlay",
-                            "मैंने विज़न से क्रॉस आइकॉन पर टैप कर दिया है।",
-                            "VERIFIED_SUCCESS: Vision double-tap attempted at ($x,$y)."
-                        )
+                    }
+
+                    // 3B: Vision-guided Full Bottom Push (drag floating box all the way to the very bottom edge)
+                    if (bx > 0 && by > 260f) {
+                        svc.swipeCoordinates(bx, by, bx, dm.heightPixels.toFloat() - 4f, 520L)
+                        try { Thread.sleep(750) } catch (_: Exception) {}
+                        val goneAfterPush = if (hadMiniplayerBefore) !svc.hasFloatingMiniplayer() else (svc.getScreenSignature() != beforeSig)
+                        if (goneAfterPush) {
+                            return ToolExecutionResult(
+                                true, "dismiss_popup_or_overlay",
+                                "मैंने मिनीप्लेयर को पकड़कर बिल्कुल नीचे स्वाइप करके हटा दिया है!",
+                                "VERIFIED_SUCCESS: Vision full-bottom push dismissed overlay from ($bx,$by)."
+                            )
+                        }
                     }
                 }
             }
         }
 
+        // Strict Honesty: NEVER claim success if the miniplayer/popup is still on screen!
         return ToolExecutionResult(
             true, "dismiss_popup_or_overlay",
-            "स्क्रीन पर कोई हटाने लायक पॉपअप या क्रॉस बटन नहीं मिला।",
-            "FAILED: Could not find or dismiss '$targetHint'."
+            "मैंने क्रॉस बटन और नीचे स्वाइप दोनों ट्राई किए, पर यह मिनीप्लेयर अभी भी स्क्रीन से हटा नहीं है।",
+            "FAILED: Attempted X-tap and full bottom push, but overlay/miniplayer is still present on screen. Tell the user honestly that it could not be closed."
         )
     }
 
