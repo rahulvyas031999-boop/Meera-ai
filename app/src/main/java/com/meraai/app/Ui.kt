@@ -449,6 +449,27 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
                             }
                         }
                     }
+
+                    var curRetentionDays by remember { mutableStateOf(voicePrefs.chatRetentionDays) }
+                    DropSection(
+                        "चैट हिस्ट्री स्टोरेज (Auto-Delete)",
+                        "🗓️ $curRetentionDays दिन तक सेव रहेगी",
+                        openSec == "chat_retention",
+                        { openSec = if (openSec == "chat_retention") "" else "chat_retention" }
+                    ) {
+                        listOf(
+                            7 to "7 दिन (हल्का और साफ़ — 1 सप्ताह पुरानी चैट हट जाएगी)",
+                            15 to "15 दिन (संतुलित — 2 सप्ताह तक की चैट सेव रहेगी)",
+                            30 to "30 दिन (प्रोफेशनल — पूरे 1 महीने की चैट सुरक्षित)"
+                        ).forEach { (days, desc) ->
+                            ModeRow("🗓️ $days दिन", desc, curRetentionDays == days) {
+                                curRetentionDays = days
+                                voicePrefs.chatRetentionDays = days
+                                MeeraMemoryManager.pruneOldChats(orbCtx, days)
+                                openSec = ""
+                            }
+                        }
+                    }
                 }
             }
         }

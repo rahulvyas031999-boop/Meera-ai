@@ -140,7 +140,8 @@ data class UiState(
 )
 
 class Prefs(ctx: Context) {
-    private val sp = ctx.getSharedPreferences("mera_ai", Context.MODE_PRIVATE)
+    private val appCtx = ctx.applicationContext
+    private val sp = appCtx.getSharedPreferences("mera_ai", Context.MODE_PRIVATE)
 
     var apiKey: String
         get() = sp.getString("api_key", "") ?: ""
@@ -189,7 +190,11 @@ class Prefs(ctx: Context) {
         get() = sp.getInt("silence_ms", Cfg.DEFAULT_SILENCE_MS)
         set(v) { sp.edit().putInt("silence_ms", v).apply() }
 
-    fun getMemories(): List<String> {
+    var chatRetentionDays: Int
+        get() = sp.getInt("chat_retention_days", 30).coerceIn(7, 30)
+        set(v) { sp.edit().putInt("chat_retention_days", v.coerceIn(7, 30)).apply() }
+
+    private fun getLegacyMemories(): List<String> {
         val raw = sp.getString("memories_json", "[]") ?: "[]"
         return try {
             val arr = JSONArray(raw)
@@ -197,16 +202,25 @@ class Prefs(ctx: Context) {
         } catch (_: Exception) { emptyList() }
     }
 
+    fun getMemories(): List<String> {
+        MeeraMemoryManager.migrateLegacyIfNeeded(appCtx, getLegacyMemories())
+        val dbList = MeeraMemoryManager.getAllMemoryStrings(appCtx)
+        return if (dbList.isNotEmpty()) dbList else getLegacyMemories()
+    }
+
     fun addMemory(fact: String) {
         val clean = fact.trim()
         if (clean.length < 4) return
-        val current = getMemories().toMutableList()
-        if (current.any { it.equals(clean, ignoreCase = true) }) return
-        current.add(clean)
-        while (current.size > 50) current.removeAt(0)
-        val arr = JSONArray()
-        current.forEach { arr.put(it) }
-        sp.edit().putString("memories_json", arr.toString()).apply()
+        val cat = if (clean.startsWith("सीखा हुआ स्किल")) "skill" else "fact"
+        MeeraMemoryManager.upsertMemory(appCtx, clean, category = cat, importance = if (cat == "skill") 3 else 2)
+        val current = getLegacyMemories().toMutableList()
+        if (current.none { it.equals(clean, ignoreCase = true) }) {
+            current.add(clean)
+            while (current.size > 200) current.removeAt(0)
+            val arr = JSONArray()
+            current.forEach { arr.put(it) }
+            sp.edit().putString("memories_json", arr.toString()).apply()
+        }
     }
 
     var setupDone: Boolean
@@ -214,7 +228,8 @@ class Prefs(ctx: Context) {
         set(v) { sp.edit().putBoolean("setup_done", v).apply() }
 
     fun deleteMemory(fact: String) {
-        val current = getMemories().toMutableList()
+        MeeraMemoryManager.deleteMemory(appCtx, fact)
+        val current = getLegacyMemories().toMutableList()
         val removedMem = current.remove(fact)
         if (removedMem) {
             val arr = JSONArray()
@@ -233,7 +248,8 @@ class Prefs(ctx: Context) {
     fun updateMemory(old: String, new: String) {
         val clean = new.trim()
         if (clean.length < 4) return
-        val current = getMemories().toMutableList()
+        MeeraMemoryManager.updateMemory(appCtx, old, clean)
+        val current = getLegacyMemories().toMutableList()
         val i = current.indexOf(old)
         if (i >= 0) {
             current[i] = clean
@@ -254,6 +270,7 @@ class Prefs(ctx: Context) {
     }
 
     fun clearMemories() {
+        MeeraMemoryManager.clearAllMemories(appCtx)
         sp.edit().putString("memories_json", "[]").putString("learned_skills_json", "[]").apply()
     }
 
@@ -389,11 +406,15 @@ $permSummary
      * When the user says "copy your debug logs", call `copy_debug_log` directly.
 """.trimIndent()
 
+        val summaries = if (ctx != null) MeeraMemoryManager.getRecentSummaries(ctx, 3) else emptyList()
+        val summaryPart = if (summaries.isNotEmpty()) {
+            "\n[RECENT DAILY SUMMARIES]:\n" + summaries.joinToString("\n") { "- $it" }
+        } else ""
         val memoryBlock = if (memories.isNotEmpty()) {
-            "[SESSION CONTEXT]\n[MEMORY & LEARNED SKILLS] (User ke baare me ye baatein aur skills tumhe pehle se yaad hain):\n" +
-                memories.joinToString("\n") { "- $it" }
+            "[SESSION CONTEXT]\n[PERMANENT MEMORY & LEARNED SKILLS] (User ke baare me ye baatein aur skills tumhe pehle se yaad hain):\n" +
+                memories.joinToString("\n") { "- $it" } + summaryPart
         } else {
-            "[SESSION CONTEXT]\n[MEMORY]: Abhi user ke baare me koi purani memory save nahi hai."
+            "[SESSION CONTEXT]\n[MEMORY]: Abhi user ke baare me koi purani memory save nahi hai." + summaryPart
         }
 
         return """
