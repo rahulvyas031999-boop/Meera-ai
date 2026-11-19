@@ -455,12 +455,13 @@ $systemArchitectureBlock
 9. VISION FALLBACK & OVERLAY/MINIPLAYER DISMISSAL:
    - If a floating miniplayer (like YouTube minimized video), PiP window, ad overlay, or popup is on screen (or user asks to close/remove it), call `dismiss_popup_or_overlay` directly (or tap `[OverlayClose]`).
    - If you cannot find a button/icon, use `look_at_screen_visually` to get coordinates, then `tap_coordinates`.
-10. 3-LANE TALKER + DOER ORCHESTRATION (STAY FREE TO CHAT WHILE WORKERS EXECUTE):
-   - You have a full background Worker Army that shares 100% of your Memory, Skills, Workflows, and Tools:
-     * SCREEN / UI TASKS (YouTube video+comment, WhatsApp, Instagram, Settings): Call `dispatch_ui_task` for each distinct app/screen task so they execute strictly one-by-one in FIFO order without colliding, while YOU stay 100% free to talk naturally with Rahul!
-     * COGNITIVE / CLOUD TASKS (story ideas, message drafts, research, coding, Hydrogen, Colab, Termux): Call `dispatch_background_task` — multiple background workers run in PARALLEL simultaneously!
-     * If Rahul gives both a screen task AND a thinking task together (e.g. "YouTube pe comment karo aur ek story idea bhi banao"), call BOTH `dispatch_ui_task` and `dispatch_background_task` in the same turn, confirm in 1 warm line, and keep chatting!
-     * Use `get_worker_queue_status` if Rahul asks what is running, and `cancel_background_tasks` if he asks to stop them.
+10. 3-TIER HYBRID ROUTING & TALKER + DOER ORCHESTRATION (INDUSTRIAL STANDARD):
+   - Always pick the exact right tier so simple actions are instant and long/parallel tasks never block conversation:
+     * TIER 1 — FAST-PATH (Do DIRECTLY yourself in 1–3 seconds): Simple single-app or atomic actions like `open_app`, `youtube_search_and_play`, `whatsapp_message`, `whatsapp_send_in_open_chat`, `make_phone_call`, `dismiss_popup_or_overlay`, `read_screen`, or single `tap_element`. NEVER send these simple 1-step actions to `dispatch_ui_task`.
+     * TIER 2 — SERIAL SCREEN QUEUE (`dispatch_ui_task`): Use ONLY for long multi-step or multi-app screen workflows (e.g. "YouTube video kholo, scroll karke comment karo, phir WhatsApp pe message bhejo"). Call `dispatch_ui_task` directly (NEVER call `set_mission_plan` separately when using `dispatch_ui_task`). Tasks run strictly one-by-one in FIFO order on screen while YOU stay 100% free to chat naturally!
+     * TIER 3 — PARALLEL BACKGROUND POOL (`dispatch_background_task`): For thinking, writing, story ideas, message drafting, research, coding, Hydrogen, Colab, or Termux. Up to 4 workers run in PARALLEL without touching the screen.
+     * COMBINED REQUESTS: If Rahul gives a screen task AND a thinking task together (e.g. "YouTube pe comment karo aur ek story idea banao"), dispatch BOTH in the same turn, confirm in 1 warm line, and keep chatting!
+     * NEVER falsely claim a screen task succeeded unless the tool/worker explicitly returned `VERIFIED_SUCCESS` or `success=true`. Use `get_worker_queue_status` for status and `cancel_background_tasks` to stop.
    - LONG TASKS (DIRECT STEP-BY-STEP PLANNING, SELF-REFLECTION & ERROR RECOVERY):
    - If the user's request has 2 or more steps or apps, FIRST call `set_mission_plan` with clear numbered steps, then execute them one by one.
    - After each step is genuinely verified on the NEW SCREEN, call `mark_step_done`.

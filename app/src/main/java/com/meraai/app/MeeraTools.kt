@@ -2431,6 +2431,10 @@ object MeeraMission {
     }
 
     @Synchronized fun set(raw: String) {
+        if (monitorTaskId > 0) {
+            MeeraBackgroundMonitor.completeTask(monitorTaskId, true, "नए टास्क से रिप्लेस किया गया")
+            monitorTaskId = -1L
+        }
         steps.clear(); done.clear(); failedTargets.clear()
         recentScreens.clear(); tapCountsPerScreen.clear()
         stuckCount = 0; lastReplanReason = ""

@@ -204,7 +204,7 @@ class GeminiRest(private val http: OkHttpClient, private val key: () -> String) 
             .put("generationConfig", JSONObject().put("responseMimeType", "application/json").put("temperature", 0))
         return kotlinx.coroutines.withTimeoutOrNull(6000L) {
             var found: Pair<String, JSONObject>? = null
-            for (m in Cfg.CHAT_MODELS.take(2)) {
+            for (m in listOf("gemini-flash-lite-latest", "gemini-3.5-flash", "gemini-3.5-flash-lite")) {
                 try {
                     val resp = http.newCall(request(m, "generateContent", body)).await().okOrThrow()
                     val j = resp.use { JSONObject(it.body!!.string()) }
@@ -244,6 +244,7 @@ Given the user's OVERALL GOAL, CURRENT MISSION CHECKLIST, LAST ACTION REFLECTION
    - tap_element {"id":12, "text":"..."}
    - screen_action {"action_type":"click|type|paste|scroll_down|scroll_up|back", "target_or_text":"... (use target_or_text='send' with paste to paste & send immediately)"}
    - copy_debug_log {}
+   - dismiss_popup_or_overlay {"target_hint":"YouTube miniplayer or ad"}
    - recover_stuck_step {"target_text":"..."}
    - wait_for_screen_text {"text":"...", "mode":"appear", "timeout_seconds":15}
    - whatsapp_message {"contact_name":"...", "message":"..."}
@@ -256,8 +257,8 @@ Reply with ONLY valid compact JSON: {"tool":"...","args":{...},"mark_done_step":
             .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", sys))))
             .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", JSONArray().put(JSONObject().put("text", userPayload)))))
             .put("generationConfig", JSONObject().put("responseMimeType", "application/json").put("temperature", 0.1))
-        kotlinx.coroutines.withTimeoutOrNull(8000L) {
-            for (m in listOf("gemini-3.8-flash", Cfg.CHAT_MODELS.first()).distinct()) {
+        kotlinx.coroutines.withTimeoutOrNull(18000L) {
+            for (m in listOf("gemini-3.5-flash", "gemini-flash-lite-latest", "gemini-3.5-flash-lite", "gemini-3.8-flash")) {
                 try {
                     val resp = http.newCall(request(m, "generateContent", body)).await().okOrThrow()
                     val txt = resp.use { textOf(JSONObject(it.body!!.string())).trim() }
@@ -289,14 +290,19 @@ Reply with ONLY valid compact JSON: {"tool":"...","args":{...},"mark_done_step":
             Task: $task
         """.trimIndent()
         val body = JSONObject().put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", JSONArray().put(JSONObject().put("text", prompt))))).put("generationConfig", JSONObject().put("responseMimeType", "application/json"))
-        try {
-            val resp = http.newCall(request("gemini-3.8-flash", "generateContent", body)).await().okOrThrow()
-            val raw = resp.use { textOf(JSONObject(it.body!!.string())).trim() }
-            val arr = JSONArray(raw)
-            (0 until arr.length()).map { arr.getString(it) }
-        } catch (e: Exception) {
-            listOf("Execute: $task")
+        for (pm in listOf("gemini-3.5-flash", "gemini-flash-lite-latest", "gemini-3.5-flash-lite", "gemini-3.8-flash")) {
+            try {
+                val resp = http.newCall(request(pm, "generateContent", body)).await().okOrThrow()
+                val raw = resp.use { textOf(JSONObject(it.body!!.string())).trim() }
+                    .removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
+                val arr = JSONArray(raw)
+                val list = (0 until arr.length()).mapNotNull { arr.optString(it).trim().takeIf { s -> s.isNotBlank() } }
+                if (list.isNotEmpty()) return@withContext list
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {}
         }
+        listOf(task.lineSequence().firstOrNull()?.trim().orEmpty().ifBlank { "Execute task" })
     }
 
     suspend fun generateQuickAutoReply(sender: String, incomingMsg: String, rule: String, persona: String): String = withContext(Dispatchers.IO) {

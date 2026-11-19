@@ -216,7 +216,7 @@ object MeeraTaskOrchestrator {
         val bgId = MeeraBackgroundMonitor.startTask(
             title = "UI Worker: ${job.goal.take(42)}",
             category = "Screen Worker Queue",
-            modelUsed = "gemini-3.8-flash",
+            modelUsed = "gemini-3.5-flash",
             initialStep = "मेमोरी और स्क्रीन देखकर प्लान बना रहा है...",
             initialPercent = 10
         )
@@ -247,10 +247,12 @@ object MeeraTaskOrchestrator {
             }
 
             val initialScreen = svc.readScreenElements(60)
-            val plan = rest.generatePlan(goalWithContext, initialScreen)
+            val plan = rest.generatePlan(job.goal, initialScreen)
             MeeraMission.set(plan.joinToString("\n"))
 
             var stepIdx = 0
+            var executedSteps = 0
+            var goalAchieved = false
             var consecutiveFailures = 0
             var lastReflection = "UI Worker started with shared Meera memory."
             var finalSummary = ""
@@ -265,13 +267,20 @@ object MeeraTaskOrchestrator {
                     missionStatus = MeeraMission.status(),
                     currentScreen = liveScreen,
                     lastReflection = lastReflection
-                ) ?: rest.routeCommand(plan.getOrNull(stepIdx - 1) ?: job.goal)
+                )
 
-                if (decision == null || decision.first == "none" || decision.first.isBlank()) break
+                if (decision == null || decision.first == "none" || decision.first.isBlank()) {
+                    consecutiveFailures++
+                    lastReflection = "Model did not return a valid action (attempt $consecutiveFailures)."
+                    if (consecutiveFailures >= 2) break
+                    continue
+                }
                 if (decision.first == "done") {
+                    goalAchieved = true
                     finalSummary = decision.second.optString("summary", "'${job.goal}' पूरा हो गया है!")
                     break
                 }
+                executedSteps++
 
                 MeeraBackgroundMonitor.updateProgress(bgId, pct, "Step $stepIdx: ${decision.first}")
                 val res = MeeraTools.executeFunctionCall(ctx, decision.first, decision.second)
@@ -308,9 +317,19 @@ object MeeraTaskOrchestrator {
 
             if (job.returnToDashboard) returnToMeeraDashboard(ctx)
             MeeraMission.clear(ctx)
-            val doneMsg = finalSummary.ifBlank { "'${job.goal}' पूरा हो गया है!" }
-            MeeraBackgroundMonitor.completeTask(bgId, true, "100% पूरा: $doneMsg")
-            onTaskUpdate?.invoke(job.goal.take(40), true, doneMsg)
+            if (goalAchieved) {
+                val doneMsg = finalSummary.ifBlank { "'${job.goal}' पूरा हो गया है!" }
+                MeeraBackgroundMonitor.completeTask(bgId, true, "100% पूरा: $doneMsg")
+                onTaskUpdate?.invoke(job.goal.take(40), true, doneMsg)
+            } else {
+                val failMsg = if (executedSteps == 0) {
+                    "AI मॉडल व्यस्त होने के कारण '${job.goal}' शुरू नहीं हो पाया। कृपया कुछ सेकंड बाद दोबारा बोलें।"
+                } else {
+                    "'${job.goal}' $executedSteps स्टेप्स के बाद अधूरा रह गया—एक बार स्क्रीन देख लीजिए।"
+                }
+                MeeraBackgroundMonitor.completeTask(bgId, false, failMsg)
+                onTaskUpdate?.invoke(job.goal.take(40), false, failMsg)
+            }
         } catch (e: CancellationException) {
             MeeraMission.clear()
             MeeraBackgroundMonitor.completeTask(bgId, false, "यूज़र द्वारा रोका गया")
