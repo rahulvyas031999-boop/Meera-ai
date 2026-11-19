@@ -334,6 +334,22 @@ class GeminiLive(private val http: OkHttpClient, private val ev: Events) {
         ws?.send(m.toString())
     }
 
+    fun sendClientText(text: String, turnComplete: Boolean = true) {
+        if (!ready || text.isBlank()) return
+        val m = JSONObject().put(
+            "clientContent", JSONObject()
+                .put(
+                    "turns", JSONArray().put(
+                        JSONObject()
+                            .put("role", "user")
+                            .put("parts", JSONArray().put(JSONObject().put("text", text)))
+                    )
+                )
+                .put("turnComplete", turnComplete)
+        )
+        ws?.send(m.toString())
+    }
+
     fun close() {
         closedByUs = true
         ready = false

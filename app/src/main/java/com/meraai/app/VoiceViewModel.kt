@@ -90,6 +90,27 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
             appendChatLog("model", fullOut)
             _ui.update { it.copy(lastToolStatus = "🤖 $roleTitle") }
         }
+        MeeraTaskOrchestrator.onTaskUpdate = { title, ok, summary ->
+            val badge = if (ok) "✅ $title" else "⚠️ $title"
+            _ui.update { it.copy(lastToolStatus = badge) }
+            appendChatLog("model", "$badge\n$summary")
+            if (active) {
+                viewModelScope.launch(Dispatchers.IO) {
+                    if (prefs.mode == Mode.LIVE && live?.ready == true && st != VState.USER_SPEAKING) {
+                        live?.sendClientText(
+                            "[BACKGROUND WORKER COMPLETED: $title | success=$ok | summary=$summary]. Briefly and naturally inform Rahul in 1 short sentence.",
+                            turnComplete = true
+                        )
+                    } else if (prefs.mode == Mode.MODULAR && st == VState.LISTENING && player?.busy != true && !turnOpen()) {
+                        try {
+                            val pcm = rest.tts(summary, prefs.voice, prefs.ttsModel, prefs.persona, prefs.girlfriendMode)
+                            setState(VState.ASSISTANT_SPEAKING)
+                            player?.enqueue(pcm)
+                        } catch (_: Exception) {}
+                    }
+                }
+            }
+        }
         viewModelScope.launch(Dispatchers.IO) {
             val savedChats = MeeraMemoryManager.loadRecentChats(appCtx, limit = 200)
             if (savedChats.isNotEmpty()) {

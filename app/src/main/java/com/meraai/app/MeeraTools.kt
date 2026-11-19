@@ -634,6 +634,41 @@ object MeeraTools {
                         .put("return_to_dashboard", JSONObject().put("type", "BOOLEAN").put("description", "true if the user also asked to return to Meera dashboard after finishing")))
                     .put("required", JSONArray().put("workflow_name")))
         )
+        funcs.put(
+            JSONObject()
+                .put("name", "dispatch_ui_task")
+                .put("description", "Dispatch a multi-step phone screen/Accessibility task (like YouTube video + comment, WhatsApp message, Instagram search) to Meera's Serial FIFO UI Worker Queue so you remain 100% FREE to keep chatting naturally with Rahul while the UI worker executes it step-by-step with shared memory and tools.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("goal", JSONObject().put("type", "STRING").put("description", "Clear description of the phone screen task to execute"))
+                        .put("return_to_dashboard", JSONObject().put("type", "BOOLEAN").put("description", "true if user asked to return to Meera dashboard after finishing")))
+                    .put("required", JSONArray().put("goal")))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "dispatch_background_task")
+                .put("description", "Launch a parallel background worker (up to 4 simultaneously) with Meera's full shared memory for thinking/cloud work like story ideas, message drafting, research, coding, Hydrogen writing, Colab, or Termux without blocking voice conversation.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("task_kind", JSONObject().put("type", "STRING").put("description", "One of: hydrogen, story, draft, research, code, agent, colab, termux"))
+                        .put("instruction", JSONObject().put("type", "STRING").put("description", "Complete instruction for the background worker"))
+                        .put("profession", JSONObject().put("type", "STRING").put("description", "Optional specialist role if task_kind is 'agent'")))
+                    .put("required", JSONArray().put("task_kind").put("instruction")))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "get_worker_queue_status")
+                .put("description", "Check what screen UI tasks are currently running or queued in FIFO order, and what parallel background workers are active right now.")
+                .put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "cancel_background_tasks")
+                .put("description", "Cancel running or queued UI/background worker tasks when the user asks to stop them.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("target", JSONObject().put("type", "STRING").put("description", "'all', 'ui', or a keyword matching the task to cancel"))))
+        )
         return JSONArray().put(JSONObject().put("functionDeclarations", funcs))
     }
 
@@ -1043,6 +1078,25 @@ object MeeraTools {
                 val macroName = args.optString("name", "").trim()
                 val param = args.optString("param", "").trim()
                 runBuiltinMacro(ctx, macroName, param)
+            }
+            "dispatch_ui_task" -> {
+                val g = args.optString("goal", "").trim()
+                val ret = args.optBoolean("return_to_dashboard", false)
+                MeeraTaskOrchestrator.enqueueUiTask(ctx, g, ret)
+            }
+            "dispatch_background_task" -> {
+                val kind = args.optString("task_kind", "hydrogen").trim()
+                val inst = args.optString("instruction", "").trim()
+                val prof = args.optString("profession", "").trim()
+                MeeraTaskOrchestrator.dispatchParallelTask(ctx, kind, inst, prof)
+            }
+            "get_worker_queue_status" -> {
+                val report = MeeraTaskOrchestrator.getQueueStatusReport()
+                ToolExecutionResult(true, name, report, "VERIFIED_SUCCESS: $report")
+            }
+            "cancel_background_tasks" -> {
+                val t = args.optString("target", "all").trim()
+                MeeraTaskOrchestrator.cancelTasks(t)
             }
             else -> ToolExecutionResult(false)
         }
