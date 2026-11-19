@@ -27,7 +27,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
@@ -38,29 +37,67 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.rounded.AccessibilityNew
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.BatteryChargingFull
+import androidx.compose.material.icons.rounded.BugReport
+import androidx.compose.material.icons.rounded.ChatBubble
+import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.Insights
+import androidx.compose.material.icons.rounded.Key
+import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.Menu
+import androidx.compose.material.icons.rounded.Mic
+import androidx.compose.material.icons.rounded.MicOff
+import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Psychology
+import androidx.compose.material.icons.rounded.RocketLaunch
+import androidx.compose.material.icons.rounded.Schedule
+import androidx.compose.material.icons.rounded.Security
+import androidx.compose.material.icons.rounded.Send
+import androidx.compose.material.icons.rounded.Stop
+import androidx.compose.material.icons.rounded.SystemUpdate
+import androidx.compose.material.icons.rounded.Terminal
+import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.VolumeUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
+import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -71,13 +108,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
@@ -94,30 +128,43 @@ import kotlinx.coroutines.launch
 import java.util.Calendar
 
 val Bg = Color(0xFF090D18)
-private val Panel = Color(0xFF12192E)
-private val CardGlass = Color(0xFF16203A)
-private val CardBorder = Color(0xFF26355E)
-private val AccentCyan = Color(0xFF2EE6A8)
-private val AccentBlue = Color(0xFF5B8CFF)
-private val AccentPurple = Color(0xFFA855F7)
-private val Muted = Color(0xFF8A94B8)
 
 @Composable
 fun MeraTheme(content: @Composable () -> Unit) {
-    MaterialTheme(
-        colorScheme = darkColorScheme(
-            primary = AccentBlue, background = Bg, surface = Panel, onSurface = Color.White, onBackground = Color.White
-        ),
-        content = content
-    )
+    val ctx = LocalContext.current
+    LaunchedEffect(Unit) { MeeraThemePrefs.ensureLoaded(ctx) }
+    val themeId by MeeraThemePrefs.currentThemeId.collectAsState()
+    val palette = MeeraThemes.byId(themeId)
+    val scheme = if (palette.isDark) {
+        darkColorScheme(
+            primary = palette.accentPrimary,
+            secondary = palette.accentSecondary,
+            background = palette.bg,
+            surface = palette.panel,
+            onSurface = palette.textPrimary,
+            onBackground = palette.textPrimary
+        )
+    } else {
+        lightColorScheme(
+            primary = palette.accentPrimary,
+            secondary = palette.accentSecondary,
+            background = palette.bg,
+            surface = palette.panel,
+            onSurface = palette.textPrimary,
+            onBackground = palette.textPrimary
+        )
+    }
+    CompositionLocalProvider(LocalMeeraColors provides palette) {
+        MaterialTheme(colorScheme = scheme, content = content)
+    }
 }
 
 @Composable
 fun MeraApp(vm: VoiceViewModel, onMic: () -> Unit) {
     var splash by remember { mutableStateOf(true) }
     var showSetup by remember { mutableStateOf(!vm.isSetupDone()) }
-    LaunchedEffect(Unit) { delay(1800); splash = false }
-    Crossfade(targetState = Triple(splash, showSetup, Unit), animationSpec = tween(450), label = "root") { (isSplash, isSetup, _) ->
+    LaunchedEffect(Unit) { delay(1500); splash = false }
+    Crossfade(targetState = Triple(splash, showSetup, Unit), animationSpec = tween(400), label = "root") { (isSplash, isSetup, _) ->
         when {
             isSplash -> SplashScreen()
             isSetup -> PermissionsSetupScreen(onFinish = {
@@ -131,18 +178,22 @@ fun MeraApp(vm: VoiceViewModel, onMic: () -> Unit) {
 
 @Composable
 fun SplashScreen() {
+    val p = LocalMeeraColors.current
     val t = rememberInfiniteTransition(label = "splash")
-    val a by t.animateFloat(0.35f, 1f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "a")
-    Box(Modifier.fillMaxSize().background(Bg), contentAlignment = Alignment.Center) {
+    val a by t.animateFloat(0.45f, 1f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "a")
+    Box(Modifier.fillMaxSize().background(p.bg), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Box(
-                Modifier.size(90.dp).alpha(a)
-                    .background(Brush.radialGradient(listOf(Color(0xFF9DB7FF), AccentBlue, Color(0xFF1B2A6B))), CircleShape)
-            )
-            Spacer(Modifier.height(28.dp))
-            Text("Meera AI", color = Color.White, fontSize = 36.sp, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(10.dp))
-            Text("स्टार्ट हो रही है…", color = Muted, fontSize = 15.sp, modifier = Modifier.alpha(a))
+                Modifier.size(96.dp).alpha(a)
+                    .background(Brush.radialGradient(listOf(Color.White, p.accentPrimary, p.accentSecondary)), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Rounded.AutoAwesome, contentDescription = null, tint = Color.White, modifier = Modifier.size(38.dp))
+            }
+            Spacer(Modifier.height(24.dp))
+            Text("Meera AI", color = p.textPrimary, fontSize = 34.sp, fontWeight = FontWeight.ExtraBold)
+            Spacer(Modifier.height(8.dp))
+            Text("स्टार्ट हो रही है…", color = p.textSecondary, fontSize = 14.sp, modifier = Modifier.alpha(a))
         }
     }
 }
@@ -168,7 +219,30 @@ private fun greetingText(): String {
 }
 
 @Composable
+private fun DrawerMenuItem(
+    label: String,
+    icon: ImageVector,
+    badgeText: String? = null,
+    badgeColor: Color? = null,
+    onClick: () -> Unit
+) {
+    val p = LocalMeeraColors.current
+    NavigationDrawerItem(
+        label = { Text(label, color = p.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium) },
+        icon = { Icon(icon, contentDescription = null, tint = p.accentPrimary, modifier = Modifier.size(20.dp)) },
+        badge = badgeText?.let { bTxt ->
+            { Text(bTxt, color = badgeColor ?: p.accentSuccess, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold) }
+        },
+        selected = false,
+        onClick = onClick,
+        colors = NavigationDrawerItemDefaults.colors(unselectedContainerColor = Color.Transparent),
+        modifier = Modifier.padding(horizontal = 10.dp)
+    )
+}
+
+@Composable
 fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {}) {
+    val p = LocalMeeraColors.current
     val ui by vm.ui.collectAsStateWithLifecycle()
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -193,171 +267,133 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
     ModalNavigationDrawer(
         drawerState = drawer,
         drawerContent = {
-            ModalDrawerSheet(drawerContainerColor = Panel) {
+            ModalDrawerSheet(drawerContainerColor = p.panel) {
                 Column(Modifier.verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
                     Row(
-                        Modifier.fillMaxWidth().padding(start = 24.dp, end = 12.dp, top = 16.dp, bottom = 8.dp),
+                        Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 16.dp, bottom = 10.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column {
-                            Text("Meera AI", color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.ExtraBold)
+                            Text("Meera AI", color = p.textPrimary, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
                             val pkgInfo = remember { runCatching { view.context.packageManager.getPackageInfo(view.context.packageName, 0) }.getOrNull() }
-                            Text("Smart Agentic Voice Companion • v${pkgInfo?.versionName ?: "2.0"}", color = AccentCyan, fontSize = 11.sp)
+                            Text("Pro Agentic Companion • v${pkgInfo?.versionName ?: "2.0"}", color = p.accentPrimary, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                         }
-                        TextButton(onClick = { scope.launch { drawer.close() } }) {
-                            Text("✕ बंद करें", color = Muted, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Surface(
+                            color = p.card,
+                            shape = CircleShape,
+                            modifier = Modifier.size(34.dp).border(1.dp, p.cardBorder, CircleShape)
+                                .clickable { scope.launch { drawer.close() } }
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(Icons.Rounded.Close, contentDescription = "बंद करें", tint = p.textSecondary, modifier = Modifier.size(18.dp))
+                            }
                         }
                     }
 
-                    NavigationDrawerItem(
-                        label = { Text("API Key") },
-                        icon = { Text("🔑") },
-                        badge = { Text(if (ui.hasKey) "सेव ✓" else "डालें", color = Muted) },
-                        selected = false,
-                        onClick = { scope.launch { drawer.close() }; showKey = true },
-                        modifier = Modifier.padding(horizontal = 12.dp)
-                    )
-
-                    NavigationDrawerItem(
-                        label = { Text("Accessibility & Control Hub") },
-                        icon = { Text("🚹") },
-                        badge = {
-                            val on = MeeraAccessibilityService.instance != null
-                            Text(if (on) "चालू ✓" else "ऑन करें", color = if (on) AccentCyan else Color(0xFFFFB84D))
-                        },
-                        selected = false,
-                        onClick = { scope.launch { drawer.close() }; showA11yHub = true },
-                        modifier = Modifier.padding(horizontal = 12.dp)
-                    )
-
-                    NavigationDrawerItem(
-                        label = { Text("Terminal (Termux Live)") },
-                        icon = { Text("💻") },
-                        badge = {
-                            val termuxOk = MeeraTermuxEngine.hasPermission(orbCtx)
-                            Text(if (termuxOk) "रेडी ✓" else "सेटअप", color = if (termuxOk) AccentCyan else Color(0xFFFFB84D))
-                        },
-                        selected = false,
-                        onClick = { scope.launch { drawer.close() }; MeeraTermuxEngine.openTerminal() },
-                        modifier = Modifier.padding(horizontal = 12.dp)
-                    )
-
-                    NavigationDrawerItem(
-                        label = { Text("Permissions & Setup (परमिशंस)") },
-                        icon = { Text("🛡️") },
-                        badge = { Text("Mint UI", color = AccentCyan) },
-                        selected = false,
-                        onClick = { scope.launch { drawer.close() }; onOpenSetup() },
-                        modifier = Modifier.padding(horizontal = 12.dp)
-                    )
+                    HorizontalDivider(color = p.cardBorder)
+                    Spacer(Modifier.height(6.dp))
 
                     val logCtx = LocalContext.current
                     val curVerName = remember { runCatching { logCtx.packageManager.getPackageInfo(logCtx.packageName, 0).versionName ?: "2.0" }.getOrDefault("2.0") }
-                    NavigationDrawerItem(
-                        label = { Text("ऐप अपडेट करें (1-Tap Update)") },
-                        icon = { Text("🔄") },
-                        badge = { Text("v$curVerName", color = AccentCyan) },
-                        selected = false,
-                        onClick = { scope.launch { drawer.close() }; MeeraUpdater.checkAndInstallUpdate(logCtx) },
-                        modifier = Modifier.padding(horizontal = 12.dp)
-                    )
-
                     val exportUi by MeeraRepoExporter.state.collectAsState()
-                    var hasGhToken by remember(showGitHubVault) { mutableStateOf(MeeraTokenVault.hasToken(logCtx)) }
-                    NavigationDrawerItem(
-                        label = { Text("पूरा कोड डाउनलोड करें") },
-                        icon = { Text("📥") },
-                        badge = {
-                            Text(
-                                if (exportUi.running) "बन रहा है..." else "Code Dump",
-                                color = if (exportUi.running) Color(0xFFFFB84D) else AccentCyan
-                            )
-                        },
-                        selected = false,
-                        onClick = {
-                            scope.launch { drawer.close() }
-                            MeeraRepoExporter.exportFullCode(logCtx) {
-                                privateRepoPrompt = true
-                                showGitHubVault = true
-                            }
-                        },
-                        modifier = Modifier.padding(horizontal = 12.dp)
-                    )
-
-                    NavigationDrawerItem(
-                        label = { Text("GitHub Token (Encrypted Vault)") },
-                        icon = { Text("🔐") },
-                        badge = {
-                            Text(
-                                if (hasGhToken) "Encrypted ✓" else "Optional",
-                                color = if (hasGhToken) AccentCyan else Muted
-                            )
-                        },
-                        selected = false,
-                        onClick = {
-                            scope.launch { drawer.close() }
-                            privateRepoPrompt = false
-                            showGitHubVault = true
-                        },
-                        modifier = Modifier.padding(horizontal = 12.dp)
-                    )
-
+                    val hasGhToken = remember(showGitHubVault) { MeeraTokenVault.hasToken(logCtx) }
                     val bgTasks by MeeraBackgroundMonitor.tasks.collectAsState()
                     val bgRunning = bgTasks.firstOrNull { it.status == "RUNNING" }
-                    val bgBadge = when {
-                        bgRunning != null -> "⚡ ${bgRunning.percent}%"
-                        bgTasks.firstOrNull()?.status == "COMPLETED" -> "100% ✓"
-                        else -> "Idle"
-                    }
-                    NavigationDrawerItem(
-                        label = { Text("बैकग्राउंड एक्टिविटी (Live %)") },
-                        icon = { Text("📊") },
-                        badge = { Text(bgBadge, color = if (bgRunning != null) Color(0xFFFFB84D) else AccentCyan, fontWeight = FontWeight.Bold) },
-                        selected = false,
-                        onClick = { scope.launch { drawer.close() }; MeeraBackgroundMonitor.openMonitor() },
-                        modifier = Modifier.padding(horizontal = 12.dp)
-                    )
-
                     val patcherUi by MeeraCodePatcher.state.collectAsState()
-                    val patcherBadge = when (patcherUi.buildStatus) {
-                        "WATCHING" -> "⏳ CI..."
-                        "SUCCESS" -> "APK ✓"
-                        "FAILURE" -> "Err !"
-                        else -> "GitHub"
+
+                    DrawerMenuItem("API Key", Icons.Rounded.Key, if (ui.hasKey) "Saved" else "Add", if (ui.hasKey) p.accentSuccess else p.warning) {
+                        scope.launch { drawer.close() }; showKey = true
                     }
-                    NavigationDrawerItem(
-                        label = { Text("कोड पुश और बिल्ड (Studio)") },
-                        icon = { Text("🚀") },
-                        badge = { Text(patcherBadge, color = AccentCyan, fontWeight = FontWeight.Bold) },
-                        selected = false,
-                        onClick = { scope.launch { drawer.close() }; MeeraCodePatcher.openScreen() },
-                        modifier = Modifier.padding(horizontal = 12.dp)
-                    )
+                    DrawerMenuItem(
+                        "Accessibility Hub",
+                        Icons.Rounded.AccessibilityNew,
+                        if (MeeraAccessibilityService.instance != null) "Active" else "Enable",
+                        if (MeeraAccessibilityService.instance != null) p.accentSuccess else p.warning
+                    ) { scope.launch { drawer.close() }; showA11yHub = true }
 
-                    NavigationDrawerItem(
-                        label = { Text("Debug log कॉपी करें") },
-                        icon = { Text("📋") },
-                        selected = false,
-                        onClick = { scope.launch { drawer.close() }; MeeraDebugLog.copyNow(logCtx) },
-                        modifier = Modifier.padding(horizontal = 12.dp)
-                    )
+                    DrawerMenuItem(
+                        "Terminal (Termux Live)",
+                        Icons.Rounded.Terminal,
+                        if (MeeraTermuxEngine.hasPermission(orbCtx)) "Ready" else "Setup",
+                        if (MeeraTermuxEngine.hasPermission(orbCtx)) p.accentSuccess else p.warning
+                    ) { scope.launch { drawer.close() }; MeeraTermuxEngine.openTerminal() }
 
-                    HorizontalDivider(Modifier.padding(vertical = 10.dp), color = Color(0xFF232C52))
+                    DrawerMenuItem("Permissions & Setup", Icons.Rounded.Security, "Hub", p.accentSecondary) {
+                        scope.launch { drawer.close() }; onOpenSetup()
+                    }
+                    DrawerMenuItem("1-Tap App Update", Icons.Rounded.SystemUpdate, "v$curVerName", p.accentSuccess) {
+                        scope.launch { drawer.close() }; MeeraUpdater.checkAndInstallUpdate(logCtx)
+                    }
+                    DrawerMenuItem(
+                        "Code Dump डाउनलोड",
+                        Icons.Rounded.Download,
+                        if (exportUi.running) "Working..." else "Export",
+                        if (exportUi.running) p.warning else p.accentSecondary
+                    ) {
+                        scope.launch { drawer.close() }
+                        MeeraRepoExporter.exportFullCode(logCtx) {
+                            privateRepoPrompt = true
+                            showGitHubVault = true
+                        }
+                    }
+                    DrawerMenuItem("GitHub Token Vault", Icons.Rounded.Lock, if (hasGhToken) "Encrypted" else "Optional", if (hasGhToken) p.accentSuccess else p.textSecondary) {
+                        scope.launch { drawer.close() }; privateRepoPrompt = false; showGitHubVault = true
+                    }
+                    DrawerMenuItem(
+                        "Background Activity",
+                        Icons.Rounded.Insights,
+                        when {
+                            bgRunning != null -> "${bgRunning.percent}%"
+                            bgTasks.firstOrNull()?.status == "COMPLETED" -> "100%"
+                            else -> "Idle"
+                        },
+                        if (bgRunning != null) p.warning else p.accentSuccess
+                    ) { scope.launch { drawer.close() }; MeeraBackgroundMonitor.openMonitor() }
+
+                    DrawerMenuItem(
+                        "Code & Build Studio",
+                        Icons.Rounded.RocketLaunch,
+                        when (patcherUi.buildStatus) {
+                            "WATCHING" -> "CI..."
+                            "SUCCESS" -> "APK Ready"
+                            "FAILURE" -> "Error"
+                            else -> "GitHub"
+                        },
+                        p.accentPrimary
+                    ) { scope.launch { drawer.close() }; MeeraCodePatcher.openScreen() }
+
+                    DrawerMenuItem("Debug Log कॉपी करें", Icons.Rounded.BugReport) {
+                        scope.launch { drawer.close() }; MeeraDebugLog.copyNow(logCtx)
+                    }
+
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp), color = p.cardBorder)
                     var openSec by remember { mutableStateOf("") }
+
+                    val curThemeId by MeeraThemePrefs.currentThemeId.collectAsState()
+                    val curThemeObj = MeeraThemes.byId(curThemeId)
+                    DropSection("ऐप थीम और कलर (Light / Dark)", curThemeObj.label, openSec == "theme", { openSec = if (openSec == "theme") "" else "theme" }) {
+                        MeeraThemes.ALL.forEach { th ->
+                            ThemeSwatchRow(th, curThemeId == th.id) {
+                                MeeraThemePrefs.setTheme(orbCtx, th.id)
+                                openSec = ""
+                            }
+                        }
+                    }
+
                     DropSection("3D Orb डिज़ाइन (Visualizer)", MeeraOrbPrefs.styleLabel(orbStyle), openSec == "orb_style", { openSec = if (openSec == "orb_style") "" else "orb_style" }) {
                         MeeraOrbPrefs.STYLES.forEach { (sCode, sLabel) ->
-                            ModeRow(sLabel, "60 FPS Native 3D Audio Reactive Shader", orbStyle == sCode) {
+                            ModeRow(sLabel, "60 FPS Audio Reactive 3D Shader", orbStyle == sCode) {
                                 orbStyle = sCode
                                 MeeraOrbPrefs.setStyle(orbCtx, sCode)
                                 openSec = ""
                             }
                         }
                     }
-                    Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 10.dp)) {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 10.dp)) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("📏 3D Orb का साइज़", color = Muted, fontSize = 12.sp)
-                            Text("${orbSizeDp.toInt()} dp", color = AccentCyan, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text("3D Orb का साइज़", color = p.textSecondary, fontSize = 12.sp)
+                            Text("${orbSizeDp.toInt()} dp", color = p.accentPrimary, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
                         }
                         Slider(
                             value = orbSizeDp,
@@ -365,34 +401,36 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
                                 orbSizeDp = it
                                 MeeraOrbPrefs.setSizeDp(orbCtx, it)
                             },
-                            valueRange = 150f..310f
+                            valueRange = 150f..300f,
+                            colors = SliderDefaults.colors(thumbColor = p.accentPrimary, activeTrackColor = p.accentPrimary)
                         )
                     }
-                    HorizontalDivider(color = Color(0xFF232C52))
-                    DropSection("पर्सनैलिटी चुनें", "🎭 ${ui.persona}", openSec == "persona", { openSec = if (openSec == "persona") "" else "persona" }) {
+                    HorizontalDivider(color = p.cardBorder)
+
+                    DropSection("पर्सनैलिटी चुनें", ui.persona, openSec == "persona", { openSec = if (openSec == "persona") "" else "persona" }) {
                         Cfg.PERSONAS.forEach { (pCode, pDesc, _) ->
-                            ModeRow("🎭 $pCode", pDesc, ui.persona == pCode) { vm.setPersona(pCode); openSec = "" }
+                            ModeRow(pCode, pDesc, ui.persona == pCode) { vm.setPersona(pCode); openSec = "" }
                         }
                     }
 
                     if (ui.persona == "Meera") {
                         Row(
-                            Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+                            Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 10.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(Modifier.weight(1f)) {
-                                Text("💖 Girlfriend / Companion Mode", color = Color.White, fontSize = 15.sp)
-                                Text("प्यार, नटखट नखरे, केयर और AI रोस्ट ऑन", color = Muted, fontSize = 12.sp)
+                                Text("Companion / Girlfriend Mode", color = p.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                                Text("प्यार, नटखट नखरे, केयर और अपनापन", color = p.textSecondary, fontSize = 11.5.sp)
                             }
                             Switch(checked = ui.girlfriendMode, onCheckedChange = { vm.setGirlfriendMode(it) })
                         }
                     }
 
-                    HorizontalDivider(Modifier.padding(vertical = 10.dp), color = Color(0xFF232C52))
-                    Text("बातचीत का तरीका", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
-                    ModeRow("⚡ Live API", "Gemini Live — आवाज़ से आवाज़ + Live Tools", ui.mode == Mode.LIVE) { vm.setMode(Mode.LIVE) }
-                    ModeRow("🧩 Modular", "Fast STT → Brain + Tools → Expressive TTS", ui.mode == Mode.MODULAR) { vm.setMode(Mode.MODULAR) }
+                    HorizontalDivider(color = p.cardBorder)
+                    Text("बातचीत इंजन (Engine Mode)", color = p.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 22.dp, vertical = 8.dp))
+                    ModeRow("Live API (Real-Time)", "Gemini Live WebSocket Audio + Tools", ui.mode == Mode.LIVE) { vm.setMode(Mode.LIVE) }
+                    ModeRow("Modular Pipeline", "Fast STT → Brain + Workers → HD TTS", ui.mode == Mode.MODULAR) { vm.setMode(Mode.MODULAR) }
 
                     if (ui.mode == Mode.LIVE) {
                         DropSection("Live मॉडल", ui.liveModel, openSec == "live", { openSec = if (openSec == "live") "" else "live" }) {
@@ -401,7 +439,7 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
                             }
                         }
                     } else {
-                        DropSection("चैट ब्रेन (LLM / Reasoning)", ui.chatModel, openSec == "chat", { openSec = if (openSec == "chat") "" else "chat" }) {
+                        DropSection("चैट ब्रेन (LLM)", ui.chatModel, openSec == "chat", { openSec = if (openSec == "chat") "" else "chat" }) {
                             Cfg.CHAT_BRAIN_OPTIONS.forEach { (mCode, mDesc) ->
                                 ModeRow(mCode, mDesc, ui.chatModel == mCode) { vm.setChatModel(mCode); openSec = "" }
                             }
@@ -419,19 +457,19 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
                     }
 
                     val vTag = Cfg.VOICES.firstOrNull { it.first == ui.voice }?.second?.substringAfter("(")?.substringBefore(" —") ?: ""
-                    val vWarn = if (vTag.isNotEmpty() && !vTag.split("/").contains(ui.persona)) "  ⚠️ $vTag की आवाज़" else ""
-                    DropSection("आवाज़ चुनें (All 30 Google Voices)", "🔊 ${ui.voice}$vWarn", openSec == "voice", { openSec = if (openSec == "voice") "" else "voice" }) {
+                    val vWarn = if (vTag.isNotEmpty() && !vTag.split("/").contains(ui.persona)) " ($vTag)" else ""
+                    DropSection("आवाज़ चुनें (30 Google Voices)", "${ui.voice}$vWarn", openSec == "voice", { openSec = if (openSec == "voice") "" else "voice" }) {
                         listOf(
-                            "Meera" to "Meera की आवाज़ें (14 Feminine Voices)",
-                            "Jarvis" to "Jarvis की आवाज़ें (6 Masculine Voices)",
-                            "Jarvis/Rudra" to "Jarvis / Rudra दोनों की आवाज़",
-                            "Rudra" to "Rudra की आवाज़ें (9 Deep Masculine Voices)"
+                            "Meera" to "Meera Voices (14 Feminine)",
+                            "Jarvis" to "Jarvis Voices (6 Masculine)",
+                            "Jarvis/Rudra" to "Jarvis / Rudra",
+                            "Rudra" to "Rudra Voices (9 Deep Masculine)"
                         ).forEach { (tag, heading) ->
                             val group = Cfg.VOICES.filter { it.second.substringAfter("(").substringBefore(" —") == tag }
                             if (group.isNotEmpty()) {
-                                Text("— $heading —", color = AccentCyan, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 24.dp, vertical = 6.dp))
+                                Text(heading, color = p.accentPrimary, fontSize = 11.5.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 22.dp, vertical = 6.dp))
                                 group.forEach { (vCode, vLabel) ->
-                                    ModeRow("🔊 $vCode", vLabel, ui.voice == vCode) { vm.setVoice(vCode); openSec = "" }
+                                    ModeRow(vCode, vLabel, ui.voice == vCode) { vm.setVoice(vCode); openSec = "" }
                                 }
                             }
                         }
@@ -439,8 +477,8 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
 
                     val voicePrefs = remember { Prefs(orbCtx) }
                     var curVoiceStyle by remember { mutableStateOf(voicePrefs.voiceStyle) }
-                    val curStyleLabel = Cfg.VOICE_STYLE_PRESETS.firstOrNull { it.first == curVoiceStyle }?.second ?: "🎭 Auto"
-                    DropSection("आवाज़ का अंदाज़ (HD Voice Emotion)", curStyleLabel, openSec == "voice_style", { openSec = if (openSec == "voice_style") "" else "voice_style" }) {
+                    val curStyleLabel = Cfg.VOICE_STYLE_PRESETS.firstOrNull { it.first == curVoiceStyle }?.second ?: "Auto"
+                    DropSection("आवाज़ का अंदाज़ (HD Emotion)", curStyleLabel, openSec == "voice_style", { openSec = if (openSec == "voice_style") "" else "voice_style" }) {
                         Cfg.VOICE_STYLE_PRESETS.forEach { (stCode, stLabel) ->
                             ModeRow(stLabel, "Modular HD TTS Expression Style", curVoiceStyle == stCode) {
                                 curVoiceStyle = stCode
@@ -453,7 +491,7 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
                     var curRetentionDays by remember { mutableStateOf(voicePrefs.chatRetentionDays) }
                     DropSection(
                         "चैट हिस्ट्री स्टोरेज (Auto-Delete)",
-                        "🗓️ $curRetentionDays दिन तक सेव रहेगी",
+                        "$curRetentionDays दिन तक सेव रहेगी",
                         openSec == "chat_retention",
                         { openSec = if (openSec == "chat_retention") "" else "chat_retention" }
                     ) {
@@ -462,7 +500,7 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
                             15 to "15 दिन (संतुलित — 2 सप्ताह तक की चैट सेव रहेगी)",
                             30 to "30 दिन (प्रोफेशनल — पूरे 1 महीने की चैट सुरक्षित)"
                         ).forEach { (days, desc) ->
-                            ModeRow("🗓️ $days दिन", desc, curRetentionDays == days) {
+                            ModeRow("$days दिन", desc, curRetentionDays == days) {
                                 curRetentionDays = days
                                 voicePrefs.chatRetentionDays = days
                                 MeeraMemoryManager.pruneOldChats(orbCtx, days)
@@ -486,56 +524,72 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
             MeeraCodePatcherScreen(onBack = { MeeraCodePatcher.closeScreen() }, onOpenTokenVault = { MeeraCodePatcher.closeScreen(); showGitHubVault = true })
         } else {
             Column(
-                Modifier.fillMaxSize().background(Bg).systemBarsPadding()
+                Modifier.fillMaxSize().background(p.bg).systemBarsPadding()
             ) {
-                // ---------- Top Header Bar ----------
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Surface(
-                        color = CardGlass,
+                        color = p.card,
                         shape = CircleShape,
-                        modifier = Modifier.size(42.dp).border(1.dp, CardBorder, CircleShape)
+                        shadowElevation = if (p.isDark) 0.dp else 2.dp,
+                        modifier = Modifier.size(42.dp).border(1.dp, p.cardBorder, CircleShape)
                             .clickable { scope.launch { drawer.open() } }
                     ) {
                         Box(contentAlignment = Alignment.Center) {
-                            Icon(Icons.Default.Menu, contentDescription = "मेन्यू", tint = Color.White)
+                            Icon(Icons.Rounded.Menu, contentDescription = "मेन्यू", tint = p.textPrimary, modifier = Modifier.size(21.dp))
                         }
                     }
 
-                    val gfTag = if (ui.persona == "Meera" && ui.girlfriendMode) " 💖" else ""
                     val modeTag = if (ui.mode == Mode.LIVE) "Live" else "Modular"
                     Surface(
-                        color = CardGlass,
-                        shape = RoundedCornerShape(20.dp),
-                        modifier = Modifier.border(1.dp, CardBorder, RoundedCornerShape(20.dp))
+                        color = p.card,
+                        shape = RoundedCornerShape(22.dp),
+                        shadowElevation = if (p.isDark) 0.dp else 2.dp,
+                        modifier = Modifier.border(1.dp, p.cardBorder, RoundedCornerShape(22.dp))
                     ) {
-                        Text(
-                            "${ui.persona}$gfTag • $modeTag • ${ui.voice}",
-                            color = Color.White, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
-                        )
+                        Row(
+                            Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Box(
+                                Modifier.size(8.dp).clip(CircleShape)
+                                    .background(if (active) p.accentSuccess else p.accentPrimary)
+                            )
+                            Text(
+                                "${ui.persona} • $modeTag • ${ui.voice}",
+                                color = p.textPrimary,
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
                     }
 
+                    val a11yOn = MeeraAccessibilityService.instance != null
                     Surface(
-                        color = CardGlass,
+                        color = p.card,
                         shape = CircleShape,
-                        modifier = Modifier.size(42.dp).border(1.dp, CardBorder, CircleShape)
+                        shadowElevation = if (p.isDark) 0.dp else 2.dp,
+                        modifier = Modifier.size(42.dp).border(1.dp, if (a11yOn) p.accentSuccess.copy(alpha = 0.6f) else p.cardBorder, CircleShape)
                             .clickable { showA11yHub = true }
                     ) {
                         Box(contentAlignment = Alignment.Center) {
-                            val a11yOn = MeeraAccessibilityService.instance != null
-                            Text(if (a11yOn) "🟢" else "🚹", fontSize = 16.sp)
+                            Icon(
+                                Icons.Rounded.AccessibilityNew,
+                                contentDescription = "Accessibility",
+                                tint = if (a11yOn) p.accentSuccess else p.textSecondary,
+                                modifier = Modifier.size(20.dp)
+                            )
                         }
                     }
                 }
 
-                // ---------- Active Tab Content ----------
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     when (currentTab) {
-                        NavTab.HOME -> HomeTabContent(ui, vm, active, orbStyle, orbSizeDp)
+                        NavTab.HOME -> HomeTabContent(ui, vm, orbStyle, orbSizeDp)
                         NavTab.VISION -> VisionCameraTab(vm)
                         NavTab.YAADEIN -> YaadeinTabContent(vm)
                         NavTab.CHAT -> ChatTabContent(ui, vm)
@@ -544,24 +598,36 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
 
                 if (active) {
                     val muted by MicMute.flow.collectAsState()
-                    Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), horizontalArrangement = Arrangement.Center) {
+                    Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.Center) {
                         Surface(
-                            color = if (muted) Color(0xFFE5484D).copy(alpha = 0.25f) else CardGlass,
-                            shape = RoundedCornerShape(20.dp),
+                            color = if (muted) p.danger.copy(alpha = 0.16f) else p.card,
+                            shape = RoundedCornerShape(22.dp),
                             modifier = Modifier
-                                .border(1.dp, if (muted) Color(0xFFE5484D) else CardBorder, RoundedCornerShape(20.dp))
+                                .border(1.dp, if (muted) p.danger else p.cardBorder, RoundedCornerShape(22.dp))
                                 .clickable { vm.toggleMute() }
                         ) {
-                            Text(
-                                if (muted) "🔇 म्यूट है — दबाकर चालू करें" else "🎙️ सुन रही है — म्यूट करें",
-                                color = Color.White, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
-                            )
+                            Row(
+                                Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    if (muted) Icons.Rounded.MicOff else Icons.Rounded.Mic,
+                                    contentDescription = null,
+                                    tint = if (muted) p.danger else p.accentSuccess,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    if (muted) "म्यूट है — दबाकर अनम्यूट करें" else "सुन रही है — म्यूट करें",
+                                    color = if (muted) p.danger else p.textPrimary,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
                         }
                     }
                 }
 
-                // ---------- Bottom Floating Aurora Glass Dock ----------
                 BottomAuroraDock(
                     currentTab = currentTab,
                     micActive = active,
@@ -618,15 +684,12 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
         AlertDialog(
             onDismissRequest = { MeeraRepoExporter.dismissCompletedDialog() },
             title = {
-                Text(
-                    if (exportDialogState.errorMsg != null) "⚠️ Code Export Error"
-                    else "✅ Poora Code Download Ho Gaya!"
-                )
+                Text(if (exportDialogState.errorMsg != null) "Code Export Error" else "Code Download Complete")
             },
             text = {
                 Text(
                     exportDialogState.errorMsg
-                        ?: "File: Downloads/${exportDialogState.completedFileName}\nTotal Code Files: ${exportDialogState.completedFileCount} | Size: ${exportDialogState.completedSizeKb} KB\n\nAb aap isse direct share kar sakte hain.",
+                        ?: "File: Downloads/${exportDialogState.completedFileName}\nTotal Code Files: ${exportDialogState.completedFileCount} | Size: ${exportDialogState.completedSizeKb} KB",
                     fontSize = 13.5.sp
                 )
             },
@@ -636,20 +699,14 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
                     TextButton(onClick = {
                         MeeraRepoExporter.launchShareSheet(orbCtx, sUri)
                         MeeraRepoExporter.dismissCompletedDialog()
-                    }) {
-                        Text("📤 Share / Send Karein", fontWeight = FontWeight.Bold)
-                    }
+                    }) { Text("Share Karein", fontWeight = FontWeight.Bold) }
                 } else {
-                    TextButton(onClick = { MeeraRepoExporter.dismissCompletedDialog() }) {
-                        Text("Theek Hai")
-                    }
+                    TextButton(onClick = { MeeraRepoExporter.dismissCompletedDialog() }) { Text("Theek Hai") }
                 }
             },
             dismissButton = {
                 if (exportDialogState.errorMsg == null) {
-                    TextButton(onClick = { MeeraRepoExporter.dismissCompletedDialog() }) {
-                        Text("Band Karein")
-                    }
+                    TextButton(onClick = { MeeraRepoExporter.dismissCompletedDialog() }) { Text("Band Karein") }
                 }
             }
         )
@@ -657,7 +714,8 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
 }
 
 @Composable
-private fun HomeTabContent(ui: UiState, vm: VoiceViewModel, active: Boolean, orbStyle: String = "LIQUID_PLASMA", orbSizeDp: Float = 225f) {
+private fun HomeTabContent(ui: UiState, vm: VoiceViewModel, orbStyle: String = "LIQUID_PLASMA", orbSizeDp: Float = 220f) {
+    val p = LocalMeeraColors.current
     var quickInput by remember { mutableStateOf("") }
     val ctx = LocalContext.current
 
@@ -665,115 +723,126 @@ private fun HomeTabContent(ui: UiState, vm: VoiceViewModel, active: Boolean, orb
         Modifier.fillMaxSize().padding(horizontal = 18.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Greeting + Status Row
         Row(
             Modifier.fillMaxWidth().padding(top = 4.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column {
-                Text(greetingText(), color = Muted, fontSize = 14.sp)
-                Text("Rahul", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.ExtraBold)
+                Text(greetingText(), color = p.textSecondary, fontSize = 13.5.sp)
+                Text("Rahul", color = p.textPrimary, fontSize = 26.sp, fontWeight = FontWeight.ExtraBold)
             }
             Surface(
-                color = CardGlass,
+                color = p.card,
                 shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.border(1.dp, CardBorder, RoundedCornerShape(16.dp))
+                shadowElevation = if (p.isDark) 0.dp else 1.dp,
+                modifier = Modifier.border(1.dp, p.cardBorder, RoundedCornerShape(16.dp))
             ) {
                 Row(
-                    Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
-                    Text("🧠 ${ui.memoryCount} यादें", color = AccentCyan, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Icon(Icons.Rounded.Psychology, contentDescription = null, tint = p.accentPrimary, modifier = Modifier.size(16.dp))
+                    Text("${ui.memoryCount} यादें", color = p.textPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
 
-        Spacer(Modifier.weight(0.6f))
+        Spacer(Modifier.weight(0.55f))
 
-        // Center Stage: Clean 3D Dynamic Orb (Controlled via Side Drawer Menu)
         MeeraDynamicOrb(
             state = ui.state,
             vm = vm,
             orbStyle = orbStyle,
             persona = ui.persona,
+            isDark = p.isDark,
             modifier = Modifier.size(orbSizeDp.dp)
         )
 
         Spacer(Modifier.height(10.dp))
         Text(
             statusText(ui),
-            color = if (ui.state == VState.ERROR) Color(0xFFFF6B6B) else Color.White,
-            fontSize = 17.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center
+            color = if (ui.state == VState.ERROR) p.danger else p.textPrimary,
+            fontSize = 16.5.sp,
+            fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.Center
         )
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            ui.latencyMs?.let { Text("⏱ $it ms", color = Muted, fontSize = 12.sp) }
-            ui.lastToolStatus?.let { Text(it, color = AccentCyan, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+        Row(
+            Modifier.padding(top = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            ui.latencyMs?.let {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Icon(Icons.Rounded.Schedule, contentDescription = null, tint = p.textSecondary, modifier = Modifier.size(13.dp))
+                    Text("$it ms", color = p.textSecondary, fontSize = 11.5.sp)
+                }
+            }
+            ui.lastToolStatus?.let {
+                Text(it, color = p.accentPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
 
-        // Live Transcript Preview Card
         if (ui.user.isNotBlank() || ui.ai.isNotBlank()) {
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(10.dp))
             Surface(
-                color = CardGlass.copy(alpha = 0.85f),
+                color = p.card,
                 shape = RoundedCornerShape(18.dp),
-                modifier = Modifier.fillMaxWidth().border(1.dp, CardBorder, RoundedCornerShape(18.dp))
+                shadowElevation = if (p.isDark) 0.dp else 2.dp,
+                modifier = Modifier.fillMaxWidth().border(1.dp, p.cardBorder, RoundedCornerShape(18.dp))
             ) {
-                Column(Modifier.padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(Modifier.padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     if (ui.user.isNotBlank()) {
-                        Text(ui.user, color = Muted, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+                        Text(ui.user, color = p.textSecondary, fontSize = 12.5.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
                     }
                     if (ui.ai.isNotBlank()) {
-                        Text(ui.ai, color = Color.White, fontSize = 14.5.sp, maxLines = 3, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 4.dp))
+                        Text(ui.ai, color = p.textPrimary, fontSize = 14.sp, maxLines = 3, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 4.dp))
                     }
                 }
             }
         }
 
-        Spacer(Modifier.weight(0.5f))
+        Spacer(Modifier.weight(0.45f))
 
-        // Quick Action Pills (WhatsApp, Screen Read, YouTube, Instagram)
         Row(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            QuickChip("📱 WhatsApp खोलो") {
-                MeeraTools.openAppByName(ctx, "WhatsApp")
-            }
-            QuickChip("👀 स्क्रीन पढ़ो") {
-                vm.sendTextQuery("स्क्रीन पर क्या लिखा है पढ़कर बताओ", speakAloud = true)
-            }
-            QuickChip("▶️ YouTube गाने") {
-                vm.sendTextQuery("YouTube पर हिंदी गाने चलाओ", speakAloud = false)
-            }
-            QuickChip("📸 Instagram") {
-                MeeraTools.openAppByName(ctx, "Instagram")
-            }
+            QuickChip("WhatsApp", Icons.Rounded.ChatBubble) { MeeraTools.openAppByName(ctx, "WhatsApp") }
+            QuickChip("स्क्रीन पढ़ें", Icons.Rounded.Visibility) { vm.sendTextQuery("स्क्रीन पर क्या लिखा है पढ़कर बताओ", speakAloud = true) }
+            QuickChip("YouTube", Icons.Rounded.PlayArrow) { vm.sendTextQuery("YouTube पर हिंदी गाने चलाओ", speakAloud = false) }
+            QuickChip("Instagram", Icons.Rounded.AutoAwesome) { MeeraTools.openAppByName(ctx, "Instagram") }
         }
 
         Spacer(Modifier.height(10.dp))
 
-        // Ask Meera Input Bar
         Surface(
-            color = CardGlass,
-            shape = RoundedCornerShape(26.dp),
-            modifier = Modifier.fillMaxWidth().border(1.dp, CardBorder, RoundedCornerShape(26.dp))
+            color = p.card,
+            shape = RoundedCornerShape(28.dp),
+            shadowElevation = if (p.isDark) 0.dp else 3.dp,
+            modifier = Modifier.fillMaxWidth().border(1.dp, p.cardBorder, RoundedCornerShape(28.dp))
         ) {
             Row(
-                Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
+                Modifier.padding(start = 14.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 OutlinedTextField(
                     value = quickInput,
                     onValueChange = { quickInput = it },
-                    placeholder = { Text("Meera से कुछ भी पूछो या ऐप खुलवाओ…", color = Muted, fontSize = 13.sp) },
+                    placeholder = { Text("Meera से कुछ भी पूछें या कमांड दें…", color = p.textSecondary, fontSize = 13.sp) },
                     singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Color.Transparent,
+                        unfocusedBorderColor = Color.Transparent,
+                        focusedTextColor = p.textPrimary,
+                        unfocusedTextColor = p.textPrimary
+                    ),
                     modifier = Modifier.weight(1f)
                 )
-                Spacer(Modifier.width(8.dp))
                 Box(
                     Modifier.size(42.dp).clip(CircleShape)
-                        .background(Brush.linearGradient(listOf(AccentBlue, AccentPurple)))
+                        .background(Brush.linearGradient(listOf(p.accentPrimary, p.accentSecondary)))
                         .clickable {
                             if (quickInput.isNotBlank()) {
                                 vm.sendTextQuery(quickInput, speakAloud = true)
@@ -782,7 +851,7 @@ private fun HomeTabContent(ui: UiState, vm: VoiceViewModel, active: Boolean, orb
                         },
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("➤", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Icon(Icons.Rounded.Send, contentDescription = "Send", tint = Color.White, modifier = Modifier.size(19.dp))
                 }
             }
         }
@@ -791,31 +860,35 @@ private fun HomeTabContent(ui: UiState, vm: VoiceViewModel, active: Boolean, orb
 }
 
 @Composable
-private fun QuickChip(label: String, onClick: () -> Unit) {
+private fun QuickChip(label: String, icon: ImageVector? = null, onClick: () -> Unit) {
+    val p = LocalMeeraColors.current
     Surface(
-        color = CardGlass,
+        color = p.card,
         shape = RoundedCornerShape(20.dp),
-        modifier = Modifier.border(1.dp, CardBorder, RoundedCornerShape(20.dp)).clickable(onClick = onClick)
+        shadowElevation = if (p.isDark) 0.dp else 1.dp,
+        modifier = Modifier.border(1.dp, p.cardBorder, RoundedCornerShape(20.dp)).clickable(onClick = onClick)
     ) {
-        Text(
-            label,
-            color = Color.White,
-            fontSize = 12.5.sp,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
-        )
+        Row(
+            Modifier.padding(horizontal = 13.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            if (icon != null) {
+                Icon(icon, contentDescription = null, tint = p.accentPrimary, modifier = Modifier.size(15.dp))
+            }
+            Text(label, color = p.textPrimary, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
+        }
     }
 }
 
 @Composable
 fun VisionTabContent(vm: VoiceViewModel) {
+    val p = LocalMeeraColors.current
     var screenDump by remember { mutableStateOf("") }
     val a11yOn = MeeraAccessibilityService.instance != null
-
     var showInspector by remember { mutableStateOf(false) }
+
     Box(Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 4.dp)) {
-        
-        // Bottom-left Floating Pill to toggle Screen Inspector without blocking full-screen camera
         Row(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -825,13 +898,13 @@ fun VisionTabContent(vm: VoiceViewModel) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Surface(
-                color = Color(0xCC090D18),
+                color = p.panel.copy(alpha = 0.88f),
                 shape = RoundedCornerShape(20.dp),
-                modifier = Modifier.border(1.dp, AccentCyan.copy(alpha = 0.6f), RoundedCornerShape(20.dp))
+                modifier = Modifier.border(1.dp, p.accentSuccess.copy(alpha = 0.6f), RoundedCornerShape(20.dp))
             ) {
                 Text(
-                    "● LIVE FULL-SCREEN VISION",
-                    color = AccentCyan,
+                    "LIVE VISION",
+                    color = p.accentSuccess,
                     fontSize = 11.5.sp,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
@@ -839,15 +912,15 @@ fun VisionTabContent(vm: VoiceViewModel) {
             }
 
             Surface(
-                color = if (showInspector) AccentBlue else Color(0xCC16203A),
+                color = if (showInspector) p.accentPrimary else p.panel.copy(alpha = 0.88f),
                 shape = RoundedCornerShape(20.dp),
                 modifier = Modifier
-                    .border(1.dp, CardBorder, RoundedCornerShape(20.dp))
+                    .border(1.dp, p.cardBorder, RoundedCornerShape(20.dp))
                     .clickable { showInspector = !showInspector }
             ) {
                 Text(
-                    if (showInspector) "✕ कैमरा देखें" else "🔍 स्क्रीन टूल्स",
-                    color = Color.White,
+                    if (showInspector) "कैमरा देखें" else "स्क्रीन टूल्स",
+                    color = if (showInspector) Color.White else p.textPrimary,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
@@ -857,76 +930,72 @@ fun VisionTabContent(vm: VoiceViewModel) {
 
         if (showInspector) {
             Surface(
-                color = Color(0xEE090D18),
+                color = p.panel.copy(alpha = 0.96f),
                 shape = RoundedCornerShape(22.dp),
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .padding(bottom = 60.dp, start = 8.dp, end = 8.dp)
-                    .border(1.dp, CardBorder, RoundedCornerShape(22.dp))
+                    .border(1.dp, p.cardBorder, RoundedCornerShape(22.dp))
             ) {
                 Column(
                     Modifier.padding(16.dp).verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text("👁️ Meera Vision & Screen Inspector", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
-        Text(
-            "यहाँ से Meera आपकी चालू स्क्रीन या किसी भी ऐप के टेक्स्ट को पढ़कर समझा सकती है और उस पर एक्शन ले सकती है।",
-            color = Muted, fontSize = 13.sp
-        )
-
-        Surface(
-            color = CardGlass,
-            shape = RoundedCornerShape(20.dp),
-            modifier = Modifier.fillMaxWidth().border(1.dp, CardBorder, RoundedCornerShape(20.dp))
-        ) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(
-                    if (a11yOn) "🟢 Screen Reader इंजन चालू है" else "⚠️ Accessibility सर्विस बंद है",
-                    color = if (a11yOn) AccentCyan else Color(0xFFFFB84D),
-                    fontWeight = FontWeight.Bold, fontSize = 15.sp
-                )
-                Text(
-                    "जब आप किसी भी ऐप (जैसे WhatsApp या Chrome) में हों और माइक पर बोलें 'मीरा, स्क्रीन पढ़ो', तो वह तुरंत स्क्रीन का सारा टेक्स्ट पढ़ लेगी।",
-                    color = Muted, fontSize = 12.5.sp
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    QuickChip("🔍 अभी की स्क्रीन स्कैन करें") {
-                        screenDump = MeeraAccessibilityService.instance?.readScreenText()
-                            ?: "Accessibility बंद है। कृपया साइड मेन्यू से Accessibility ऑन करें।"
+                    Text("Vision & Screen Inspector", color = p.textPrimary, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+                    Text(
+                        "यहाँ से Meera आपकी चालू स्क्रीन या किसी भी ऐप के टेक्स्ट को पढ़कर समझा सकती है।",
+                        color = p.textSecondary, fontSize = 12.5.sp
+                    )
+                    Surface(
+                        color = p.card,
+                        shape = RoundedCornerShape(18.dp),
+                        modifier = Modifier.fillMaxWidth().border(1.dp, p.cardBorder, RoundedCornerShape(18.dp))
+                    ) {
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text(
+                                if (a11yOn) "Screen Reader इंजन चालू है" else "Accessibility सर्विस बंद है",
+                                color = if (a11yOn) p.accentSuccess else p.warning,
+                                fontWeight = FontWeight.Bold, fontSize = 14.sp
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                QuickChip("स्क्रीन स्कैन", Icons.Rounded.Visibility) {
+                                    screenDump = MeeraAccessibilityService.instance?.readScreenText()
+                                        ?: "Accessibility बंद है। कृपया साइड मेन्यू से Accessibility ऑन करें।"
+                                }
+                                QuickChip("नोटिफिकेशन", Icons.Rounded.Notifications) {
+                                    screenDump = MeeraNotificationService.getLatestSummary()
+                                }
+                            }
+                        }
                     }
-                    QuickChip("🔔 नोटिफिकेशन पढ़ें") {
-                        screenDump = MeeraNotificationService.getLatestSummary()
-                    }
-                }
-            }
-        }
 
-        if (screenDump.isNotBlank()) {
-            Surface(
-                color = CardGlass,
-                shape = RoundedCornerShape(18.dp),
-                modifier = Modifier.fillMaxWidth().border(1.dp, CardBorder, RoundedCornerShape(18.dp))
-            ) {
-                Column(Modifier.padding(14.dp)) {
-                    Text("📋 स्कैन किया गया डेटा:", color = AccentCyan, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(6.dp))
-                    Text(screenDump, color = Color.White, fontSize = 12.5.sp)
-                    Spacer(Modifier.height(10.dp))
-                    QuickChip("🗣️ Meera से इसका सारांश सुनें") {
-                        vm.sendTextQuery("इस स्क्रीन डेटा को पढ़कर संक्षेप में बताओ:\n$screenDump", speakAloud = true)
+                    if (screenDump.isNotBlank()) {
+                        Surface(
+                            color = p.card,
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier.fillMaxWidth().border(1.dp, p.cardBorder, RoundedCornerShape(16.dp))
+                        ) {
+                            Column(Modifier.padding(14.dp)) {
+                                Text("स्कैन किया गया डेटा:", color = p.accentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                Spacer(Modifier.height(6.dp))
+                                Text(screenDump, color = p.textPrimary, fontSize = 12.sp)
+                                Spacer(Modifier.height(10.dp))
+                                QuickChip("सारांश सुनें", Icons.Rounded.VolumeUp) {
+                                    vm.sendTextQuery("इस स्क्रीन डेटा को पढ़कर संक्षेप में बताओ:\n$screenDump", speakAloud = true)
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
     }
+}
 
-                }
-            }
-        }
-    }
 @Composable
 private fun YaadeinTabContent(vm: VoiceViewModel) {
+    val p = LocalMeeraColors.current
     val ctx = LocalContext.current
     var newFact by remember { mutableStateOf("") }
     var tick by remember { mutableStateOf(0) }
@@ -938,57 +1007,66 @@ private fun YaadeinTabContent(vm: VoiceViewModel) {
         Modifier.fillMaxSize().padding(18.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("🧠 यादें और सीखे हुए टास्क", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
+        Text("यादें और स्मार्ट टास्क", color = p.textPrimary, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
 
-        // Built-in Smart Automation Tasks (जैसे Maya के 'Sikhe hue tasks')
-        Text("⚡ 1-Tap स्मार्ट टास्क (Built-in Actions)", color = AccentCyan, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        Text("1-Tap स्मार्ट टास्क (Built-in Actions)", color = p.accentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
         val builtInTasks = listOf(
-            Triple("gemini se poochho · 8 steps", "sawaal · built-in (Gemini ऐप में सवाल पूछकर जवाब सुनाए)", "Gemini ऐप खोलकर आज की मुख्य टेक्नोलॉजी न्यूज़ पूछो"),
-            Triple("chatgpt se poochho · 8 steps", "sawaal · built-in (ChatGPT ऐप में सवाल पूछकर जवाब सुनाए)", "ChatGPT में जाकर एक मोटिवेशनल कहानी पूछो"),
-            Triple("gemini video · 16 steps", "video prompt · built-in (Gemini में वीडियो बनाकर सेव करे)", "Gemini में उगते सूरज का वीडियो बनाओ"),
-            Triple("gemini image · 17 steps", "image prompt · built-in (Gemini में इमेज बनाकर गैलरी में सेव करे)", "Gemini में दहाड़ते हुए शेर की इमेज बनाओ"),
-            Triple("chatgpt image · 14 steps", "image prompt · built-in (ChatGPT में इमेज बनाकर टैप करके डाउनलोड करे)", "ChatGPT में दहाड़ते हुए शेर की इमेज बनाओ")
+            Triple("Gemini से पूछें", "Gemini ऐप में सवाल पूछकर जवाब सुनाए", "Gemini ऐप खोलकर आज की मुख्य टेक्नोलॉजी न्यूज़ पूछो"),
+            Triple("ChatGPT से पूछें", "ChatGPT ऐप में सवाल पूछकर जवाब सुनाए", "ChatGPT में जाकर एक मोटिवेशनल कहानी पूछो"),
+            Triple("Gemini Video", "Gemini में वीडियो बनाकर सेव करे", "Gemini में उगते सूरज का वीडियो बनाओ"),
+            Triple("Gemini Image", "Gemini में इमेज बनाकर गैलरी में सेव करे", "Gemini में दहाड़ते हुए शेर की इमेज बनाओ"),
+            Triple("ChatGPT Image", "ChatGPT में इमेज बनाकर डाउनलोड करे", "ChatGPT में दहाड़ते हुए शेर की इमेज बनाओ")
         )
         builtInTasks.forEach { (title, sub, cmd) ->
             Surface(
-                color = CardGlass,
-                shape = RoundedCornerShape(18.dp),
-                modifier = Modifier.fillMaxWidth().border(1.dp, CardBorder, RoundedCornerShape(18.dp))
+                color = p.card,
+                shape = RoundedCornerShape(16.dp),
+                shadowElevation = if (p.isDark) 0.dp else 1.dp,
+                modifier = Modifier.fillMaxWidth().border(1.dp, p.cardBorder, RoundedCornerShape(16.dp))
                     .clickable { vm.sendTextQuery(cmd, speakAloud = true) }
             ) {
                 Row(
-                    Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                    Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                        Text(sub, color = Muted, fontSize = 12.sp)
+                    Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Box(
+                            Modifier.size(34.dp).clip(RoundedCornerShape(10.dp)).background(p.accentPrimary.copy(alpha = 0.14f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Rounded.AutoAwesome, contentDescription = null, tint = p.accentPrimary, modifier = Modifier.size(18.dp))
+                        }
+                        Column {
+                            Text(title, color = p.textPrimary, fontSize = 14.5.sp, fontWeight = FontWeight.Bold)
+                            Text(sub, color = p.textSecondary, fontSize = 11.5.sp)
+                        }
                     }
-                    Text("▶ चलाओ", color = AccentCyan, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Icon(Icons.Rounded.PlayArrow, contentDescription = "चलाएँ", tint = p.accentPrimary, modifier = Modifier.size(22.dp))
                 }
             }
         }
 
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(4.dp))
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("📌 सेव की गई यादें (${memories.size})", color = AccentCyan, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Text("सेव की गई यादें (${memories.size})", color = p.accentPrimary, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
             if (memories.isNotEmpty()) {
-                Text(
-                    "☁️ कॉपी/बैकअप",
-                    color = AccentBlue,
-                    fontSize = 12.5.sp,
-                    fontWeight = FontWeight.Bold,
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                     modifier = Modifier.clickable {
                         val cb = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                         cb.setPrimaryClip(ClipData.newPlainText("MeeraMemories", memories.joinToString("\n")))
-                        Toast.makeText(ctx, "सारी यादें क्लिपबोर्ड पर कॉपी हो गईं!", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(ctx, "सारी यादें कॉपी हो गईं!", Toast.LENGTH_SHORT).show()
                     }
-                )
+                ) {
+                    Icon(Icons.Rounded.ContentCopy, contentDescription = null, tint = p.accentSecondary, modifier = Modifier.size(14.dp))
+                    Text("बैकअप कॉपी", color = p.accentSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
             }
         }
 
@@ -996,45 +1074,56 @@ private fun YaadeinTabContent(vm: VoiceViewModel) {
             OutlinedTextField(
                 value = newFact,
                 onValueChange = { newFact = it },
-                placeholder = { Text("नई याद जोड़ें (जैसे: मेरा नाम राहुल है)", color = Muted, fontSize = 13.sp) },
+                placeholder = { Text("नई याद जोड़ें (जैसे: मेरा नाम राहुल है)", color = p.textSecondary, fontSize = 12.5.sp) },
                 singleLine = true,
                 modifier = Modifier.weight(1f)
             )
-            QuickChip("＋ जोड़ें") {
+            QuickChip("जोड़ें", Icons.Rounded.Add) {
                 if (newFact.isNotBlank()) {
                     vm.addManualMemory(newFact)
                     newFact = ""
+                    tick++
                 }
             }
         }
 
         if (memories.isEmpty()) {
-            Text("अभी कोई याद सेव नहीं है। बात करते समय Meera खुद याद रख लेगी।", color = Muted, fontSize = 13.sp)
+            Text("अभी कोई याद सेव नहीं है। बात करते समय Meera खुद याद रख लेगी।", color = p.textSecondary, fontSize = 13.sp)
         } else {
             memories.reversed().forEach { m ->
                 Surface(
-                    color = CardGlass,
+                    color = p.card,
                     shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier.fillMaxWidth().border(1.dp, CardBorder, RoundedCornerShape(14.dp))
+                    shadowElevation = if (p.isDark) 0.dp else 1.dp,
+                    modifier = Modifier.fillMaxWidth().border(1.dp, p.cardBorder, RoundedCornerShape(14.dp))
                 ) {
                     Column(Modifier.padding(12.dp)) {
-                        Text("• $m", color = Color.White, fontSize = 13.5.sp)
+                        Text(m, color = p.textPrimary, fontSize = 13.5.sp)
                         Spacer(Modifier.height(8.dp))
                         Row(
                             Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(18.dp, Alignment.End)
+                            horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.End),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                "✏️ बदलें", color = AccentCyan, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
                                 modifier = Modifier.clickable { editText = m; editingOld = m }
-                            )
-                            Text(
-                                "🗑️ हटाएँ", color = Color(0xFFFF6B6B), fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                            ) {
+                                Icon(Icons.Rounded.Edit, contentDescription = null, tint = p.accentPrimary, modifier = Modifier.size(15.dp))
+                                Text("बदलें", color = p.accentPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
                                 modifier = Modifier.clickable {
                                     vm.deleteMemory(m); tick++
                                     Toast.makeText(ctx, "हटा दिया", Toast.LENGTH_SHORT).show()
                                 }
-                            )
+                            ) {
+                                Icon(Icons.Rounded.DeleteOutline, contentDescription = null, tint = p.danger, modifier = Modifier.size(15.dp))
+                                Text("हटाएँ", color = p.danger, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            }
                         }
                     }
                 }
@@ -1042,7 +1131,7 @@ private fun YaadeinTabContent(vm: VoiceViewModel) {
             editingOld?.let { old ->
                 AlertDialog(
                     onDismissRequest = { editingOld = null },
-                    title = { Text("✏️ याद / स्किल बदलें") },
+                    title = { Text("याद / स्किल बदलें") },
                     text = {
                         OutlinedTextField(
                             value = editText,
@@ -1059,7 +1148,9 @@ private fun YaadeinTabContent(vm: VoiceViewModel) {
                 )
             }
             TextButton(onClick = { vm.clearAllMemories(); tick++ }) {
-                Text("🗑️ सारी यादें मिटाएँ", color = Color(0xFFFF6B6B))
+                Icon(Icons.Rounded.DeleteOutline, contentDescription = null, tint = p.danger, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("सारी यादें मिटाएँ", color = p.danger)
             }
         }
     }
@@ -1067,6 +1158,7 @@ private fun YaadeinTabContent(vm: VoiceViewModel) {
 
 @Composable
 private fun ChatTabContent(ui: UiState, vm: VoiceViewModel) {
+    val p = LocalMeeraColors.current
     val ctx = LocalContext.current
     var input by remember { mutableStateOf("") }
 
@@ -1076,10 +1168,12 @@ private fun ChatTabContent(ui: UiState, vm: VoiceViewModel) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("💬 बातचीत इतिहास (${ui.chatMessages.size})", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+            Text("बातचीत (${ui.chatMessages.size})", color = p.textPrimary, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
             if (ui.chatMessages.isNotEmpty()) {
                 TextButton(onClick = { vm.clearChatLog() }) {
-                    Text("🗑️ Clear", color = Muted, fontSize = 13.sp)
+                    Icon(Icons.Rounded.DeleteOutline, contentDescription = null, tint = p.textSecondary, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Clear", color = p.textSecondary, fontSize = 12.5.sp)
                 }
             }
         }
@@ -1090,7 +1184,7 @@ private fun ChatTabContent(ui: UiState, vm: VoiceViewModel) {
         ) {
             if (ui.chatMessages.isEmpty()) {
                 Box(Modifier.fillMaxSize().padding(top = 80.dp), contentAlignment = Alignment.Center) {
-                    Text("Meera से कुछ भी पूछो — आवाज़ से या नीचे लिखकर!", color = Muted, fontSize = 14.sp, textAlign = TextAlign.Center)
+                    Text("Meera से कुछ भी पूछें — आवाज़ से या नीचे लिखकर!", color = p.textSecondary, fontSize = 14.sp, textAlign = TextAlign.Center)
                 }
             } else {
                 ui.chatMessages.forEach { msg ->
@@ -1100,30 +1194,46 @@ private fun ChatTabContent(ui: UiState, vm: VoiceViewModel) {
                         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
                     ) {
                         Surface(
-                            color = if (isUser) AccentBlue else CardGlass,
-                            shape = RoundedCornerShape(18.dp),
-                            modifier = Modifier.fillMaxWidth(0.84f).border(1.dp, if (isUser) AccentBlue else CardBorder, RoundedCornerShape(18.dp))
+                            color = if (isUser) p.userBubble else p.card,
+                            shape = RoundedCornerShape(
+                                topStart = 18.dp, topEnd = 18.dp,
+                                bottomStart = if (isUser) 18.dp else 4.dp,
+                                bottomEnd = if (isUser) 4.dp else 18.dp
+                            ),
+                            shadowElevation = if (p.isDark) 0.dp else 1.dp,
+                            modifier = Modifier.fillMaxWidth(0.85f)
+                                .border(1.dp, if (isUser) p.userBubble else p.cardBorder, RoundedCornerShape(18.dp))
                         ) {
                             Column(Modifier.padding(12.dp)) {
-                                Text(msg.text, color = Color.White, fontSize = 14.5.sp)
-                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    msg.text,
+                                    color = if (isUser) p.userBubbleText else p.textPrimary,
+                                    fontSize = 14.sp
+                                )
+                                Spacer(Modifier.height(5.dp))
                                 Row(
                                     Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(msg.time, color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp)
+                                    Text(
+                                        msg.time,
+                                        color = if (isUser) p.userBubbleText.copy(alpha = 0.7f) else p.textSecondary,
+                                        fontSize = 10.5.sp
+                                    )
                                     if (!isUser) {
-                                        Text(
-                                            "📋 Copy",
-                                            color = AccentCyan,
-                                            fontSize = 11.sp,
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(3.dp),
                                             modifier = Modifier.clickable {
                                                 val cb = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                                 cb.setPrimaryClip(ClipData.newPlainText("MeeraReply", msg.text))
                                                 Toast.makeText(ctx, "कॉपी हो गया", Toast.LENGTH_SHORT).show()
                                             }
-                                        )
+                                        ) {
+                                            Icon(Icons.Rounded.ContentCopy, contentDescription = null, tint = p.accentPrimary, modifier = Modifier.size(13.dp))
+                                            Text("Copy", color = p.accentPrimary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                        }
                                     }
                                 }
                             }
@@ -1134,27 +1244,39 @@ private fun ChatTabContent(ui: UiState, vm: VoiceViewModel) {
         }
 
         Spacer(Modifier.height(8.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = input,
-                onValueChange = { input = it },
-                placeholder = { Text("यहाँ मैसेज या कमांड लिखें…", color = Muted, fontSize = 13.sp) },
-                singleLine = true,
-                modifier = Modifier.weight(1f)
-            )
-            Spacer(Modifier.width(8.dp))
-            Box(
-                Modifier.size(46.dp).clip(CircleShape)
-                    .background(Brush.linearGradient(listOf(AccentBlue, AccentPurple)))
-                    .clickable {
-                        if (input.isNotBlank()) {
-                            vm.sendTextQuery(input, speakAloud = true)
-                            input = ""
-                        }
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Text("➤", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Surface(
+            color = p.card,
+            shape = RoundedCornerShape(26.dp),
+            shadowElevation = if (p.isDark) 0.dp else 2.dp,
+            modifier = Modifier.fillMaxWidth().border(1.dp, p.cardBorder, RoundedCornerShape(26.dp))
+        ) {
+            Row(Modifier.padding(start = 14.dp, end = 6.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = input,
+                    onValueChange = { input = it },
+                    placeholder = { Text("यहाँ मैसेज या कमांड लिखें…", color = p.textSecondary, fontSize = 13.sp) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Color.Transparent,
+                        unfocusedBorderColor = Color.Transparent,
+                        focusedTextColor = p.textPrimary,
+                        unfocusedTextColor = p.textPrimary
+                    ),
+                    modifier = Modifier.weight(1f)
+                )
+                Box(
+                    Modifier.size(42.dp).clip(CircleShape)
+                        .background(Brush.linearGradient(listOf(p.accentPrimary, p.accentSecondary)))
+                        .clickable {
+                            if (input.isNotBlank()) {
+                                vm.sendTextQuery(input, speakAloud = true)
+                                input = ""
+                            }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Rounded.Send, contentDescription = "Send", tint = Color.White, modifier = Modifier.size(19.dp))
+                }
             }
         }
     }
@@ -1162,75 +1284,63 @@ private fun ChatTabContent(ui: UiState, vm: VoiceViewModel) {
 
 @Composable
 private fun AccessibilityHubScreen(onBack: () -> Unit) {
+    val p = LocalMeeraColors.current
     val ctx = LocalContext.current
     val a11yOn = MeeraAccessibilityService.instance != null
     val adbCmd = "adb shell pm grant ${ctx.packageName} android.permission.WRITE_SECURE_SETTINGS"
 
     Column(
-        Modifier.fillMaxSize().background(Bg).systemBarsPadding().padding(18.dp).verticalScroll(rememberScrollState()),
+        Modifier.fillMaxSize().background(p.bg).systemBarsPadding().padding(18.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Surface(
-                color = CardGlass,
+                color = p.card,
                 shape = CircleShape,
-                modifier = Modifier.size(42.dp).border(1.dp, CardBorder, CircleShape).clickable(onClick = onBack)
+                modifier = Modifier.size(40.dp).border(1.dp, p.cardBorder, CircleShape).clickable(onClick = onBack)
             ) {
-                Box(contentAlignment = Alignment.Center) { Text("←", color = Color.White, fontSize = 20.sp) }
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(Icons.Rounded.ArrowBack, contentDescription = "Back", tint = p.textPrimary, modifier = Modifier.size(20.dp))
+                }
             }
             Spacer(Modifier.width(12.dp))
-            Text("Accessibility Control Hub", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
+            Text("Accessibility Control Hub", color = p.textPrimary, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
         }
 
-        // Status Card
         Surface(
-            color = CardGlass,
-            shape = RoundedCornerShape(22.dp),
-            modifier = Modifier.fillMaxWidth().border(1.dp, if (a11yOn) AccentCyan else CardBorder, RoundedCornerShape(22.dp))
+            color = p.card,
+            shape = RoundedCornerShape(20.dp),
+            modifier = Modifier.fillMaxWidth().border(1.dp, if (a11yOn) p.accentSuccess else p.cardBorder, RoundedCornerShape(20.dp))
         ) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
-                    if (a11yOn) "🟢 Accessibility चालू है" else "⚠️ Accessibility बंद है",
-                    color = if (a11yOn) AccentCyan else Color(0xFFFFB84D),
-                    fontSize = 17.sp, fontWeight = FontWeight.ExtraBold
+                    if (a11yOn) "Accessibility चालू है (Active)" else "Accessibility बंद है",
+                    color = if (a11yOn) p.accentSuccess else p.warning,
+                    fontSize = 16.sp, fontWeight = FontWeight.ExtraBold
                 )
                 Text(
                     "Meera स्क्रीन पढ़ और टैप कर सकती है — WhatsApp, Instagram, YouTube सब।",
-                    color = Muted, fontSize = 13.sp
+                    color = p.textSecondary, fontSize = 13.sp
                 )
             }
         }
 
-        // Payment App Pause Button
         Box(
-            Modifier.fillMaxWidth().height(52.dp).clip(RoundedCornerShape(18.dp))
-                .background(Brush.linearGradient(listOf(AccentBlue, AccentPurple)))
+            Modifier.fillMaxWidth().height(50.dp).clip(RoundedCornerShape(16.dp))
+                .background(Brush.linearGradient(listOf(p.accentPrimary, p.accentSecondary)))
                 .clickable { PermHelper.openAccessibilitySettings(ctx) },
             contentAlignment = Alignment.Center
         ) {
             Text(
-                if (a11yOn) "🏦 Payment ऐप (GPay/PhonePe) के लिए बंद/चालू करें" else "🚹 अभी Accessibility सेटिंग्स खोलकर ऑन करें",
-                color = Color.White, fontSize = 14.5.sp, fontWeight = FontWeight.Bold
+                if (a11yOn) "Payment ऐप के लिए Accessibility खोलें" else "अभी Accessibility सेटिंग्स खोलकर ऑन करें",
+                color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold
             )
         }
 
         Surface(
-            color = CardGlass,
+            color = p.card,
             shape = RoundedCornerShape(18.dp),
-            modifier = Modifier.fillMaxWidth().border(1.dp, CardBorder, RoundedCornerShape(18.dp))
-        ) {
-            Text(
-                "💡 Paytm, PhonePe, Google Pay और ज़्यादातर बैंक ऐप्स Accessibility ON होने पर सिक्योरिटी की वजह से चेतावनी देते हैं। ऊपर वाले बटन से आप एक टैप में सेटिंग खोलकर पेमेंट के समय इसे बंद और बाद में वापस चालू कर सकते हैं।",
-                color = Muted, fontSize = 12.5.sp, modifier = Modifier.padding(14.dp)
-            )
-        }
-
-        // Battery & Autostart Card
-        Text("बार-बार बंद हो रही है?", color = AccentCyan, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-        Surface(
-            color = CardGlass,
-            shape = RoundedCornerShape(20.dp),
-            modifier = Modifier.fillMaxWidth().border(1.dp, CardBorder, RoundedCornerShape(20.dp))
+            modifier = Modifier.fillMaxWidth().border(1.dp, p.cardBorder, RoundedCornerShape(18.dp))
         ) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(
@@ -1238,41 +1348,42 @@ private fun AccessibilityHubScreen(onBack: () -> Unit) {
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("🔋 Battery: Meera को optimise मत करो", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                        Text("ताकि फोन बैकग्राउंड में Meera को बंद न करे", color = Muted, fontSize = 12.sp)
+                    Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Icon(Icons.Rounded.BatteryChargingFull, contentDescription = null, tint = p.accentPrimary)
+                        Column {
+                            Text("Battery Unrestricted", color = p.textPrimary, fontSize = 14.5.sp, fontWeight = FontWeight.Bold)
+                            Text("ताकि फोन बैकग्राउंड में Meera को बंद न करे", color = p.textSecondary, fontSize = 12.sp)
+                        }
                     }
-                    Text("›", color = Color.White, fontSize = 22.sp)
+                    Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = p.textSecondary)
                 }
-                HorizontalDivider(color = CardBorder)
+                HorizontalDivider(color = p.cardBorder)
                 Row(
                     Modifier.fillMaxWidth().clickable { PermHelper.openNotificationListenerSettings(ctx) },
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("🔔 Notification Access", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                        Text("WhatsApp मैसेज और कॉलर का नाम पढ़ने के लिए", color = Muted, fontSize = 12.sp)
+                    Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Icon(Icons.Rounded.Notifications, contentDescription = null, tint = p.accentPrimary)
+                        Column {
+                            Text("Notification Access", color = p.textPrimary, fontSize = 14.5.sp, fontWeight = FontWeight.Bold)
+                            Text("WhatsApp मैसेज और कॉलर का नाम पढ़ने के लिए", color = p.textSecondary, fontSize = 12.sp)
+                        }
                     }
-                    Text("›", color = Color.White, fontSize = 22.sp)
+                    Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = p.textSecondary)
                 }
             }
         }
 
-        // ADB One-Tap Fix
-        Text("ONE-TAP FIX (ADVANCED)", color = AccentCyan, fontSize = 13.sp, fontWeight = FontWeight.Bold)
         Surface(
-            color = CardGlass,
-            shape = RoundedCornerShape(20.dp),
-            modifier = Modifier.fillMaxWidth().border(1.dp, CardBorder, RoundedCornerShape(20.dp))
+            color = p.card,
+            shape = RoundedCornerShape(18.dp),
+            modifier = Modifier.fillMaxWidth().border(1.dp, p.cardBorder, RoundedCornerShape(18.dp))
         ) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(
-                    "Android किसी ऐप को अपनी रुकी हुई Accessibility खुद ठीक करने की इजाज़त इस ADB कमांड से देता है:",
-                    color = Muted, fontSize = 12.5.sp
-                )
-                Text(adbCmd, color = AccentCyan, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                QuickChip("📋 ADB Command कॉपी करें") {
+                Text("ADB Command (Advanced)", color = p.accentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Text(adbCmd, color = p.textPrimary, fontSize = 12.sp)
+                QuickChip("ADB Command कॉपी करें", Icons.Rounded.ContentCopy) {
                     val cb = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                     cb.setPrimaryClip(ClipData.newPlainText("adb", adbCmd))
                     Toast.makeText(ctx, "ADB Command कॉपी हो गई!", Toast.LENGTH_SHORT).show()
@@ -1289,53 +1400,96 @@ private fun BottomAuroraDock(
     onSelectTab: (NavTab) -> Unit,
     onMicClick: () -> Unit
 ) {
+    val p = LocalMeeraColors.current
     Surface(
-        color = Panel,
-        shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp),
-        modifier = Modifier.fillMaxWidth().border(1.dp, CardBorder, RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp))
+        color = p.dockBg,
+        shape = RoundedCornerShape(28.dp),
+        shadowElevation = if (p.isDark) 6.dp else 8.dp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 10.dp)
+            .border(1.dp, p.cardBorder, RoundedCornerShape(28.dp))
     ) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.SpaceAround,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            DockTabItem("🏠", "Home", currentTab == NavTab.HOME) { onSelectTab(NavTab.HOME) }
-            DockTabItem("👁️", "Vision", currentTab == NavTab.VISION) { onSelectTab(NavTab.VISION) }
+            DockTabItem(Icons.Rounded.Home, "Home", currentTab == NavTab.HOME) { onSelectTab(NavTab.HOME) }
+            DockTabItem(Icons.Rounded.Visibility, "Vision", currentTab == NavTab.VISION) { onSelectTab(NavTab.VISION) }
 
-            // Center Floating Mic Button
-            val micColor = if (micActive) Color(0xFFE5484D) else AccentBlue
+            val micGrad = if (micActive) listOf(p.danger, Color(0xFFB91C1C)) else listOf(p.accentPrimary, p.accentSecondary)
             Box(
-                Modifier.size(64.dp).border(2.dp, micColor.copy(alpha = 0.45f), CircleShape).padding(4.dp)
-                    .clip(CircleShape).background(Brush.linearGradient(listOf(micColor, if (micActive) Color(0xFFB91C1C) else AccentPurple)))
+                Modifier
+                    .size(58.dp)
+                    .shadow(if (p.isDark) 4.dp else 6.dp, CircleShape)
+                    .clip(CircleShape)
+                    .background(Brush.linearGradient(micGrad))
                     .clickable(onClick = onMicClick),
                 contentAlignment = Alignment.Center
             ) {
-                Text(if (micActive) "■" else "🎙️", fontSize = 24.sp, color = Color.White)
+                Icon(
+                    if (micActive) Icons.Rounded.Stop else Icons.Rounded.Mic,
+                    contentDescription = "Mic",
+                    tint = Color.White,
+                    modifier = Modifier.size(26.dp)
+                )
             }
 
-            DockTabItem("🧠", "Yaadein", currentTab == NavTab.YAADEIN) { onSelectTab(NavTab.YAADEIN) }
-            DockTabItem("💬", "Chat", currentTab == NavTab.CHAT) { onSelectTab(NavTab.CHAT) }
+            DockTabItem(Icons.Rounded.Psychology, "Yaadein", currentTab == NavTab.YAADEIN) { onSelectTab(NavTab.YAADEIN) }
+            DockTabItem(Icons.Rounded.ChatBubble, "Chat", currentTab == NavTab.CHAT) { onSelectTab(NavTab.CHAT) }
         }
     }
 }
 
 @Composable
-private fun DockTabItem(icon: String, label: String, selected: Boolean, onClick: () -> Unit) {
+private fun DockTabItem(icon: ImageVector, label: String, selected: Boolean, onClick: () -> Unit) {
+    val p = LocalMeeraColors.current
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .clip(RoundedCornerShape(14.dp))
-            .background(if (selected) AccentBlue.copy(alpha = 0.22f) else Color.Transparent)
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (selected) p.accentPrimary.copy(alpha = 0.14f) else Color.Transparent)
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 6.dp)
+            .padding(horizontal = 12.dp, vertical = 6.dp)
     ) {
-        Text(icon, fontSize = 18.sp)
+        Icon(
+            icon,
+            contentDescription = label,
+            tint = if (selected) p.accentPrimary else p.textSecondary,
+            modifier = Modifier.size(21.dp)
+        )
+        Spacer(Modifier.height(2.dp))
         Text(
             label,
-            color = if (selected) Color.White else Muted,
-            fontSize = 11.5.sp,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
+            color = if (selected) p.accentPrimary else p.textSecondary,
+            fontSize = 11.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
         )
+    }
+}
+
+@Composable
+private fun ThemeSwatchRow(theme: MeeraPalette, selected: Boolean, onClick: () -> Unit) {
+    val p = LocalMeeraColors.current
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 18.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RadioButton(
+            selected = selected,
+            onClick = onClick,
+            colors = RadioButtonDefaults.colors(selectedColor = p.accentPrimary)
+        )
+        Box(
+            Modifier.size(24.dp).clip(CircleShape)
+                .background(Brush.linearGradient(listOf(theme.bg, theme.accentPrimary, theme.accentSecondary)))
+                .border(1.dp, p.cardBorder, CircleShape)
+        )
+        Column(Modifier.padding(start = 10.dp)) {
+            Text(theme.label, color = p.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            Text(theme.desc, color = p.textSecondary, fontSize = 11.5.sp)
+        }
     }
 }
 
@@ -1347,40 +1501,52 @@ private fun DropSection(
     onToggle: () -> Unit,
     content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit
 ) {
+    val p = LocalMeeraColors.current
     Column(Modifier.fillMaxWidth()) {
         Row(
-            Modifier.fillMaxWidth().clickable(onClick = onToggle).padding(horizontal = 24.dp, vertical = 12.dp),
+            Modifier.fillMaxWidth().clickable(onClick = onToggle).padding(horizontal = 22.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f)) {
-                Text(title, color = Muted, fontSize = 12.sp)
-                Text(current, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                Text(title, color = p.textSecondary, fontSize = 11.5.sp)
+                Text(current, color = p.textPrimary, fontSize = 14.5.sp, fontWeight = FontWeight.SemiBold)
             }
-            Text(if (open) "▲" else "▼", color = AccentCyan, fontSize = 14.sp)
+            Icon(
+                if (open) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                contentDescription = null,
+                tint = p.accentPrimary,
+                modifier = Modifier.size(20.dp)
+            )
         }
         if (open) {
-            Column(Modifier.fillMaxWidth().background(Color(0xFF10172F)).padding(vertical = 4.dp)) { content() }
+            Column(Modifier.fillMaxWidth().background(p.card.copy(alpha = 0.75f)).padding(vertical = 4.dp)) { content() }
         }
-        HorizontalDivider(color = Color(0xFF232C52))
+        HorizontalDivider(color = p.cardBorder)
     }
 }
 
 @Composable
 private fun ModeRow(title: String, sub: String, selected: Boolean, onClick: () -> Unit) {
+    val p = LocalMeeraColors.current
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 20.dp, vertical = 6.dp),
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 18.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        RadioButton(selected = selected, onClick = onClick)
+        RadioButton(
+            selected = selected,
+            onClick = onClick,
+            colors = RadioButtonDefaults.colors(selectedColor = p.accentPrimary)
+        )
         Column(Modifier.padding(start = 8.dp)) {
-            Text(title, color = Color.White, fontSize = 15.sp)
-            Text(sub, color = Muted, fontSize = 12.sp)
+            Text(title, color = p.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+            Text(sub, color = p.textSecondary, fontSize = 11.5.sp)
         }
     }
 }
 
 @Composable
 private fun KeyDialog(hasKey: Boolean, onSave: (String) -> Unit, onDismiss: () -> Unit) {
+    val p = LocalMeeraColors.current
     var text by remember { mutableStateOf("") }
     var show by remember { mutableStateOf(false) }
     AlertDialog(
@@ -1389,8 +1555,8 @@ private fun KeyDialog(hasKey: Boolean, onSave: (String) -> Unit, onDismiss: () -
         text = {
             Column {
                 Text(
-                    if (hasKey) "पहले से एक Key सेव है. नई डालने पर बदल जाएगी." else "aistudio.google.com से Key कॉपी करके यहाँ पेस्ट करें.",
-                    fontSize = 13.sp, color = Muted
+                    if (hasKey) "पहले से एक Key सेव है। नई डालने पर बदल जाएगी।" else "aistudio.google.com से Key कॉपी करके यहाँ पेस्ट करें।",
+                    fontSize = 13.sp, color = p.textSecondary
                 )
                 Spacer(Modifier.height(12.dp))
                 OutlinedTextField(
@@ -1408,51 +1574,6 @@ private fun KeyDialog(hasKey: Boolean, onSave: (String) -> Unit, onDismiss: () -
 
 @Composable
 fun Orb(state: VState, vm: VoiceViewModel, modifier: Modifier = Modifier) {
-    val lvlRaw by vm.level.collectAsStateWithLifecycle()
-    val lvl by animateFloatAsState(lvlRaw.coerceIn(0f, 1f), tween(90), label = "lvl")
-    val target = when (state) {
-        VState.IDLE -> AccentBlue
-        VState.CONNECTING -> Color(0xFF7C8CB8)
-        VState.LISTENING -> Color(0xFF3CC8FF)
-        VState.USER_SPEAKING -> AccentCyan
-        VState.PROCESSING -> Color(0xFFFFB84D)
-        VState.ASSISTANT_SPEAKING -> Color(0xFFB46BFF)
-        VState.ERROR -> Color(0xFFE5484D)
-    }
-    val color by animateColorAsState(target, tween(500), label = "color")
-    val t = rememberInfiniteTransition(label = "orb")
-    val breathe by t.animateFloat(0f, 1f, infiniteRepeatable(tween(2600, easing = LinearEasing), RepeatMode.Reverse), label = "b")
-    val spin by t.animateFloat(0f, 360f, infiniteRepeatable(tween(7000, easing = LinearEasing)), label = "s")
-    val ring by t.animateFloat(0f, 1f, infiniteRepeatable(tween(1600, easing = LinearOutSlowInEasing)), label = "r")
-    val rippling = state == VState.USER_SPEAKING || state == VState.ASSISTANT_SPEAKING
-
-    Canvas(modifier) {
-        val c = center
-        val base = size.minDimension / 2f * 0.55f
-        val r = base * (1f + 0.05f * breathe + 0.45f * lvl)
-        drawCircle(Brush.radialGradient(listOf(color.copy(alpha = 0.40f), Color.Transparent), center = c, radius = r * 2f), radius = r * 2f, center = c)
-        if (rippling) {
-            for (i in 0..1) {
-                val p = (ring + i * 0.5f) % 1f
-                drawCircle(color.copy(alpha = (1f - p) * 0.4f), radius = r * (1f + p * 0.6f), center = c, style = Stroke(3.dp.toPx()))
-            }
-        }
-        drawCircle(
-            Brush.radialGradient(
-                listOf(Color.White.copy(alpha = 0.85f), color, color.copy(alpha = 0.55f), Bg),
-                center = c + Offset(-r * 0.3f, -r * 0.3f), radius = r * 1.5f
-            ),
-            radius = r, center = c
-        )
-        val arcs = if (state == VState.PROCESSING) 3 else 1
-        for (i in 0 until arcs) {
-            rotate(spin * (if (state == VState.PROCESSING) 2f else 1f) + i * 120f, pivot = c) {
-                drawArc(
-                    Color.White.copy(alpha = 0.28f), startAngle = 0f, sweepAngle = 60f, useCenter = false,
-                    topLeft = c - Offset(r * 0.8f, r * 0.8f), size = Size(r * 1.6f, r * 1.6f),
-                    style = Stroke(r * 0.1f, cap = StrokeCap.Round)
-                )
-            }
-        }
-    }
+    val p = LocalMeeraColors.current
+    MeeraDynamicOrb(state = state, vm = vm, orbStyle = "CLASSIC", persona = "Meera", isDark = p.isDark, modifier = modifier)
 }
