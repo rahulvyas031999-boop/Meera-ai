@@ -78,6 +78,7 @@ object MeeraBackgroundMonitor {
     }
 
     private fun nowTime(): String = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
+    private fun maskSecrets(s: String): String = s.replace(Regex("gh[pousr]_[A-Za-z0-9_]+"), "ghp_***MASKED***")
 
     fun startTask(
         title: String,
@@ -98,7 +99,7 @@ object MeeraBackgroundMonitor {
             status = "RUNNING",
             startedAtMs = now,
             updatedAtMs = now,
-            stepLogs = listOf("[${nowTime()}] (${initialPercent}%) $initialStep")
+            stepLogs = listOf("[${nowTime()}] (${initialPercent}%) ${maskSecrets(initialStep)}")
         )
         tasks.value = (listOf(rec) + tasks.value).take(25)
         MeeraDebugLog.log("BG_TASK", "Started #$id [$category] $title ($initialPercent%)")
@@ -120,7 +121,7 @@ object MeeraBackgroundMonitor {
                     currentStep = stepDesc,
                     modelUsed = modelUsed ?: t.modelUsed,
                     updatedAtMs = now,
-                    stepLogs = (t.stepLogs + "[${nowTime()}] (${pct}%) $stepDesc").takeLast(30)
+                    stepLogs = (t.stepLogs + "[${nowTime()}] (${pct}%) ${maskSecrets(stepDesc)}").takeLast(30)
                 )
             } else t
         }
@@ -143,7 +144,7 @@ object MeeraBackgroundMonitor {
                     currentStep = finalStep,
                     status = st,
                     updatedAtMs = now,
-                    stepLogs = (t.stepLogs + "[${nowTime()}] (${finalPct}%) $finalStep").takeLast(30),
+                    stepLogs = (t.stepLogs + "[${nowTime()}] (${finalPct}%) ${maskSecrets(finalStep)}").takeLast(30),
                     outputPreview = outputPreview.ifBlank { t.outputPreview }
                 )
             } else t
@@ -173,13 +174,14 @@ object MeeraBackgroundMonitor {
 @Composable
 fun MeeraBackgroundActivityScreen(onBack: () -> Unit) {
     val ctx = LocalContext.current
+    val p = LocalMeeraColors.current
     val taskList by MeeraBackgroundMonitor.tasks.collectAsState()
     val scrollState = rememberScrollState()
 
     Column(
         Modifier
             .fillMaxSize()
-            .background(Color(0xFF090D18))
+            .background(p.bg)
             .systemBarsPadding()
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -191,26 +193,26 @@ fun MeeraBackgroundActivityScreen(onBack: () -> Unit) {
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Surface(
-                    color = Color(0xFF16203A),
+                    color = p.panel,
                     shape = CircleShape,
                     modifier = Modifier
                         .size(40.dp)
-                        .border(1.dp, Color(0xFF26355E), CircleShape)
+                        .border(1.dp, p.cardBorder, CircleShape)
                         .clickable(onClick = onBack)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        Text("←", color = Color.White, fontSize = 20.sp)
+                        Text("←", color = p.textPrimary, fontSize = 20.sp)
                     }
                 }
                 Spacer(Modifier.width(10.dp))
                 Column {
-                    Text("Background Activity", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+                    Text("Background Activity", color = p.textPrimary, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
                     Text("Live Progress % • Engine & Sub-Agent Monitor", color = Color(0xFF2EE6A8), fontSize = 11.sp)
                 }
             }
             if (taskList.any { it.status != "RUNNING" }) {
                 TextButton(onClick = { MeeraBackgroundMonitor.clearHistory() }) {
-                    Text("Clear", color = Color(0xFF8A94B8), fontSize = 12.5.sp)
+                    Text("Clear", color = p.textSecondary, fontSize = 12.5.sp)
                 }
             }
         }
@@ -224,17 +226,17 @@ fun MeeraBackgroundActivityScreen(onBack: () -> Unit) {
         ) {
             if (taskList.isEmpty()) {
                 Surface(
-                    color = Color(0xFF12192E),
+                    color = p.card,
                     shape = RoundedCornerShape(18.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .border(1.dp, Color(0xFF26355E), RoundedCornerShape(18.dp))
+                        .border(1.dp, p.cardBorder, RoundedCornerShape(18.dp))
                 ) {
                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("कोई सक्रिय बैकग्राउंड टास्क नहीं है", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        Text("कोई सक्रिय बैकग्राउंड टास्क नहीं है", color = p.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
                         Text(
                             "जब मीरा कोई कोडिंग स्क्रिप्ट लिखेगी, Colab/Termux कमांड चलाएगी या कोई कस्टम एजेंट बनाएगी, तो उसका लाइव प्रतिशत (0%–100%) और हर स्टेप यहाँ दिखेगा।",
-                            color = Color(0xFF8A94B8),
+                            color = p.textSecondary,
                             fontSize = 12.5.sp
                         )
                     }
@@ -255,7 +257,7 @@ fun MeeraBackgroundActivityScreen(onBack: () -> Unit) {
                     )
 
                     Surface(
-                        color = Color(0xFF12192E),
+                        color = p.card,
                         shape = RoundedCornerShape(18.dp),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -283,7 +285,7 @@ fun MeeraBackgroundActivityScreen(onBack: () -> Unit) {
 
                             Text(
                                 task.title,
-                                color = Color.White,
+                                color = p.textPrimary,
                                 fontSize = 15.sp,
                                 fontWeight = FontWeight.Bold
                             )
@@ -311,7 +313,7 @@ fun MeeraBackgroundActivityScreen(onBack: () -> Unit) {
 
                             Text(
                                 "वर्तमान चरण: ${task.currentStep}",
-                                color = Color(0xFFE2E8F0),
+                                color = p.textPrimary,
                                 fontSize = 12.5.sp
                             )
 
@@ -338,10 +340,10 @@ fun MeeraBackgroundActivityScreen(onBack: () -> Unit) {
                                     horizontalArrangement = Arrangement.End
                                 ) {
                                     Surface(
-                                        color = Color(0xFF16203A),
+                                        color = p.panel,
                                         shape = RoundedCornerShape(10.dp),
                                         modifier = Modifier
-                                            .border(1.dp, Color(0xFF26355E), RoundedCornerShape(10.dp))
+                                            .border(1.dp, p.cardBorder, RoundedCornerShape(10.dp))
                                             .clickable {
                                                 val cb = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                                 cb.setPrimaryClip(ClipData.newPlainText("MeeraBgOutput", task.outputPreview))

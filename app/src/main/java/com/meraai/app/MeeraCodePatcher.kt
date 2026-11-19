@@ -34,6 +34,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -1621,6 +1622,18 @@ RULES:
 @Composable
 fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
     val ctx = LocalContext.current
+    val p = LocalMeeraColors.current
+    val studioFieldColors = OutlinedTextFieldDefaults.colors(
+        focusedTextColor = p.textPrimary,
+        unfocusedTextColor = p.textPrimary,
+        cursorColor = p.accentPrimary,
+        focusedContainerColor = p.bg,
+        unfocusedContainerColor = p.bg,
+        focusedBorderColor = p.accentPrimary,
+        unfocusedBorderColor = p.cardBorder,
+        focusedPlaceholderColor = p.textSecondary,
+        unfocusedPlaceholderColor = p.textSecondary
+    )
     LaunchedEffect(Unit) { MeeraCodePatcher.ensurePrefsLoaded(ctx) }
     val ui by MeeraCodePatcher.state.collectAsState()
     var currentTab by remember { mutableStateOf(0) }
@@ -1642,7 +1655,7 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
     Column(
         Modifier
             .fillMaxSize()
-            .background(Color(0xFF090D18))
+            .background(p.bg)
             .systemBarsPadding()
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -1654,21 +1667,21 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Surface(
-                color = Color(0xFF16203A),
+                color = p.panel,
                 shape = CircleShape,
                 modifier = Modifier
                     .size(38.dp)
-                    .border(1.dp, Color(0xFF26355E), CircleShape)
+                    .border(1.dp, p.cardBorder, CircleShape)
                     .clickable(onClick = onBack)
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    Text("←", color = Color.White, fontSize = 19.sp)
+                    Text("←", color = p.textPrimary, fontSize = 19.sp)
                 }
             }
             Column(Modifier.weight(1f)) {
                 Text(
                     "Code & Build Studio",
-                    color = Color.White,
+                    color = p.textPrimary,
                     fontSize = 15.5.sp,
                     fontWeight = FontWeight.ExtraBold,
                     maxLines = 1,
@@ -1693,7 +1706,7 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
             ) {
                 Text(
                     if (showModelManager) "✕ Models" else "⚙️ Models",
-                    color = Color.White,
+                    color = p.textPrimary,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
@@ -1757,16 +1770,16 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
                 }
             }
             Surface(
-                color = Color(0xFF16203A),
+                color = p.panel,
                 shape = RoundedCornerShape(10.dp),
                 modifier = Modifier
-                    .border(1.dp, Color(0xFF26355E), RoundedCornerShape(10.dp))
+                    .border(1.dp, p.cardBorder, RoundedCornerShape(10.dp))
                     .clickable { scope.launch { scrollState.animateScrollTo(0) } }
             ) {
                 Text("⬆️ Top", color = Color(0xFF38BDF8), fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp))
             }
             Surface(
-                color = Color(0xFF16203A),
+                color = p.panel,
                 shape = RoundedCornerShape(10.dp),
                 modifier = Modifier
                     .border(1.dp, Color(0xFF2EE6A8), RoundedCornerShape(10.dp))
@@ -1786,7 +1799,7 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
         ) {
             if (showModelManager) {
                 Surface(
-                    color = Color(0xFF12192E),
+                    color = p.card,
                     shape = RoundedCornerShape(16.dp),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1798,7 +1811,7 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("🧠 Coding Models (Max 4)", color = Color.White, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                            Text("🧠 Coding Models (Max 4)", color = p.textPrimary, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
                             Box(
                                 Modifier
                                     .clip(RoundedCornerShape(10.dp))
@@ -1819,7 +1832,7 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
                             Text(ui.verifySummary, color = Color(0xFF2EE6A8), fontSize = 11.5.sp)
                         }
 
-                        Text("आपकी चुनी हुई प्राथमिकता (Priority Order):", color = Color(0xFF8A94B8), fontSize = 11.sp)
+                        Text("आपकी चुनी हुई प्राथमिकता (Priority Order):", color = p.textSecondary, fontSize = 11.sp)
                         ui.curatedModels.forEachIndexed { idx, mId ->
                             val h = ui.verifiedHealthMap[mId]
                             Row(
@@ -1834,7 +1847,7 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
                                 Column(Modifier.weight(1f)) {
                                     Text(
                                         "#${idx + 1} ${MeeraCodePatcher.friendlyModelLabel(mId)} ($mId)",
-                                        color = Color.White,
+                                        color = p.textPrimary,
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.Bold
                                     )
@@ -1876,7 +1889,7 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
 
                         val otherModels = ui.verifiedHealthMap.values.filter { it.modelId !in ui.curatedModels }
                         if (otherModels.isNotEmpty()) {
-                            Text("API Key पर मिले अन्य मॉडल (लिस्ट में जोड़ने के लिए टैप करें):", color = Color(0xFF8A94B8), fontSize = 11.sp)
+                            Text("API Key पर मिले अन्य मॉडल (लिस्ट में जोड़ने के लिए टैप करें):", color = p.textSecondary, fontSize = 11.sp)
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 otherModels.forEach { item ->
                                     val borderC = when {
@@ -1913,8 +1926,9 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
                             OutlinedTextField(
                                 value = customModelId,
                                 onValueChange = { customModelId = it },
-                                placeholder = { Text("नया मॉडल ID डालें (जैसे gemini-3.6-flash)", color = Color(0xFF8A94B8), fontSize = 11.sp) },
+                                placeholder = { Text("नया मॉडल ID डालें (जैसे gemini-3.6-flash)", color = p.textSecondary, fontSize = 11.sp) },
                                 singleLine = true,
+                                colors = studioFieldColors,
                                 modifier = Modifier.weight(1f)
                             )
                             Box(
@@ -1938,24 +1952,25 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
 
             if (currentTab == 0) {
                 Surface(
-                    color = Color(0xFF12192E),
+                    color = p.card,
                     shape = RoundedCornerShape(16.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .border(1.dp, Color(0xFF26355E), RoundedCornerShape(16.dp))
+                        .border(1.dp, p.cardBorder, RoundedCornerShape(16.dp))
                 ) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("1. बदलाव लिखें और नीचे अपना पसंदीदा मॉडल चुनें:", color = Color.White, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                        Text("1. बदलाव लिखें और नीचे अपना पसंदीदा मॉडल चुनें:", color = p.textPrimary, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
                         OutlinedTextField(
                             value = inputBox,
                             onValueChange = { inputBox = it },
-                            placeholder = { Text("उदाहरण: Ui.kt में साइड मेन्यू बटन का रंग बदलो", color = Color(0xFF8A94B8), fontSize = 12.sp) },
+                            placeholder = { Text("उदाहरण: Ui.kt में साइड मेन्यू बटन का रंग बदलो", color = p.textSecondary, fontSize = 12.sp) },
                             minLines = 3,
                             maxLines = 7,
+                            colors = studioFieldColors,
                             modifier = Modifier.fillMaxWidth()
                         )
 
-                        Text("किस मॉडल से पैच बनवाना है (Direct Pick):", color = Color(0xFF8A94B8), fontSize = 11.sp)
+                        Text("किस मॉडल से पैच बनवाना है (Direct Pick):", color = p.textSecondary, fontSize = 11.sp)
                         Row(
                             Modifier
                                 .fillMaxWidth()
@@ -1984,7 +1999,7 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
                                 ) {
                                     Text(
                                         MeeraCodePatcher.friendlyModelLabel(mId),
-                                        color = Color.White,
+                                        color = p.textPrimary,
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.Bold
                                     )
@@ -2021,7 +2036,7 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
                             }
                             if (inputBox.isNotBlank() || ui.previews.isNotEmpty()) {
                                 TextButton(onClick = { inputBox = ""; MeeraCodePatcher.clearPreview() }) {
-                                    Text("साफ़ करें", color = Color(0xFF8A94B8), fontSize = 12.sp)
+                                    Text("साफ़ करें", color = p.textSecondary, fontSize = 12.sp)
                                 }
                             }
                         }
@@ -2031,21 +2046,22 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
 
             if (currentTab == 1) {
                 Surface(
-                    color = Color(0xFF12192E),
+                    color = p.card,
                     shape = RoundedCornerShape(16.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .border(1.dp, Color(0xFF26355E), RoundedCornerShape(16.dp))
+                        .border(1.dp, p.cardBorder, RoundedCornerShape(16.dp))
                 ) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Python स्क्रिप्ट पेस्ट करें (Termux में चलेगी):", color = Color.White, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                        Text("Python स्क्रिप्ट पेस्ट करें (Termux में चलेगी):", color = p.textPrimary, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
                         Text("Vault में सेव GitHub Token अपने-आप getpass/input() में जुड़ जाएगा।", color = Color(0xFF2EE6A8), fontSize = 11.sp)
                         OutlinedTextField(
                             value = pyScript,
                             onValueChange = { pyScript = it },
-                            placeholder = { Text("print('hello')", color = Color(0xFF8A94B8), fontSize = 12.sp, fontFamily = FontFamily.Monospace) },
-                            minLines = 6,
-                            maxLines = 14,
+                            placeholder = { Text("print('hello')", color = p.textSecondary, fontSize = 12.sp, fontFamily = FontFamily.Monospace) },
+                            minLines = 5,
+                            maxLines = 10,
+                            colors = studioFieldColors,
                             modifier = Modifier.fillMaxWidth()
                         )
                         Box(
@@ -2057,7 +2073,7 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
                                 .padding(vertical = 12.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("▶️ Termux में स्क्रिप्ट चलाएँ", color = Color.White, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                            Text("▶️ Termux में स्क्रिप्ट चलाएँ", color = p.textPrimary, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
                         }
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             TextButton(onClick = { val clip = readClip(); if (clip.isNotBlank()) pyScript = clip }) {
@@ -2065,7 +2081,7 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
                             }
                             if (pyScript.isNotBlank()) {
                                 TextButton(onClick = { pyScript = "" }) {
-                                    Text("साफ़ करें", color = Color(0xFF8A94B8), fontSize = 12.sp)
+                                    Text("साफ़ करें", color = p.textSecondary, fontSize = 12.sp)
                                 }
                             }
                         }
@@ -2118,27 +2134,29 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
 
             if (currentTab == 2) {
                 Surface(
-                    color = Color(0xFF12192E),
+                    color = p.card,
                     shape = RoundedCornerShape(16.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .border(1.dp, Color(0xFF26355E), RoundedCornerShape(16.dp))
+                        .border(1.dp, p.cardBorder, RoundedCornerShape(16.dp))
                 ) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("फ़ाइल का पूरा पाथ और उसका पूरा नया कोड पेस्ट करें:", color = Color.White, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                        Text("फ़ाइल का पूरा पाथ और उसका पूरा नया कोड पेस्ट करें:", color = p.textPrimary, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
                         OutlinedTextField(
                             value = rawPath,
                             onValueChange = { rawPath = it },
-                            placeholder = { Text("app/src/main/java/com/meraai/app/Config.kt", color = Color(0xFF8A94B8), fontSize = 12.sp) },
+                            placeholder = { Text("app/src/main/java/com/meraai/app/Config.kt", color = p.textSecondary, fontSize = 12.sp) },
                             singleLine = true,
+                            colors = studioFieldColors,
                             modifier = Modifier.fillMaxWidth()
                         )
                         OutlinedTextField(
                             value = rawCode,
                             onValueChange = { rawCode = it },
-                            placeholder = { Text("package com.meraai.app", color = Color(0xFF8A94B8), fontSize = 12.sp, fontFamily = FontFamily.Monospace) },
-                            minLines = 6,
-                            maxLines = 14,
+                            placeholder = { Text("package com.meraai.app", color = p.textSecondary, fontSize = 12.sp, fontFamily = FontFamily.Monospace) },
+                            minLines = 5,
+                            maxLines = 10,
+                            colors = studioFieldColors,
                             modifier = Modifier.fillMaxWidth()
                         )
                         Box(
@@ -2159,7 +2177,7 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
                             }
                             if (rawCode.isNotBlank() || rawPath.isNotBlank()) {
                                 TextButton(onClick = { rawCode = ""; rawPath = ""; MeeraCodePatcher.clearPreview() }) {
-                                    Text("साफ़ करें", color = Color(0xFF8A94B8), fontSize = 12.sp)
+                                    Text("साफ़ करें", color = p.textSecondary, fontSize = 12.sp)
                                 }
                             }
                         }
@@ -2178,7 +2196,7 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("🧪 Hydrogen High-Load Control", color = Color(0xFFFFB84D), fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
                         if (ui.hydrogenWaitingAuto) {
-                            Text(ui.hydrogenWaitStatus, color = Color.White, fontSize = 12.5.sp)
+                            Text(ui.hydrogenWaitStatus, color = p.textPrimary, fontSize = 12.5.sp)
                             TextButton(onClick = { MeeraCodePatcher.stopHydrogenWaiting() }) {
                                 Text("⏹️ इंतज़ार रोकें (दूसरा मॉडल चुनने के लिए)", color = Color(0xFFFF9494), fontSize = 12.sp)
                             }
@@ -2204,7 +2222,7 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
                             val urgentAlternatives = ui.curatedModels.filter { it != "gemini-4-hydrogen" }
                             val pendingJob = ui.pendingHydrogenJob
                             if (urgentAlternatives.isNotEmpty() && pendingJob != null) {
-                                Text("⚡ Urgent — अभी दूसरे मॉडल से करवाएँ:", color = Color.White, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                Text("⚡ Urgent — अभी दूसरे मॉडल से करवाएँ:", color = p.textPrimary, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                                 Row(
                                     Modifier
                                         .fillMaxWidth()
@@ -2229,7 +2247,7 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
                                         ) {
                                             Text(
                                                 "⚡ ${MeeraCodePatcher.friendlyModelLabel(altId)}",
-                                                color = Color.White,
+                                                color = p.textPrimary,
                                                 fontSize = 12.sp,
                                                 fontWeight = FontWeight.Bold
                                             )
@@ -2244,17 +2262,17 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
 
             if (ui.statusText.isNotBlank()) {
                 Surface(
-                    color = Color(0xFF16203A),
+                    color = p.panel,
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .border(1.dp, Color(0xFF26355E), RoundedCornerShape(14.dp))
+                        .border(1.dp, p.cardBorder, RoundedCornerShape(14.dp))
                 ) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         if (ui.activeModelText.isNotBlank()) {
                             Text(ui.activeModelText, color = Color(0xFF2EE6A8), fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                         }
-                        Text(ui.statusText, color = Color.White, fontSize = 12.5.sp)
+                        Text(ui.statusText, color = p.textPrimary, fontSize = 12.5.sp)
                     }
                 }
             }
@@ -2343,7 +2361,7 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
                                     .padding(horizontal = 10.dp, vertical = 9.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text("📋 Copy", color = Color.White, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                Text("📋 Copy", color = p.textPrimary, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                             }
                         }
 
@@ -2402,7 +2420,7 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
 
             if (ui.previews.isNotEmpty()) {
                 Surface(
-                    color = Color(0xFF12192E),
+                    color = p.card,
                     shape = RoundedCornerShape(16.dp),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -2421,7 +2439,7 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
                                 verticalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("${p.action}: ${p.filePath.substringAfterLast("/")}", color = Color.White, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+                                    Text("${p.action}: ${p.filePath.substringAfterLast("/")}", color = p.textPrimary, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
                                     Text("+${p.linesAdded} / -${p.linesRemoved}", color = Color(0xFF2EE6A8), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                 }
                                 Text(p.validationNote, color = if (p.valid) Color(0xFF2EE6A8) else Color(0xFFFF6B6B), fontSize = 11.sp)
@@ -2440,7 +2458,7 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
                                     .padding(vertical = 13.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text("🚀 Confirm & Push to v2-test", color = Color.White, fontSize = 14.5.sp, fontWeight = FontWeight.ExtraBold)
+                                Text("🚀 Confirm & Push to v2-test", color = p.textPrimary, fontSize = 14.5.sp, fontWeight = FontWeight.ExtraBold)
                             }
                         }
                     }
@@ -2454,7 +2472,7 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
                     else -> Color(0xFFFFB84D)
                 }
                 Surface(
-                    color = Color(0xFF12192E),
+                    color = p.card,
                     shape = RoundedCornerShape(16.dp),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -2462,7 +2480,7 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
                 ) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("3. GitHub Actions APK Build Status:", color = borderCol, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
-                        Text(ui.buildSummaryText, color = Color.White, fontSize = 12.5.sp)
+                        Text(ui.buildSummaryText, color = p.textPrimary, fontSize = 12.5.sp)
                         if (ui.buildStatus == "SUCCESS") {
                             Box(
                                 Modifier
@@ -2552,7 +2570,7 @@ fun MeeraCodePatcherScreen(onBack: () -> Unit, onOpenTokenVault: () -> Unit) {
                                     ) {
                                         Text(
                                             "${MeeraCodePatcher.friendlyModelLabel(mId)} Fix",
-                                            color = Color.White,
+                                            color = p.textPrimary,
                                             fontSize = 11.5.sp,
                                             fontWeight = FontWeight.Bold
                                         )
