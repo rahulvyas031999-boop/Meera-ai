@@ -18,7 +18,24 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.rounded.KeyboardDoubleArrowDown
+import androidx.compose.material.icons.rounded.KeyboardDoubleArrowUp
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -1160,83 +1177,301 @@ private fun YaadeinTabContent(vm: VoiceViewModel) {
 private fun ChatTabContent(ui: UiState, vm: VoiceViewModel) {
     val p = LocalMeeraColors.current
     val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
     var input by remember { mutableStateOf("") }
 
-    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp)) {
+    val totalMsgs = ui.chatMessages.size
+    val listState = rememberLazyListState(
+        initialFirstVisibleItemIndex = (totalMsgs - 1).coerceAtLeast(0)
+    )
+    var prevCount by remember { mutableIntStateOf(totalMsgs) }
+    var isDraggingScrollbar by remember { mutableStateOf(false) }
+    var dragFraction by remember { mutableFloatStateOf(1f) }
+    var trackHeightPx by remember { mutableIntStateOf(1) }
+
+    val isAtBottom by remember(totalMsgs) {
+        derivedStateOf {
+            if (totalMsgs == 0) true
+            else {
+                val lastVis = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+                lastVis >= totalMsgs - 2
+            }
+        }
+    }
+
+    val scrollFraction by remember(totalMsgs) {
+        derivedStateOf {
+            if (totalMsgs <= 1) 1f
+            else (listState.firstVisibleItemIndex.toFloat() / (totalMsgs - 1).toFloat()).coerceIn(0f, 1f)
+        }
+    }
+
+    // चैट टैब खोलते ही सीधे सबसे आखिरी (ताज़ा) चैट पर आए
+    LaunchedEffect(Unit) {
+        if (ui.chatMessages.isNotEmpty()) {
+            listState.scrollToItem(ui.chatMessages.lastIndex)
+        }
+    }
+
+    // नया मैसेज आने पर अगर यूज़र नीचे है तो अपने-आप बॉटम पर स्क्रॉल हो
+    LaunchedEffect(totalMsgs) {
+        if (totalMsgs > prevCount && totalMsgs > 0) {
+            if (isAtBottom || prevCount == 0) {
+                listState.animateScrollToItem(totalMsgs - 1)
+            }
+        }
+        prevCount = totalMsgs
+    }
+
+    Column(Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 8.dp)) {
+        // Header + Top / End 1-Tap Jump Buttons + Clear
         Row(
-            Modifier.fillMaxWidth(),
+            Modifier.fillMaxWidth().padding(bottom = 6.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("बातचीत (${ui.chatMessages.size})", color = p.textPrimary, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
-            if (ui.chatMessages.isNotEmpty()) {
-                TextButton(onClick = { vm.clearChatLog() }) {
-                    Icon(Icons.Rounded.DeleteOutline, contentDescription = null, tint = p.textSecondary, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Clear", color = p.textSecondary, fontSize = 12.5.sp)
+            Text(
+                "बातचीत ($totalMsgs)",
+                color = p.textPrimary,
+                fontSize = 19.sp,
+                fontWeight = FontWeight.ExtraBold
+            )
+            if (totalMsgs > 0) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Surface(
+                        color = p.card,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .border(1.dp, p.cardBorder, RoundedCornerShape(10.dp))
+                            .clickable { scope.launch { listState.scrollToItem(0) } }
+                    ) {
+                        Row(
+                            Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Icon(Icons.Rounded.KeyboardDoubleArrowUp, contentDescription = "Top", tint = p.accentPrimary, modifier = Modifier.size(15.dp))
+                            Text("Top", color = p.textPrimary, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    Surface(
+                        color = p.card,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .border(1.dp, p.accentSuccess.copy(alpha = 0.6f), RoundedCornerShape(10.dp))
+                            .clickable { scope.launch { listState.scrollToItem((totalMsgs - 1).coerceAtLeast(0)) } }
+                    ) {
+                        Row(
+                            Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Icon(Icons.Rounded.KeyboardDoubleArrowDown, contentDescription = "End", tint = p.accentSuccess, modifier = Modifier.size(15.dp))
+                            Text("End", color = p.accentSuccess, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    Surface(
+                        color = p.card,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .border(1.dp, p.cardBorder, RoundedCornerShape(10.dp))
+                            .clickable { vm.clearChatLog() }
+                    ) {
+                        Box(Modifier.padding(horizontal = 7.dp, vertical = 5.dp), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Rounded.DeleteOutline, contentDescription = "Clear", tint = p.textSecondary, modifier = Modifier.size(16.dp))
+                        }
+                    }
                 }
             }
         }
 
-        Column(
-            Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
+        // Main Chat Area + Right-Edge Draggable Fast Scrollbar + Floating Jump-to-Latest Button
+        Box(Modifier.weight(1f).fillMaxWidth()) {
             if (ui.chatMessages.isEmpty()) {
-                Box(Modifier.fillMaxSize().padding(top = 80.dp), contentAlignment = Alignment.Center) {
-                    Text("Meera से कुछ भी पूछें — आवाज़ से या नीचे लिखकर!", color = p.textSecondary, fontSize = 14.sp, textAlign = TextAlign.Center)
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(
+                        "Meera से कुछ भी पूछें — आवाज़ से या नीचे लिखकर!",
+                        color = p.textSecondary,
+                        fontSize = 14.sp,
+                        textAlign = TextAlign.Center
+                    )
                 }
             } else {
-                ui.chatMessages.forEach { msg ->
-                    val isUser = msg.role == "user"
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
-                    ) {
-                        Surface(
-                            color = if (isUser) p.userBubble else p.card,
-                            shape = RoundedCornerShape(
-                                topStart = 18.dp, topEnd = 18.dp,
-                                bottomStart = if (isUser) 18.dp else 4.dp,
-                                bottomEnd = if (isUser) 4.dp else 18.dp
-                            ),
-                            shadowElevation = if (p.isDark) 0.dp else 1.dp,
-                            modifier = Modifier.fillMaxWidth(0.85f)
-                                .border(1.dp, if (isUser) p.userBubble else p.cardBorder, RoundedCornerShape(18.dp))
+                val showFastBar = totalMsgs > 6
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(end = if (showFastBar) 18.dp else 0.dp),
+                    contentPadding = PaddingValues(top = 6.dp, bottom = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    itemsIndexed(ui.chatMessages) { _, msg ->
+                        val isUser = msg.role == "user"
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
                         ) {
-                            Column(Modifier.padding(12.dp)) {
-                                Text(
-                                    msg.text,
-                                    color = if (isUser) p.userBubbleText else p.textPrimary,
-                                    fontSize = 14.sp
-                                )
-                                Spacer(Modifier.height(5.dp))
-                                Row(
-                                    Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
+                            Surface(
+                                color = if (isUser) p.userBubble else p.card,
+                                shape = RoundedCornerShape(
+                                    topStart = 18.dp, topEnd = 18.dp,
+                                    bottomStart = if (isUser) 18.dp else 4.dp,
+                                    bottomEnd = if (isUser) 4.dp else 18.dp
+                                ),
+                                shadowElevation = if (p.isDark) 0.dp else 1.dp,
+                                modifier = Modifier.fillMaxWidth(0.86f)
+                                    .border(1.dp, if (isUser) p.userBubble else p.cardBorder, RoundedCornerShape(18.dp))
+                            ) {
+                                Column(Modifier.padding(12.dp)) {
                                     Text(
-                                        msg.time,
-                                        color = if (isUser) p.userBubbleText.copy(alpha = 0.7f) else p.textSecondary,
-                                        fontSize = 10.5.sp
+                                        msg.text,
+                                        color = if (isUser) p.userBubbleText else p.textPrimary,
+                                        fontSize = 14.sp
                                     )
-                                    if (!isUser) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(3.dp),
-                                            modifier = Modifier.clickable {
-                                                val cb = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                                cb.setPrimaryClip(ClipData.newPlainText("MeeraReply", msg.text))
-                                                Toast.makeText(ctx, "कॉपी हो गया", Toast.LENGTH_SHORT).show()
+                                    Spacer(Modifier.height(5.dp))
+                                    Row(
+                                        Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            msg.time,
+                                            color = if (isUser) p.userBubbleText.copy(alpha = 0.7f) else p.textSecondary,
+                                            fontSize = 10.5.sp
+                                        )
+                                        if (!isUser) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                                modifier = Modifier.clickable {
+                                                    val cb = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                                    cb.setPrimaryClip(ClipData.newPlainText("MeeraReply", msg.text))
+                                                    Toast.makeText(ctx, "कॉपी हो गया", Toast.LENGTH_SHORT).show()
+                                                }
+                                            ) {
+                                                Icon(Icons.Rounded.ContentCopy, contentDescription = null, tint = p.accentPrimary, modifier = Modifier.size(13.dp))
+                                                Text("Copy", color = p.accentPrimary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                                             }
-                                        ) {
-                                            Icon(Icons.Rounded.ContentCopy, contentDescription = null, tint = p.accentPrimary, modifier = Modifier.size(13.dp))
-                                            Text("Copy", color = p.accentPrimary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                                         }
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+
+                // दायीं तरफ ड्रैगेबल Fast Scrollbar (लंबी 30 दिन की चैट में 1 सेकंड में ऊपर-नीचे जाने के लिए)
+                if (showFastBar) {
+                    val thumbHeightPx = with(LocalDensity.current) { 52.dp.toPx() }
+                    val activeFrac = if (isDraggingScrollbar) dragFraction else scrollFraction
+                    val maxTravel = (trackHeightPx - thumbHeightPx).coerceAtLeast(0f)
+                    val thumbOffsetY = (activeFrac * maxTravel).roundToInt()
+
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .fillMaxHeight()
+                            .width(22.dp)
+                            .padding(vertical = 8.dp)
+                            .onSizeChanged { trackHeightPx = it.height.coerceAtLeast(1) }
+                            .pointerInput(totalMsgs, trackHeightPx) {
+                                detectTapGestures { offset ->
+                                    val frac = (offset.y / trackHeightPx.toFloat()).coerceIn(0f, 1f)
+                                    val target = (frac * (totalMsgs - 1)).roundToInt().coerceIn(0, totalMsgs - 1)
+                                    scope.launch { listState.scrollToItem(target) }
+                                }
+                            }
+                            .pointerInput(totalMsgs, trackHeightPx) {
+                                detectVerticalDragGestures(
+                                    onDragStart = { offset ->
+                                        isDraggingScrollbar = true
+                                        val frac = (offset.y / trackHeightPx.toFloat()).coerceIn(0f, 1f)
+                                        dragFraction = frac
+                                        val target = (frac * (totalMsgs - 1)).roundToInt().coerceIn(0, totalMsgs - 1)
+                                        scope.launch { listState.scrollToItem(target) }
+                                    },
+                                    onDragEnd = { isDraggingScrollbar = false },
+                                    onDragCancel = { isDraggingScrollbar = false },
+                                    onVerticalDrag = { change, _ ->
+                                        change.consume()
+                                        val frac = (change.position.y / trackHeightPx.toFloat()).coerceIn(0f, 1f)
+                                        dragFraction = frac
+                                        val target = (frac * (totalMsgs - 1)).roundToInt().coerceIn(0, totalMsgs - 1)
+                                        scope.launch { listState.scrollToItem(target) }
+                                    }
+                                )
+                            }
+                    ) {
+                        // हल्का बैकग्राउंड ट्रैक
+                        Box(
+                            Modifier
+                                .align(Alignment.Center)
+                                .fillMaxHeight()
+                                .width(3.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(p.cardBorder.copy(alpha = 0.65f))
+                        )
+                        // ड्रैगेबल थंब
+                        Box(
+                            Modifier
+                                .align(Alignment.TopCenter)
+                                .offset { IntOffset(0, thumbOffsetY) }
+                                .width(if (isDraggingScrollbar) 9.dp else 6.dp)
+                                .height(52.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (isDraggingScrollbar) p.accentSuccess else p.accentPrimary)
+                        )
+                    }
+
+                    // फास्ट स्क्रॉल करते समय लाइव पोज़िशन और समय का बैज
+                    if (isDraggingScrollbar) {
+                        val previewIdx = (dragFraction * (totalMsgs - 1)).roundToInt().coerceIn(0, totalMsgs - 1)
+                        val previewTime = ui.chatMessages[previewIdx].time
+                        Surface(
+                            color = p.panel,
+                            shape = RoundedCornerShape(14.dp),
+                            shadowElevation = 4.dp,
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(end = 28.dp, top = 12.dp)
+                                .border(1.dp, p.accentSuccess, RoundedCornerShape(14.dp))
+                        ) {
+                            Text(
+                                "#${previewIdx + 1} / $totalMsgs • $previewTime",
+                                color = p.textPrimary,
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                            )
+                        }
+                    }
+                }
+
+                // जब यूज़र ऊपर स्क्रॉल कर ले तो तुरंत सबसे नीचे आने का फ्लोटिंग बटन
+                if (!isAtBottom) {
+                    Surface(
+                        color = p.accentPrimary,
+                        shape = CircleShape,
+                        shadowElevation = 5.dp,
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(end = if (showFastBar) 28.dp else 8.dp, bottom = 10.dp)
+                            .size(40.dp)
+                            .clickable {
+                                scope.launch { listState.animateScrollToItem((totalMsgs - 1).coerceAtLeast(0)) }
+                            }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.Rounded.KeyboardDoubleArrowDown,
+                                contentDescription = "सबसे नीचे जाएँ",
+                                tint = Color.White,
+                                modifier = Modifier.size(22.dp)
+                            )
                         }
                     }
                 }
@@ -1271,6 +1506,9 @@ private fun ChatTabContent(ui: UiState, vm: VoiceViewModel) {
                             if (input.isNotBlank()) {
                                 vm.sendTextQuery(input, speakAloud = true)
                                 input = ""
+                                if (ui.chatMessages.isNotEmpty()) {
+                                    scope.launch { listState.animateScrollToItem(ui.chatMessages.lastIndex) }
+                                }
                             }
                         },
                     contentAlignment = Alignment.Center

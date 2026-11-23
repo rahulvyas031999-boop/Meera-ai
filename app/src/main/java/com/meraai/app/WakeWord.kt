@@ -16,6 +16,7 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.AudioEffect
 import android.media.audiofx.NoiseSuppressor
 import android.os.Build
 import android.os.Handler
@@ -25,15 +26,19 @@ import androidx.core.content.ContextCompat
 import java.nio.FloatBuffer
 
 /**
- * "Hey Meera" वेक-वर्ड (openWakeWord मॉडल).
+ * "Hey Meera" वेक-वर्ड (openWakeWord मॉडल + Adaptive Noise/TV/Night Gate).
  * असेट्स: app/src/main/assets/wakeword/{melspectrogram,embedding_model,meera}.onnx
  */
 object MeeraWake {
     const val EXTRA_WAKE = "meera_wake"
-    const val THRESHOLD = 0.68f         // TV और बस के शोर से बचाव के लिए 0.68f
-    const val FAST_SPEECH_PEAK = 0.82f  // अगर आप जल्दी में एक साथ बोलें और स्कोर 0.82+ जाए तो 1 हिट में भी जागेगी
-    const val HITS_NEEDED = 2           // सामान्य बोलने पर 2 हिट्स
+    const val THRESHOLD = 0.52f         // असली "Hey Meera" पकड़ने के लिए संतुलित थ्रेशोल्ड (2-of-3 विंडो)
+    const val FAST_SPEECH_PEAK = 0.78f  // स्पष्ट और तेज़ बोलने पर 1 पीक हिट में तुरंत जागेगी (Speech Gate के साथ)
+    const val HITS_NEEDED = 2           // आखिरी 3 फ्रेम में कम से कम 2 हिट्स
     const val COOLDOWN_MS = 3500L
+
+    // TV, पंखे और रात के सन्नाटे में False Trigger रोकने के लिए Near-Field Speech Gate
+    const val MIN_SPEECH_RMS = 0.018f   // बहुत धीमे/दूर के शोर को ब्लॉक करेगा
+    const val MIN_SNR_RATIO = 2.4f      // कमरे के लगातार TV/फैन Noise Floor से कम से कम 2.4x तेज़ आवाज़ ज़रूरी
 
     @Volatile var service: MeeraWakeService? = null
     @Volatile var enabled = true
@@ -193,8 +198,21 @@ class MeeraWakeService : Service() {
         main.postDelayed({ if (MeeraWake.service === this) startListening() }, 500)
     }
 
+    private fun zeroCrossingRate(buf: ShortArray): Float {
+        if (buf.size < 2) return 0f
+        var crossings = 0
+        var prev = buf[0].toInt()
+        for (i in 1 until buf.size) {
+            val cur = buf[i].toInt()
+            if ((prev >= 0 && cur < 0) || (prev < 0 && cur >= 0)) crossings++
+            prev = cur
+        }
+        return crossings.toFloat() / buf.size.toFloat()
+    }
+
     private fun loop() {
         var rec: AudioRecord? = null
+        val fx = mutableListOf<AudioEffect>()
         try {
             val eng = engine ?: WakeEngine(applicationContext).also { engine = it }
             eng.reset()
@@ -210,13 +228,24 @@ class MeeraWakeService : Service() {
                 running = false
                 return
             }
+            val sid = rec.audioSessionId
+            try {
+                if (NoiseSuppressor.isAvailable()) NoiseSuppressor.create(sid)?.let { it.enabled = true; fx += it }
+                if (AcousticEchoCanceler.isAvailable()) AcousticEchoCanceler.create(sid)?.let { it.enabled = true; fx += it }
+            } catch (_: Throwable) {}
+
             rec.startRecording()
-            MeeraDebugLog.log("WAKE", "listening")
+            MeeraDebugLog.log("WAKE", "listening (NS=${fx.size})")
             val buf = ShortArray(WakeEngine.CHUNK)
-            var hits = 0
+            val speechWin = BooleanArray(10) // आखिरी 800ms की स्पीच विंडो
+            var speechPtr = 0
+            val scoreWin = FloatArray(3)     // आखिरी 3 फ्रेम का स्कोर (2-of-3 कन्फ़र्मेशन)
+            var scorePtr = 0
+            var noiseFloor = 0.008f
             var lastWake = 0L
             var peak = 0f
             var frames = 0
+
             while (running) {
                 var got = 0
                 while (got < WakeEngine.CHUNK && running) {
@@ -225,19 +254,59 @@ class MeeraWakeService : Service() {
                     got += n
                 }
                 if (got < WakeEngine.CHUNK) break
-                if (MicMute.muted) { hits = 0; continue }
+                if (MicMute.muted) {
+                    speechWin.fill(false)
+                    scoreWin.fill(0f)
+                    continue
+                }
+
+                frames++
+                val rms = rmsOf(buf)
+                val zcr = zeroCrossingRate(buf)
+                val speechThreshold = maxOf(MeeraWake.MIN_SPEECH_RMS, noiseFloor * MeeraWake.MIN_SNR_RATIO)
+                val isHumanSpeech = rms >= speechThreshold && zcr in 0.015f..0.42f
+
+                if (!isHumanSpeech) {
+                    // कमरे के TV / पंखे के बैकग्राउंड लेवल को धीरे-धीरे सीखता रहेगा
+                    noiseFloor = (noiseFloor * 0.96f + rms * 0.04f).coerceIn(0.003f, 0.045f)
+                }
+
+                speechWin[speechPtr] = isHumanSpeech
+                speechPtr = (speechPtr + 1) % speechWin.size
+                val speechFrames = speechWin.count { it }
+
                 val s = eng.process(buf)
+                scoreWin[scorePtr] = s
+                scorePtr = (scorePtr + 1) % scoreWin.size
+
                 if (s > peak) peak = s
-                if (++frames % 125 == 0) { // हर ~10 सेकंड में एक डिबग लाइन
-                    MeeraDebugLog.log("WAKE", "peak score ${"%.2f".format(peak)}")
+                if (frames % 125 == 0) {
+                    MeeraDebugLog.log("WAKE", "peak score ${"%.2f".format(peak)} floor=${"%.3f".format(noiseFloor)}")
                     peak = 0f
                 }
-                hits = if (s >= MeeraWake.THRESHOLD) hits + 1 else 0
+
+                // माइक स्टार्ट होने के पहले ~1 सेकंड (12 फ्रेम) में पॉप-नॉइज़ इग्नोर करें
+                if (frames < 12) continue
+
+                if (s >= 0.30f) {
+                    MeeraDebugLog.log(
+                        "WAKE",
+                        "cand s=${"%.2f".format(s)} rms=${"%.3f".format(rms)} flr=${"%.3f".format(noiseFloor)} sp=$speechFrames zcr=${"%.2f".format(zcr)}"
+                    )
+                }
+
+                val recentHits = scoreWin.count { it >= MeeraWake.THRESHOLD }
+                val strongSinglePeak = s >= MeeraWake.FAST_SPEECH_PEAK && speechFrames >= 3
+                val confirmedMultiHit = recentHits >= MeeraWake.HITS_NEEDED && speechFrames >= 2
                 val now = System.currentTimeMillis()
-                if (hits >= MeeraWake.HITS_NEEDED && now - lastWake > MeeraWake.COOLDOWN_MS) {
+
+                if ((confirmedMultiHit || strongSinglePeak) && now - lastWake > MeeraWake.COOLDOWN_MS) {
                     lastWake = now
                     running = false
-                    MeeraDebugLog.log("WAKE", "DETECTED score=${"%.2f".format(s)}")
+                    MeeraDebugLog.log(
+                        "WAKE",
+                        "DETECTED s=${"%.2f".format(s)} hits=$recentHits sp=$speechFrames rms=${"%.3f".format(rms)} flr=${"%.3f".format(noiseFloor)}"
+                    )
                     main.post { launchApp() }
                     break
                 }
@@ -246,6 +315,8 @@ class MeeraWakeService : Service() {
             MeeraDebugLog.log("WAKE", "loop error: ${t.javaClass.simpleName} ${t.message}")
             running = false
         } finally {
+            fx.forEach { try { it.release() } catch (_: Throwable) {} }
+            fx.clear()
             try { rec?.stop() } catch (_: Throwable) {}
             try { rec?.release() } catch (_: Throwable) {}
         }
