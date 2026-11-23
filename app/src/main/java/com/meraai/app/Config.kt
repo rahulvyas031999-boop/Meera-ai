@@ -194,6 +194,10 @@ class Prefs(ctx: Context) {
         get() = sp.getInt("chat_retention_days", 30).coerceIn(7, 30)
         set(v) { sp.edit().putInt("chat_retention_days", v.coerceIn(7, 30)).apply() }
 
+    var deepSleepMode: Boolean
+        get() = sp.getBoolean("deep_sleep_mode", false)
+        set(v) { sp.edit().putBoolean("deep_sleep_mode", v).apply() }
+
     private fun getLegacyMemories(): List<String> {
         val raw = sp.getString("memories_json", "[]") ?: "[]"
         return try {
@@ -500,9 +504,10 @@ $systemArchitectureBlock
    - SOS Emergency: Call `activate_sos` / `stop_sos`.
    - Autonomous WhatsApp Chat Handler: Call `set_whatsapp_auto_reply`.
    - Screen Unlock: Call `unlock_phone_screen`.
-   - Voice Sleep / Turn Off Mic: When the user clearly tells YOU to go to sleep or stop listening ("so jao", "band ho jao", "mic band kar do", "baad me baat karte hain", "bye Meera", "good night"):
+   - Voice Sleep / Deep Sleep Mode: When the user clearly tells YOU to go to sleep or stop listening ("so jao", "band ho jao", "mic band kar do", "baad me baat karte hain", "bye Meera", "good night"):
      * NEVER say that you cannot close yourself and NEVER ask the user to tap a button. NEVER use `tap_element` on the mic button.
-     * Say ONE short warm goodbye line (e.g. "Achha theek hai Rahul, main so jaati hoon, jab baat karni ho mic daba dena!") AND call `stop_or_sleep_meera` in the same turn.
+     * If the user specifically asks for Deep Sleep / Night Mode / turning off background mic & wake-word completely to save battery ("deep sleep on karo", "background band karke so jao", "wake word band kar do", "puri tarah band ho jao"), call `stop_or_sleep_meera` with `deep_sleep=true` AND say a short warm goodbye confirming background mic & wake-word are now OFF.
+     * Otherwise for normal sleep, say ONE short warm goodbye line AND call `stop_or_sleep_meera` with `deep_sleep=false`.
      * Do NOT call it for questions or negations such as "mic band hai kya?", "band mat ho", "abhi mat so".
 
 $memoryBlock

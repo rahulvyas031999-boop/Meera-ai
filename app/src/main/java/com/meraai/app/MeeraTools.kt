@@ -517,10 +517,11 @@ object MeeraTools {
         funcs.put(
             JSONObject()
                 .put("name", "stop_or_sleep_meera")
-                .put("description", "Close Meera's microphone session and put her to sleep. Call ONLY when the user clearly tells Meera to go to sleep, stop listening or says goodbye for now (so jao, band ho jao, mic band kar do, baad me baat karte hain, bye Meera). Never use tap_element for this.")
+                .put("description", "Close Meera's microphone session and put her to sleep. Set deep_sleep=true ONLY when the user asks for Deep Sleep / Night Mode / turning off background mic & wake-word completely to save battery (deep sleep on karo, background band karke so jao, wake word band kar do). Never use tap_element for this.")
                 .put("parameters", JSONObject().put("type", "OBJECT")
                     .put("properties", JSONObject()
-                        .put("farewell_message", JSONObject().put("type", "STRING").put("description", "Short warm goodbye line in Hinglish"))))
+                        .put("farewell_message", JSONObject().put("type", "STRING").put("description", "Short warm goodbye line in Hinglish"))
+                        .put("deep_sleep", JSONObject().put("type", "BOOLEAN").put("description", "true to completely turn off background wake-word and mic for night/battery saving"))))
         )
         funcs.put(
             JSONObject()
@@ -997,16 +998,29 @@ object MeeraTools {
                 ToolExecutionResult(true, name, reply, "VERIFIED_SUCCESS: $reply")
             }
             "stop_or_sleep_meera" -> {
-                val defaultBye = when (Prefs(ctx).persona) {
-                    "Jarvis" -> "Standby mode activated, Boss. Jab zaroorat ho mic button dabakar bula lijiyega."
-                    "Rudra" -> "ठीक है भाई, अभी आराम कर रहा हूँ। ज़रूरत हो तो माइक दबाकर बुला लेना!"
-                    else -> "अच्छा ठीक है राहुल, मैं अभी सो जाती हूँ। जब बात करनी हो तो माइक दबाकर बुला लेना, बाय!"
+                val deepSleep = args.optBoolean("deep_sleep", false)
+                if (deepSleep) {
+                    MeeraWake.markDeepSleepOn(ctx)
+                }
+                val defaultBye = if (deepSleep) {
+                    when (Prefs(ctx).persona) {
+                        "Jarvis" -> "Deep Sleep Mode activated, Boss. Background mic aur wake-word puri tarah band kar diya hai. Good night!"
+                        "Rudra" -> "डीप स्लीप ऑन है भाई! बैकग्राउंड माइक और वेक-वर्ड सब बंद कर दिया है ताकि बैटरी बचे। शुभ रात्रि!"
+                        else -> "डीप स्लीप मोड ऑन कर दिया है राहुल! अब बैकग्राउंड माइक और वेक-वर्ड पूरी तरह बंद रहेंगे ताकि बैटरी बचे। शुभ रात्रि!"
+                    }
+                } else {
+                    when (Prefs(ctx).persona) {
+                        "Jarvis" -> "Standby mode activated, Boss. Jab zaroorat ho mic button dabakar bula lijiyega."
+                        "Rudra" -> "ठीक है भाई, अभी आराम कर रहा हूँ। ज़रूरत हो तो माइक दबाकर बुला लेना!"
+                        else -> "अच्छा ठीक है राहुल, मैं अभी सो जाती हूँ। जब बात करनी हो तो माइक दबाकर बुला लेना, बाय!"
+                    }
                 }
                 val bye = args.optString("farewell_message", "").trim().ifBlank { defaultBye }
                 MeeraConfigBridge.onSleepRequest?.invoke()
                 ToolExecutionResult(
                     true, name, bye,
-                    "VERIFIED_SUCCESS: Meera will close the mic session in a few seconds."
+                    if (deepSleep) "VERIFIED_SUCCESS: Deep Sleep Mode enabled (background wake-word & mic OFF) and active session will close."
+                    else "VERIFIED_SUCCESS: Meera will close the mic session in a few seconds."
                 )
             }
             "get_system_status" -> {
@@ -1217,6 +1231,31 @@ object MeeraTools {
     fun tryDirectVoiceCommand(ctx: Context, userText: String): ToolExecutionResult {
         val raw = userText.trim().trimEnd('।', '.', '!', '?', ',', ' ')
         val low = raw.lowercase()
+
+        // 000a. Direct Voice Deep Sleep ON / OFF (बैकग्राउंड माइक व वेक-वर्ड पूरी तरह बंद/चालू)
+        val deepSleepKeywords = listOf(
+            "डीप स्लीप", "deep sleep", "बैकग्राउंड बंद", "background band", "background off",
+            "वेक वर्ड बंद", "वेकवर्ड बंद", "wake word band", "wake word off",
+            "पूरी तरह बंद", "puri tarah band", "नाइट स्लीप", "night sleep"
+        )
+        val deepSleepWakeOffPhrases = listOf(
+            "डीप स्लीप बंद", "डीप स्लीप ऑफ", "deep sleep off", "deep sleep band",
+            "वेक वर्ड चालू", "वेक वर्ड ऑन", "wake word on", "wake word chalu"
+        )
+        val deepBlockers = listOf("?", "क्या", "kya", "मत ", "mat ", "कैसे", "kaise", "क्यों", "kyu")
+        if (low.length <= 65 && deepBlockers.none { low.contains(it) }) {
+            if (deepSleepWakeOffPhrases.any { low.contains(it) }) {
+                MeeraWake.setDeepSleep(ctx, false)
+                return ToolExecutionResult(
+                    true, "deep_sleep_off",
+                    "डीप स्लीप मोड बंद कर दिया है! अब बैकग्राउंड वेक-वर्ड 'Hey Meera' फिर से चालू है।",
+                    "VERIFIED_SUCCESS: Deep Sleep Mode disabled and wake-word resumed."
+                )
+            }
+            if (deepSleepKeywords.any { low.contains(it) }) {
+                return executeFunctionCallInner(ctx, "stop_or_sleep_meera", JSONObject().put("deep_sleep", true))
+            }
+        }
 
         // 000. Direct Voice Sleep: सिर्फ़ छोटे और साफ़ आदेश पर (सवाल/मनाही वाले वाक्य पर नहीं)
         val sleepPhrases = listOf(

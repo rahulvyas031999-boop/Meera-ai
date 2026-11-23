@@ -85,6 +85,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
     private val history = ArrayList<Pair<String, String>>()
 
     init {
+        MeeraWake.syncFromPrefs(appCtx)
         installConfigBridge()
         MeeraAgentFactory.onDeliverToChat = { roleTitle, fullOut ->
             appendChatLog("model", fullOut)
@@ -288,6 +289,20 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
         _ui.update { it.copy(chatMessages = emptyList(), user = "", ai = "") }
         viewModelScope.launch(Dispatchers.IO) {
             MeeraMemoryManager.clearAllChats(appCtx)
+        }
+    }
+
+    fun setDeepSleepMode(enabled: Boolean) {
+        if (enabled && active) {
+            MeeraWake.setDeepSleep(appCtx, true)
+            stop()
+        } else {
+            MeeraWake.setDeepSleep(appCtx, enabled)
+        }
+        _ui.update {
+            it.copy(
+                lastToolStatus = if (enabled) "🌙 Deep Sleep ON (बैकग्राउंड बंद)" else "☀️ Deep Sleep OFF (Wake चालू)"
+            )
         }
     }
 

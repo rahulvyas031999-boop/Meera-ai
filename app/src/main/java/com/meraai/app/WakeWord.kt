@@ -42,8 +42,46 @@ object MeeraWake {
 
     @Volatile var service: MeeraWakeService? = null
     @Volatile var enabled = true
+    val deepSleepFlow = kotlinx.coroutines.flow.MutableStateFlow(false)
+
+    fun syncFromPrefs(ctx: Context): Boolean {
+        val sleep = Prefs(ctx.applicationContext).deepSleepMode
+        enabled = !sleep
+        deepSleepFlow.value = sleep
+        return sleep
+    }
+
+    /** वॉइस गुडबाय के दौरान सिर्फ़ Wake Service और Deep Sleep फ्लैग सेट करता है (चालू सेशन गुडबाय के बाद बंद होगा) */
+    fun markDeepSleepOn(ctx: Context) {
+        val app = ctx.applicationContext
+        Prefs(app).deepSleepMode = true
+        enabled = false
+        deepSleepFlow.value = true
+        pause()
+        try { app.stopService(Intent(app, MeeraWakeService::class.java)) } catch (_: Exception) {}
+        MeeraDebugLog.log("WAKE", "DEEP SLEEP ON — wake service stopped")
+    }
+
+    /** मैन्युअल 1-टैप Deep Sleep टॉगल: ऑन करने पर सभी बैकग्राउंड माइक व सर्विसेज़ पूरी तरह बंद */
+    fun setDeepSleep(ctx: Context, sleep: Boolean) {
+        val app = ctx.applicationContext
+        Prefs(app).deepSleepMode = sleep
+        enabled = !sleep
+        deepSleepFlow.value = sleep
+        if (sleep) {
+            pause()
+            try { app.stopService(Intent(app, MeeraWakeService::class.java)) } catch (_: Exception) {}
+            try { MeeraKeepAliveService.stop(app) } catch (_: Exception) {}
+            try { MeeraOverlayService.stop(app) } catch (_: Exception) {}
+            MeeraDebugLog.log("WAKE", "DEEP SLEEP ON — all background mic/wake services killed")
+        } else {
+            ensureRunning(app)
+            MeeraDebugLog.log("WAKE", "DEEP SLEEP OFF — wake service resumed")
+        }
+    }
 
     fun ensureRunning(ctx: Context) {
+        if (syncFromPrefs(ctx)) return
         if (!enabled || service != null) return
         if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return
         try {
@@ -57,8 +95,11 @@ object MeeraWake {
     /** Meera का अपना माइक सेशन शुरू होने से पहले (माइक छोड़ देता है) */
     fun pause() { service?.pauseListening() }
 
-    /** Meera सो जाए तो फिर से "Hey Meera" सुनना शुरू */
-    fun resume() { service?.resumeListening() }
+    /** Meera सो जाए तो फिर से "Hey Meera" सुनना शुरू (Deep Sleep में चालू नहीं होगा) */
+    fun resume() {
+        if (!enabled || deepSleepFlow.value) return
+        service?.resumeListening()
+    }
 }
 
 class WakeEngine(private val ctx: Context) {
@@ -154,6 +195,10 @@ class MeeraWakeService : Service() {
     private val main = Handler(Looper.getMainLooper())
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (MeeraWake.syncFromPrefs(this)) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
         try {
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             if (Build.VERSION.SDK_INT >= 26) {
@@ -182,7 +227,7 @@ class MeeraWakeService : Service() {
 
     @Synchronized
     fun startListening() {
-        if (running) return
+        if (running || !MeeraWake.enabled || MeeraWake.syncFromPrefs(this)) return
         try { thread?.join(600) } catch (_: Exception) {}
         running = true
         thread = Thread({ loop() }, "meera-wake").also { it.isDaemon = true; it.start() }
@@ -195,7 +240,8 @@ class MeeraWakeService : Service() {
     }
 
     fun resumeListening() {
-        main.postDelayed({ if (MeeraWake.service === this) startListening() }, 500)
+        if (!MeeraWake.enabled || MeeraWake.syncFromPrefs(this)) return
+        main.postDelayed({ if (MeeraWake.service === this && MeeraWake.enabled) startListening() }, 500)
     }
 
     private fun zeroCrossingRate(buf: ShortArray): Float {

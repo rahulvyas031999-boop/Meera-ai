@@ -59,6 +59,7 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.BatteryChargingFull
+import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.ChatBubble
 import androidx.compose.material.icons.rounded.ChevronRight
@@ -310,6 +311,64 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
 
                     HorizontalDivider(color = p.cardBorder)
                     Spacer(Modifier.height(6.dp))
+
+                    val deepSleep by MeeraWake.deepSleepFlow.collectAsState()
+                    LaunchedEffect(Unit) { MeeraWake.syncFromPrefs(orbCtx) }
+                    Surface(
+                        color = if (deepSleep) p.accentPrimary.copy(alpha = 0.14f) else p.card,
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 4.dp)
+                            .border(1.dp, if (deepSleep) p.accentPrimary else p.cardBorder, RoundedCornerShape(16.dp))
+                            .clickable {
+                                val next = !deepSleep
+                                vm.setDeepSleepMode(next)
+                                Toast.makeText(
+                                    orbCtx,
+                                    if (next) "🌙 Deep Sleep ON — बैकग्राउंड माइक व वेक-वर्ड बंद" else "☀️ Deep Sleep OFF — 'Hey Meera' फिर से चालू",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                    ) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Icon(
+                                    Icons.Rounded.Bedtime,
+                                    contentDescription = null,
+                                    tint = if (deepSleep) p.accentPrimary else p.textSecondary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Column {
+                                    Text("Deep Sleep Mode", color = p.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                    Text(
+                                        if (deepSleep) "बैकग्राउंड माइक व वेक-वर्ड बंद (बैटरी सेवर)" else "रात में बैकग्राउंड माइक पूरी तरह बंद करें",
+                                        color = if (deepSleep) p.accentPrimary else p.textSecondary,
+                                        fontSize = 11.sp
+                                    )
+                                }
+                            }
+                            Switch(
+                                checked = deepSleep,
+                                onCheckedChange = { next ->
+                                    vm.setDeepSleepMode(next)
+                                    Toast.makeText(
+                                        orbCtx,
+                                        if (next) "🌙 Deep Sleep ON — बैकग्राउंड माइक व वेक-वर्ड बंद" else "☀️ Deep Sleep OFF — 'Hey Meera' फिर से चालू",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            )
+                        }
+                    }
 
                     val logCtx = LocalContext.current
                     val curVerName = remember { runCatching { logCtx.packageManager.getPackageInfo(logCtx.packageName, 0).versionName ?: "2.0" }.getOrDefault("2.0") }
@@ -762,6 +821,44 @@ private fun HomeTabContent(ui: UiState, vm: VoiceViewModel, orbStyle: String = "
                 ) {
                     Icon(Icons.Rounded.Psychology, contentDescription = null, tint = p.accentPrimary, modifier = Modifier.size(16.dp))
                     Text("${ui.memoryCount} यादें", color = p.textPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
+        val deepSleepHome by MeeraWake.deepSleepFlow.collectAsState()
+        if (deepSleepHome) {
+            Spacer(Modifier.height(8.dp))
+            Surface(
+                color = p.accentPrimary.copy(alpha = 0.14f),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, p.accentPrimary.copy(alpha = 0.65f), RoundedCornerShape(16.dp))
+                    .clickable {
+                        vm.setDeepSleepMode(false)
+                        Toast.makeText(ctx, "☀️ Deep Sleep OFF — 'Hey Meera' चालू हो गया", Toast.LENGTH_SHORT).show()
+                    }
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Icon(Icons.Rounded.Bedtime, contentDescription = null, tint = p.accentPrimary, modifier = Modifier.size(17.dp))
+                        Text(
+                            "Deep Sleep ON • बैकग्राउंड माइक बंद",
+                            color = p.textPrimary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    Text(
+                        "चालू करें",
+                        color = p.accentPrimary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
                 }
             }
         }
