@@ -465,6 +465,18 @@ object MeeraTools {
         )
         funcs.put(
             JSONObject()
+                .put("name", "create_or_edit_file")
+                .put("description", "AI File Studio: Create or edit a native Excel (.xlsx with live formulas like =SUM, =B2*C2, GST), PDF (.pdf), or Word (.docx) file from scratch OR by converting/editing a shared photo, bill, PDF, or Excel file in MeeraFileVault. Auto-saves to Downloads and sets it as the active file.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("output_format", JSONObject().put("type", "STRING").put("description", "Target format: 'EXCEL', 'PDF', or 'WORD'"))
+                        .put("instruction", JSONObject().put("type", "STRING").put("description", "Exact details of data, columns, formulas, calculations, or document content to create or edit"))
+                        .put("file_query", JSONObject().put("type", "STRING").put("description", "Source file in Shared Vault to convert/edit (e.g. 'latest', 'photo', 'pdf', 'excel'), or 'none' if creating from scratch"))
+                        .put("file_title", JSONObject().put("type", "STRING").put("description", "Optional clean filename without extension")))
+                    .put("required", JSONArray().put("output_format").put("instruction")))
+        )
+        funcs.put(
+            JSONObject()
                 .put("name", "open_stock_chart")
                 .put("description", "Open the live stock chart for a company/symbol (e.g., HAL, Tata Motors, Nifty) and visually analyze its trend, support, and resistance levels.")
                 .put("parameters", JSONObject().put("type", "OBJECT")
@@ -978,6 +990,13 @@ object MeeraTools {
                     val summary = list.take(8).mapIndexed { i, f -> "${i + 1}. ${f.name} (${f.kind}, ${f.timeLabel})" }.joinToString("\n")
                     ToolExecutionResult(true, name, "मेरे पास अभी ${list.size} शेयर की हुई फ़ाइलें हैं, सबसे ताज़ा '${list.first().name}' है।", "VERIFIED_SUCCESS: Shared files:\n$summary")
                 }
+            }
+            "create_or_edit_file" -> {
+                val fmt = args.optString("output_format", "EXCEL").trim()
+                val inst = args.optString("instruction", "").trim()
+                val fq = args.optString("file_query", "latest").trim()
+                val title = args.optString("file_title", "").trim()
+                MeeraFileStudio.createOrEditFile(ctx, fmt, inst, fq, title)
             }
             "open_stock_chart" -> {
                 val stock = args.optString("stock_name", "").trim()

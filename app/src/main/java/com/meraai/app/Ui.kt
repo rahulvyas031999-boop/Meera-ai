@@ -1991,6 +1991,17 @@ private fun ActiveSharedFileBanner(vm: VoiceViewModel) {
                     Text("Status", color = p.accentPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
                 }
             }
+            if (item.kind != "EXCEL") {
+                Surface(
+                    color = p.accentPrimary.copy(alpha = 0.15f),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.clickable {
+                        vm.sendTextQuery("इस फ़ाइल के डेटा से लाइव फ़ॉर्मूला वाली Excel शीट बना दो", speakAloud = true)
+                    }
+                ) {
+                    Text("Excel", color = p.accentPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp))
+                }
+            }
             Surface(
                 color = p.accentSuccess.copy(alpha = 0.15f),
                 shape = RoundedCornerShape(10.dp),
