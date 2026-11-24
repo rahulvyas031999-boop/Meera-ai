@@ -587,7 +587,7 @@ object MeeraFileVault {
         }
         val body = JSONObject().put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", parts)))
         var lastErr = ""
-        for (model in listOf("gemini-3.5-flash", "gemini-3.8-flash", "gemini-flash-lite-latest")) {
+        for (model in listOf("gemini-flash-lite-latest", "gemini-3.5-flash", "gemini-3.8-flash")) {
             try {
                 val req = Request.Builder()
                     .url("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent")

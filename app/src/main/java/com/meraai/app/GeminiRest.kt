@@ -327,7 +327,7 @@ Reply with ONLY valid compact JSON: {"tool":"...","args":{...},"mark_done_step":
                 .put(JSONObject().put("inlineData", JSONObject().put("mimeType", "image/jpeg").put("data", b64Img)))
                 .put(JSONObject().put("text", prompt)))))
         var lastErr: Exception? = null
-        for (vm in listOf("gemini-3.8-flash", "gemini-3.5-flash", "gemini-flash-lite-latest")) {
+        for (vm in listOf("gemini-flash-lite-latest", "gemini-3.5-flash", "gemini-3.8-flash")) {
             try {
                 val resp = http.newCall(request(vm, "generateContent", body)).await().okOrThrow()
                 val out = resp.use { textOf(JSONObject(it.body!!.string())).trim() }

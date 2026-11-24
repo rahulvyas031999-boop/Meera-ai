@@ -2158,8 +2158,20 @@ object MeeraTools {
 
             val svc = MeeraAccessibilityService.instance
             if (svc != null) {
-                Thread.sleep(1900)
-                val clickedStatus = svc.clickByText("My status") || svc.clickByText("मेरा स्टेटस") || svc.clickByText("Status")
+                Thread.sleep(1500)
+                var clickedStatus = false
+                for (attempt in 1..4) {
+                    clickedStatus = svc.clickByText("My status") || svc.clickByText("मेरा स्टेटस") || svc.clickByText("My Status")
+                    if (clickedStatus) break
+                    if (attempt == 1) {
+                        val pickedWa = svc.clickByText("WhatsApp") || svc.clickByText("व्हाट्सएप")
+                        if (pickedWa) {
+                            Thread.sleep(1800)
+                            continue
+                        }
+                    }
+                    Thread.sleep(900)
+                }
                 if (clickedStatus) {
                     Thread.sleep(1200)
                     svc.clickWhatsAppSendButton() || svc.clickByText("Send") || svc.clickByText("भेजें")
