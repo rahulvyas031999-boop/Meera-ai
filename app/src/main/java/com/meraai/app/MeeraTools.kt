@@ -431,21 +431,37 @@ object MeeraTools {
         funcs.put(
             JSONObject()
                 .put("name", "post_whatsapp_status")
-                .put("description", "Design a beautiful poster card with a quote/shayari/text and automatically post it to the user's WhatsApp Status (My status). Use when user says 'WhatsApp status laga do' or 'WhatsApp pe story daal do'.")
+                .put("description", "Post to the user's WhatsApp Status (My status). If the user wants to post a photo/image they shared or attached with Meera (e.g. 'jo photo share ki thi wo WhatsApp status laga do'), set use_shared_photo=true. Otherwise provide status_text to design a poster card.")
                 .put("parameters", JSONObject().put("type", "OBJECT")
                     .put("properties", JSONObject()
-                        .put("status_text", JSONObject().put("type", "STRING").put("description", "The quote, shayari, or text to put on the status poster")))
-                    .put("required", JSONArray().put("status_text")))
+                        .put("status_text", JSONObject().put("type", "STRING").put("description", "Quote/shayari text for poster OR optional caption when posting a shared photo"))
+                        .put("use_shared_photo", JSONObject().put("type", "BOOLEAN").put("description", "true to post the latest shared/attached photo from MeeraFileVault directly as WhatsApp Status"))))
         )
         funcs.put(
             JSONObject()
                 .put("name", "send_file_on_whatsapp")
-                .put("description", "Find a file/PDF/document/image in the phone's Downloads or storage by name and send it to a WhatsApp contact or group (e.g. 'meeting wali file Team Updates group me send kar do').")
+                .put("description", "Send a file/photo/PDF/Excel/Word document (prioritizing files shared/attached with Meera AI, or searching phone storage) to a WhatsApp contact or group.")
                 .put("parameters", JSONObject().put("type", "OBJECT")
                     .put("properties", JSONObject()
-                        .put("file_query", JSONObject().put("type", "STRING").put("description", "File name keyword, e.g. 'meeting', 'important', 'resume', or 'latest'"))
+                        .put("file_query", JSONObject().put("type", "STRING").put("description", "File name keyword, e.g. 'latest', 'photo', 'excel', 'pdf', 'meeting', or 'resume'"))
                         .put("recipient", JSONObject().put("type", "STRING").put("description", "WhatsApp contact name or group name, e.g. 'Team Updates'")))
                     .put("required", JSONArray().put("file_query").put("recipient")))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "analyze_shared_file")
+                .put("description", "Read, inspect, summarize, or answer any question about a photo, PDF, Excel (.xlsx/.csv), Word (.docx), or text file that the user shared or attached to Meera AI.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("question", JSONObject().put("type", "STRING").put("description", "What the user wants to know or extract from the shared file"))
+                        .put("file_query", JSONObject().put("type", "STRING").put("description", "Optional file name or type ('latest', 'photo', 'pdf', 'excel'); defaults to active shared file")))
+                    .put("required", JSONArray().put("question")))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "list_shared_files")
+                .put("description", "List all photos, PDFs, Excel sheets, and documents currently saved in Meera's Shared File Vault.")
+                .put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()))
         )
         funcs.put(
             JSONObject()
@@ -934,12 +950,34 @@ object MeeraTools {
             }
             "post_whatsapp_status" -> {
                 val stText = args.optString("status_text", "").trim()
-                postWhatsAppStatusTool(ctx, stText)
+                val useShared = args.optBoolean("use_shared_photo", false)
+                postWhatsAppStatusTool(ctx, stText, useSharedPhoto = useShared)
             }
             "send_file_on_whatsapp" -> {
                 val fQuery = args.optString("file_query", "").trim()
                 val rec = args.optString("recipient", "").trim()
                 sendFileOnWhatsAppTool(ctx, fQuery, rec)
+            }
+            "analyze_shared_file" -> {
+                val q = args.optString("question", "").trim()
+                val fq = args.optString("file_query", "latest").trim()
+                val item = MeeraFileVault.findFile(ctx, fq)
+                if (item == null) {
+                    ToolExecutionResult(true, name, "अभी मेरे पास कोई शेयर की हुई फ़ाइल नहीं है। पहले Share मेन्यू या 📎 बटन से कोई फोटो, PDF या Excel शेयर करें!", "FAILED: Shared vault is empty.")
+                } else {
+                    val ans = MeeraFileVault.analyzeFileWithGemini(ctx, item, q)
+                    ToolExecutionResult(true, name, ans, "VERIFIED_SUCCESS: Analyzed '${item.name}' (${item.kind}) -> $ans")
+                }
+            }
+            "list_shared_files" -> {
+                MeeraFileVault.ensureLoaded(ctx)
+                val list = MeeraFileVault.filesFlow.value
+                if (list.isEmpty()) {
+                    ToolExecutionResult(true, name, "अभी वॉल्ट में कोई शेयर की हुई फ़ाइल नहीं है।", "VERIFIED_SUCCESS: Shared vault is empty.")
+                } else {
+                    val summary = list.take(8).mapIndexed { i, f -> "${i + 1}. ${f.name} (${f.kind}, ${f.timeLabel})" }.joinToString("\n")
+                    ToolExecutionResult(true, name, "मेरे पास अभी ${list.size} शेयर की हुई फ़ाइलें हैं, सबसे ताज़ा '${list.first().name}' है।", "VERIFIED_SUCCESS: Shared files:\n$summary")
+                }
             }
             "open_stock_chart" -> {
                 val stock = args.optString("stock_name", "").trim()
@@ -1337,11 +1375,16 @@ object MeeraTools {
         if (low.contains("मेरा फोन कहां") || low.contains("मेरा फ़ोन कहां") || low.contains("मेरा फोन कहाँ") || low.contains("mera phone kahan") || low.contains("phone kahan hai")) {
             return findMyPhoneTool(ctx)
         }
-        // 0B. WhatsApp Status / Story ("WhatsApp पे स्टोरी/स्टेटस लगा दो")
-        if ((low.contains("whatsapp") || low.contains("व्हाट्सएप") || low.contains("व्हाट्सऐप")) && (low.contains("स्टोरी") || low.contains("स्टेटस") || low.contains("story") || low.contains("status")) && (low.contains("लगा") || low.contains("डाल") || low.contains("laga") || low.contains("daal") || low.contains("post"))) {
+        // 0B. WhatsApp Status / Story (शेयर की हुई फोटो या टेक्स्ट पोस्टर सीधे स्टेटस पर)
+        if ((low.contains("whatsapp") || low.contains("व्हाट्सएप") || low.contains("व्हाट्सऐप") || low.contains("स्टेटस") || low.contains("status")) && (low.contains("स्टोरी") || low.contains("स्टेटस") || low.contains("story") || low.contains("status")) && (low.contains("लगा") || low.contains("डाल") || low.contains("laga") || low.contains("daal") || low.contains("post"))) {
+            val wantsSharedPhoto = listOf("फोटो", "इमेज", "तस्वीर", "photo", "image", "pic", "शेयर", "share", "ये वाली", "यह वाली", "अभी जो", "abhi jo").any { low.contains(it) }
+            if (wantsSharedPhoto && MeeraFileVault.findFile(ctx, "photo") != null) {
+                val cap = raw.replace(Regex("(?i)^.*?(?:कैप्शन|caption|लिखकर|likhkar)[ \t]+"), "").takeIf { it != raw && it.length >= 3 }.orEmpty()
+                return postWhatsAppStatusTool(ctx, cap, useSharedPhoto = true)
+            }
             val customQuote = raw.replace(Regex("(?i)^.*?(?:कि|ki)[ \t]+"), "").takeIf { it != raw && it.length >= 6 }
                 ?: "तुम्हारी याद में नींद कहाँ आती है... ✨❤️"
-            return postWhatsAppStatusTool(ctx, customQuote)
+            return postWhatsAppStatusTool(ctx, customQuote, useSharedPhoto = false)
         }
         // 0C. Instagram Reel Auto-Post // (((((((
         if ((low.contains("reel") || low.contains("रील")) && (low.contains("पोस्ट") || low.contains("डाल") || low.contains("लगा") || low.contains("बना") || low.contains("post") || low.contains("upload") || low.contains("share"))) {
@@ -1938,74 +1981,116 @@ object MeeraTools {
         )
     }
 
-    private fun postWhatsAppStatusTool(ctx: Context, rawStatusText: String): ToolExecutionResult {
-        val quote = rawStatusText.ifBlank { "ज़िंदगी में हर लम्हा खास होता है, जब अपनों का साथ होता है ✨❤️" }
+    private fun resolveWhatsAppPackage(ctx: Context): String {
+        val pm = ctx.packageManager
         return try {
-            val w = 1080
-            val h = 1920
-            val bmp = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
-            val canvas = android.graphics.Canvas(bmp)
+            pm.getPackageInfo("com.whatsapp", 0)
+            "com.whatsapp"
+        } catch (_: Exception) {
+            try {
+                pm.getPackageInfo("com.whatsapp.w4b", 0)
+                "com.whatsapp.w4b"
+            } catch (_: Exception) {
+                "com.whatsapp"
+            }
+        }
+    }
 
-            val bgPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                shader = android.graphics.LinearGradient(
-                    0f, 0f, w.toFloat(), h.toFloat(),
-                    intArrayOf(
-                        android.graphics.Color.parseColor("#0F172A"),
-                        android.graphics.Color.parseColor("#1E1B4B"),
-                        android.graphics.Color.parseColor("#311042")
-                    ),
-                    null, android.graphics.Shader.TileMode.CLAMP
+    private fun postWhatsAppStatusTool(ctx: Context, rawStatusText: String, useSharedPhoto: Boolean = false): ToolExecutionResult {
+        val waPkg = resolveWhatsAppPackage(ctx)
+        val sharedPhoto = if (useSharedPhoto || rawStatusText.isBlank()) MeeraFileVault.findFile(ctx, "photo") else null
+        return try {
+            val uri: Uri
+            val mimeType: String
+            val caption: String
+            val postedLabel: String
+
+            if (useSharedPhoto && sharedPhoto == null) {
+                return ToolExecutionResult(
+                    true, "post_whatsapp_status",
+                    "अभी मेरे पास आपकी कोई शेयर की हुई फोटो नहीं है। पहले Gallery से कोई फोटो Meera AI में शेयर या अटैच करें!",
+                    "FAILED: No shared image found in MeeraFileVault."
                 )
             }
-            canvas.drawRect(0f, 0f, w.toFloat(), h.toFloat(), bgPaint)
 
-            val cardRect = android.graphics.RectF(90f, 420f, w - 90f, h - 420f)
-            val cardPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                color = android.graphics.Color.parseColor("#22FFFFFF")
-                style = android.graphics.Paint.Style.FILL
-            }
-            val borderPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                color = android.graphics.Color.parseColor("#2EE6A8")
-                style = android.graphics.Paint.Style.STROKE
-                strokeWidth = 4f
-            }
-            canvas.drawRoundRect(cardRect, 48f, 48f, cardPaint)
-            canvas.drawRoundRect(cardRect, 48f, 48f, borderPaint)
+            if (sharedPhoto != null && (useSharedPhoto || rawStatusText.isBlank())) {
+                uri = MeeraFileVault.getShareUri(ctx, sharedPhoto, waPkg)
+                    ?: return ToolExecutionResult(true, "post_whatsapp_status", "शेयर की हुई फोटो का लिंक नहीं बन पाया।", "ERROR: FileProvider URI failed")
+                mimeType = sharedPhoto.mimeType.ifBlank { "image/*" }
+                caption = rawStatusText.trim()
+                postedLabel = "आपकी शेयर की हुई फोटो (${sharedPhoto.name})"
+            } else {
+                val quote = rawStatusText.ifBlank { "ज़िंदगी में हर लम्हा खास होता है, जब अपनों का साथ होता है ✨❤️" }
+                val w = 1080
+                val h = 1920
+                val bmp = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
+                val canvas = android.graphics.Canvas(bmp)
 
-            val tp = android.text.TextPaint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                color = android.graphics.Color.WHITE
-                textSize = 64f
-                typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
-            }
-            val textWidth = (w - 280)
-            val layout = android.text.StaticLayout.Builder
-                .obtain("“ $quote ”", 0, ("“ $quote ”").length, tp, textWidth)
-                .setAlignment(android.text.Layout.Alignment.ALIGN_CENTER)
-                .setLineSpacing(14f, 1.15f)
-                .build()
+                val bgPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                    shader = android.graphics.LinearGradient(
+                        0f, 0f, w.toFloat(), h.toFloat(),
+                        intArrayOf(
+                            android.graphics.Color.parseColor("#0F172A"),
+                            android.graphics.Color.parseColor("#1E1B4B"),
+                            android.graphics.Color.parseColor("#311042")
+                        ),
+                        null, android.graphics.Shader.TileMode.CLAMP
+                    )
+                }
+                canvas.drawRect(0f, 0f, w.toFloat(), h.toFloat(), bgPaint)
 
-            canvas.save()
-            val textY = (h - layout.height) / 2f
-            canvas.translate(140f, textY)
-            layout.draw(canvas)
-            canvas.restore()
+                val cardRect = android.graphics.RectF(90f, 420f, w - 90f, h - 420f)
+                val cardPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                    color = android.graphics.Color.parseColor("#22FFFFFF")
+                    style = android.graphics.Paint.Style.FILL
+                }
+                val borderPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                    color = android.graphics.Color.parseColor("#2EE6A8")
+                    style = android.graphics.Paint.Style.STROKE
+                    strokeWidth = 4f
+                }
+                canvas.drawRoundRect(cardRect, 48f, 48f, cardPaint)
+                canvas.drawRoundRect(cardRect, 48f, 48f, borderPaint)
 
-            val values = android.content.ContentValues().apply {
-                put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, "meera_status_${System.currentTimeMillis()}.jpg")
-                put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-            }
-            val uri = ctx.contentResolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-                ?: return ToolExecutionResult(true, "post_whatsapp_status", "स्टेटस पोस्टर सेव नहीं हो पाया।", "ERROR: MediaStore insert failed")
+                val tp = android.text.TextPaint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                    color = android.graphics.Color.WHITE
+                    textSize = 64f
+                    typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+                }
+                val textWidth = (w - 280)
+                val layout = android.text.StaticLayout.Builder
+                    .obtain("“ $quote ”", 0, ("“ $quote ”").length, tp, textWidth)
+                    .setAlignment(android.text.Layout.Alignment.ALIGN_CENTER)
+                    .setLineSpacing(14f, 1.15f)
+                    .build()
 
-            ctx.contentResolver.openOutputStream(uri)?.use { out ->
-                bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, out)
+                canvas.save()
+                val textY = (h - layout.height) / 2f
+                canvas.translate(140f, textY)
+                layout.draw(canvas)
+                canvas.restore()
+
+                val values = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, "meera_status_${System.currentTimeMillis()}.jpg")
+                    put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                }
+                uri = ctx.contentResolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                    ?: return ToolExecutionResult(true, "post_whatsapp_status", "स्टेटस पोस्टर सेव नहीं हो पाया।", "ERROR: MediaStore insert failed")
+
+                ctx.contentResolver.openOutputStream(uri)?.use { out ->
+                    bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, out)
+                }
+                mimeType = "image/*"
+                caption = quote
+                postedLabel = "पोस्टर ('$quote')"
             }
 
             val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                type = "image/*"
-                setPackage("com.whatsapp")
+                type = mimeType
+                setPackage(waPkg)
                 putExtra(Intent.EXTRA_STREAM, uri)
-                putExtra(Intent.EXTRA_TEXT, quote)
+                if (caption.isNotBlank()) putExtra(Intent.EXTRA_TEXT, caption)
+                clipData = android.content.ClipData.newRawUri("MeeraStatus", uri)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             ctx.startActivity(shareIntent)
@@ -2022,16 +2107,16 @@ object MeeraTools {
                     if (sentFinal) {
                         return ToolExecutionResult(
                             true, "post_whatsapp_status",
-                            "मैंने WhatsApp पर आपका स्टेटस लगा दिया है! पोस्टर पर लिखा है: '$quote' — कैसा लगा?",
-                            "VERIFIED_SUCCESS: Generated poster and posted to WhatsApp Status -> '$quote'"
+                            "मैंने WhatsApp पर $postedLabel स्टेटस में लगा दिया है!",
+                            "VERIFIED_SUCCESS: Posted $postedLabel to WhatsApp Status."
                         )
                     }
                 }
             }
             ToolExecutionResult(
                 true, "post_whatsapp_status",
-                "मैंने '$quote' का पोस्टर बनाकर WhatsApp खोल दिया है, बस My status चुनकर सेंड दबा दीजिए!",
-                "PARTIAL: Poster generated and opened in WhatsApp share screen."
+                "मैंने $postedLabel WhatsApp में खोल दिया है, बस My status चुनकर सेंड दबा दीजिए!",
+                "PARTIAL: Opened WhatsApp share screen for $postedLabel."
             )
         } catch (e: Exception) {
             ToolExecutionResult(true, "post_whatsapp_status", "स्टेटस लगाने में दिक्कत आई: ${e.message}", "ERROR: ${e.message}")
@@ -2067,18 +2152,27 @@ object MeeraTools {
     }
 
     private fun sendFileOnWhatsAppTool(ctx: Context, fileQuery: String, recipient: String): ToolExecutionResult {
-        val found = findFileUriForShare(ctx, fileQuery)
-            ?: return ToolExecutionResult(
-                true, "send_file_on_whatsapp",
-                "मुझे फोन में '$fileQuery' नाम की कोई फाइल नहीं मिली। कृपया फाइल का नाम एक बार चेक कर लें।",
-                "FAILED: File matching '$fileQuery' not found in MediaStore."
-            )
-        val (fileUri, fileName) = found
+        val waPkg = resolveWhatsAppPackage(ctx)
+        val vaultItem = MeeraFileVault.findFile(ctx, fileQuery)
+        val vaultUri = vaultItem?.let { MeeraFileVault.getShareUri(ctx, it, waPkg) }
+        val resolved: Triple<Uri, String, String> = if (vaultItem != null && vaultUri != null) {
+            Triple(vaultUri, vaultItem.name, vaultItem.mimeType.ifBlank { "*/*" })
+        } else {
+            val found = findFileUriForShare(ctx, fileQuery)
+                ?: return ToolExecutionResult(
+                    true, "send_file_on_whatsapp",
+                    "मुझे फोन या Shared Vault में '$fileQuery' नाम की कोई फाइल नहीं मिली। कृपया फाइल का नाम चेक करें या पहले 📎 से अटैच करें।",
+                    "FAILED: File matching '$fileQuery' not found in Vault or MediaStore."
+                )
+            Triple(found.first, found.second, "*/*")
+        }
+        val (fileUri, fileName, fileMime) = resolved
         return try {
             val share = Intent(Intent.ACTION_SEND).apply {
-                type = "*/*"
-                setPackage("com.whatsapp")
+                type = fileMime
+                setPackage(waPkg)
                 putExtra(Intent.EXTRA_STREAM, fileUri)
+                clipData = android.content.ClipData.newRawUri(fileName, fileUri)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             ctx.startActivity(share)

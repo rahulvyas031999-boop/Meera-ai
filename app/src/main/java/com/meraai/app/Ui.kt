@@ -57,7 +57,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AccessibilityNew
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ArrowBack
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material.icons.rounded.AttachFile
 import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Description
+import androidx.compose.material.icons.rounded.Image
+import androidx.compose.material.icons.rounded.TableChart
 import androidx.compose.material.icons.rounded.BatteryChargingFull
 import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.BugReport
@@ -931,6 +937,10 @@ private fun HomeTabContent(ui: UiState, vm: VoiceViewModel, orbStyle: String = "
 
         Spacer(Modifier.height(10.dp))
 
+        val homeAttachLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+            if (uris.isNotEmpty()) vm.onSharedUrisReceived(uris)
+        }
+        ActiveSharedFileBanner(vm)
         Surface(
             color = p.card,
             shape = RoundedCornerShape(28.dp),
@@ -938,9 +948,17 @@ private fun HomeTabContent(ui: UiState, vm: VoiceViewModel, orbStyle: String = "
             modifier = Modifier.fillMaxWidth().border(1.dp, p.cardBorder, RoundedCornerShape(28.dp))
         ) {
             Row(
-                Modifier.padding(start = 14.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
+                Modifier.padding(start = 8.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                Box(
+                    Modifier.size(38.dp).clip(CircleShape)
+                        .background(p.accentPrimary.copy(alpha = 0.12f))
+                        .clickable { homeAttachLauncher.launch(arrayOf("*/*")) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Rounded.AttachFile, contentDescription = "फ़ाइल अटैच करें", tint = p.accentPrimary, modifier = Modifier.size(20.dp))
+                }
                 OutlinedTextField(
                     value = quickInput,
                     onValueChange = { quickInput = it },
@@ -1575,14 +1593,26 @@ private fun ChatTabContent(ui: UiState, vm: VoiceViewModel) {
             }
         }
 
-        Spacer(Modifier.height(8.dp))
+        val chatAttachLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+            if (uris.isNotEmpty()) vm.onSharedUrisReceived(uris)
+        }
+        Spacer(Modifier.height(6.dp))
+        ActiveSharedFileBanner(vm)
         Surface(
             color = p.card,
             shape = RoundedCornerShape(26.dp),
             shadowElevation = if (p.isDark) 0.dp else 2.dp,
             modifier = Modifier.fillMaxWidth().border(1.dp, p.cardBorder, RoundedCornerShape(26.dp))
         ) {
-            Row(Modifier.padding(start = 14.dp, end = 6.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.padding(start = 8.dp, end = 6.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(38.dp).clip(CircleShape)
+                        .background(p.accentPrimary.copy(alpha = 0.12f))
+                        .clickable { chatAttachLauncher.launch(arrayOf("*/*")) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Rounded.AttachFile, contentDescription = "फ़ाइल अटैच करें", tint = p.accentPrimary, modifier = Modifier.size(20.dp))
+                }
                 OutlinedTextField(
                     value = input,
                     onValueChange = { input = it },
@@ -1912,3 +1942,71 @@ fun Orb(state: VState, vm: VoiceViewModel, modifier: Modifier = Modifier) {
     val p = LocalMeeraColors.current
     MeeraDynamicOrb(state = state, vm = vm, orbStyle = "CLASSIC", persona = "Meera", isDark = p.isDark, modifier = modifier)
 }
+
+@Composable
+private fun ActiveSharedFileBanner(vm: VoiceViewModel) {
+    val p = LocalMeeraColors.current
+    val activeFile by MeeraFileVault.activeFileFlow.collectAsState()
+    val visible by MeeraFileVault.chipVisibleFlow.collectAsState()
+    val item = activeFile ?: return
+    if (!visible) return
+
+    val icon = when (item.kind) {
+        "IMAGE" -> Icons.Rounded.Image
+        "EXCEL" -> Icons.Rounded.TableChart
+        else -> Icons.Rounded.Description
+    }
+    Surface(
+        color = p.panel,
+        shape = RoundedCornerShape(16.dp),
+        shadowElevation = if (p.isDark) 0.dp else 2.dp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 6.dp)
+            .border(1.dp, p.accentPrimary.copy(alpha = 0.6f), RoundedCornerShape(16.dp))
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Box(
+                Modifier.size(32.dp).clip(RoundedCornerShape(10.dp)).background(p.accentPrimary.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, contentDescription = null, tint = p.accentPrimary, modifier = Modifier.size(18.dp))
+            }
+            Column(Modifier.weight(1f)) {
+                Text(item.name, color = p.textPrimary, fontSize = 12.5.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("${item.kind} • ${(item.sizeBytes / 1024).coerceAtLeast(1)} KB • तैयार है", color = p.accentSuccess, fontSize = 10.5.sp)
+            }
+            if (item.kind == "IMAGE") {
+                Surface(
+                    color = p.accentPrimary.copy(alpha = 0.15f),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.clickable {
+                        vm.sendTextQuery("अभी जो फोटो शेयर की है उसे WhatsApp स्टेटस लगा दो", speakAloud = true)
+                    }
+                ) {
+                    Text("Status", color = p.accentPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+                }
+            }
+            Surface(
+                color = p.accentSuccess.copy(alpha = 0.15f),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.clickable {
+                    vm.sendTextQuery("इस फ़ाइल को ध्यान से पढ़कर संक्षेप में समझाओ", speakAloud = true)
+                }
+            ) {
+                Text("पढ़ो", color = p.accentSuccess, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+            }
+            Icon(
+                Icons.Rounded.Close,
+                contentDescription = "हटाएँ",
+                tint = p.textSecondary,
+                modifier = Modifier.size(18.dp).clickable { MeeraFileVault.dismissChip() }
+            )
+        }
+    }
+}
+
