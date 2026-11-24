@@ -47,6 +47,7 @@ object MeeraFileVault {
     val filesFlow = MutableStateFlow<List<SharedFileItem>>(emptyList())
     val activeFileFlow = MutableStateFlow<SharedFileItem?>(null)
     val chipVisibleFlow = MutableStateFlow(false)
+    val vaultScreenOpenFlow = MutableStateFlow(false)
 
     @Volatile private var loaded = false
 
@@ -122,6 +123,90 @@ object MeeraFileVault {
     }
 
     fun dismissChip() { chipVisibleFlow.value = false }
+    fun openVaultScreen() { vaultScreenOpenFlow.value = true }
+    fun closeVaultScreen() { vaultScreenOpenFlow.value = false }
+
+    private fun recordFileInLongTermMemory(ctx: Context, item: SharedFileItem) {
+        try {
+            val cleanPreview = item.extractedPreview.replace(Regex("\\s+"), " ").trim().take(120)
+            val note = "शेयर/सेव फ़ाइल [${item.kind}]: ${item.name} (${item.timeLabel}) — $cleanPreview"
+            MeeraMemoryManager.upsertMemory(ctx.applicationContext, note, category = "file", importance = 2)
+        } catch (e: Exception) {
+            MeeraDebugLog.log("VAULT", "SQLite memory sync error: ${e.message}")
+        }
+    }
+
+    fun deleteFile(ctx: Context, itemId: String): Boolean {
+        ensureLoaded(ctx)
+        val current = filesFlow.value.toMutableList()
+        val target = current.firstOrNull { it.id == itemId } ?: return false
+        current.remove(target)
+        try { File(target.localPath).delete() } catch (_: Exception) {}
+        filesFlow.value = current
+        if (activeFileFlow.value?.id == itemId) {
+            activeFileFlow.value = current.firstOrNull()
+            if (activeFileFlow.value == null) chipVisibleFlow.value = false
+        }
+        persistIndex(ctx.applicationContext, current)
+        return true
+    }
+
+    fun openInExternalApp(ctx: Context, item: SharedFileItem): Boolean {
+        val uri = getShareUri(ctx, item) ?: return false
+        return try {
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, item.mimeType.ifBlank { "*/*" })
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            ctx.applicationContext.startActivity(intent)
+            true
+        } catch (e: Exception) {
+            MeeraDebugLog.log("VAULT", "openInExternalApp error: ${e.message}")
+            false
+        }
+    }
+
+    fun shareExternally(ctx: Context, item: SharedFileItem, targetPackage: String? = null): Boolean {
+        val uri = getShareUri(ctx, item, targetPackage) ?: return false
+        return try {
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = item.mimeType.ifBlank { "*/*" }
+                putExtra(Intent.EXTRA_STREAM, uri)
+                if (!targetPackage.isNullOrBlank()) setPackage(targetPackage)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            val finalIntent = if (targetPackage.isNullOrBlank()) {
+                Intent.createChooser(intent, "फ़ाइल शेयर करें").apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+            } else intent
+            ctx.applicationContext.startActivity(finalIntent)
+            true
+        } catch (e: Exception) {
+            MeeraDebugLog.log("VAULT", "shareExternally error: ${e.message}")
+            false
+        }
+    }
+
+    fun exportToWorkspace(ctx: Context, item: SharedFileItem): String? {
+        val src = File(item.localPath)
+        if (!src.exists()) return null
+        return try {
+            val safeName = item.name.replace(Regex("[^a-zA-Z0-9._-]"), "_").takeLast(64)
+            val primaryDir = File("/sdcard/Download/MeeraWorkspace")
+            val targetDir = if (primaryDir.exists() || primaryDir.mkdirs()) {
+                primaryDir
+            } else {
+                File(ctx.applicationContext.getExternalFilesDir(null), "MeeraWorkspace").apply { mkdirs() }
+            }
+            val dest = File(targetDir, safeName)
+            src.copyTo(dest, overwrite = true)
+            dest.absolutePath
+        } catch (e: Exception) {
+            MeeraDebugLog.log("VAULT", "exportToWorkspace error: ${e.message}")
+            null
+        }
+    }
 
     fun registerLocalFile(
         ctx: Context,
@@ -159,6 +244,7 @@ object MeeraFileVault {
             activeFileFlow.value = item
             chipVisibleFlow.value = true
             persistIndex(app, updated)
+            recordFileInLongTermMemory(app, item)
             item
         } catch (e: Exception) {
             MeeraDebugLog.log("VAULT", "registerLocalFile error: ${e.message}")
@@ -245,6 +331,7 @@ object MeeraFileVault {
             activeFileFlow.value = item
             chipVisibleFlow.value = true
             persistIndex(app, updated)
+            recordFileInLongTermMemory(app, item)
             MeeraDebugLog.log("VAULT", "Saved [$kind] $displayName (${totalCopied / 1024} KB)")
             item
         } catch (e: Exception) {
