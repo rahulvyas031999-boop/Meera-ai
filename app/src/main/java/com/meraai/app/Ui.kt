@@ -445,6 +445,15 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
                         p.accentPrimary
                     ) { scope.launch { drawer.close() }; MeeraCodePatcher.openScreen() }
 
+                    val vaultFiles by MeeraFileVault.filesFlow.collectAsState()
+                    DrawerMenuItem(
+                        "File Vault & Studio",
+                        Icons.Rounded.Description,
+                        if (vaultFiles.isEmpty()) "Empty" else "${vaultFiles.size} files",
+                        p.accentSuccess
+                    ) { scope.launch { drawer.close() }; MeeraFileVault.openVaultScreen() }
+                    MeeraFileVaultOverlay(vm)
+
                     DrawerMenuItem("Debug Log कॉपी करें", Icons.Rounded.BugReport) {
                         scope.launch { drawer.close() }; MeeraDebugLog.copyNow(logCtx)
                     }

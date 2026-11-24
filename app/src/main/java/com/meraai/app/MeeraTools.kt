@@ -477,6 +477,20 @@ object MeeraTools {
         )
         funcs.put(
             JSONObject()
+                .put("name", "open_file_vault")
+                .put("description", "Open the dedicated File Vault & AI File Studio screen where the user can view, open, share, delete, or create Excel/PDF/Word files.")
+                .put("parameters", JSONObject().put("type", "OBJECT").put("properties", JSONObject()))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "export_vault_file_to_workspace")
+                .put("description", "Export a file from MeeraFileVault to /sdcard/Download/MeeraWorkspace/ so Termux Python or Google Colab scripts can process heavy data, charts, or advanced edits.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("file_query", JSONObject().put("type", "STRING").put("description", "File name or type ('latest', 'excel', 'pdf', 'photo')"))))
+        )
+        funcs.put(
+            JSONObject()
                 .put("name", "open_stock_chart")
                 .put("description", "Open the live stock chart for a company/symbol (e.g., HAL, Tata Motors, Nifty) and visually analyze its trend, support, and resistance levels.")
                 .put("parameters", JSONObject().put("type", "OBJECT")
@@ -997,6 +1011,34 @@ object MeeraTools {
                 val fq = args.optString("file_query", "latest").trim()
                 val title = args.optString("file_title", "").trim()
                 MeeraFileStudio.createOrEditFile(ctx, fmt, inst, fq, title)
+            }
+            "open_file_vault" -> {
+                MeeraFileVault.ensureLoaded(ctx)
+                MeeraFileVault.openVaultScreen()
+                val cnt = MeeraFileVault.filesFlow.value.size
+                ToolExecutionResult(
+                    true, name,
+                    "मैंने आपका File Vault और AI Studio खोल दिया है। इसमें अभी $cnt फ़ाइलें सेव हैं।",
+                    "VERIFIED_SUCCESS: Opened File Vault & Studio screen ($cnt files)."
+                )
+            }
+            "export_vault_file_to_workspace" -> {
+                val fq = args.optString("file_query", "latest").trim()
+                val item = MeeraFileVault.findFile(ctx, fq)
+                if (item == null) {
+                    ToolExecutionResult(true, name, "वॉल्ट में कोई फ़ाइल नहीं मिली।", "FAILED: File not found in MeeraFileVault.")
+                } else {
+                    val exportedPath = MeeraFileVault.exportToWorkspace(ctx, item)
+                    if (exportedPath != null) {
+                        ToolExecutionResult(
+                            true, name,
+                            "फ़ाइल '${item.name}' को MeeraWorkspace में एक्सपोर्ट कर दिया है, अब Termux या Colab से इसे प्रोसेस किया जा सकता है।",
+                            "VERIFIED_SUCCESS: Exported '${item.name}' to $exportedPath"
+                        )
+                    } else {
+                        ToolExecutionResult(true, name, "फ़ाइल एक्सपोर्ट करने में दिक्कत आई।", "ERROR: Failed to export file.")
+                    }
+                }
             }
             "open_stock_chart" -> {
                 val stock = args.optString("stock_name", "").trim()
