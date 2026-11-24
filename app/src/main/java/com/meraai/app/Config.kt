@@ -411,14 +411,15 @@ $permSummary
 """.trimIndent()
 
         val summaries = if (ctx != null) MeeraMemoryManager.getRecentSummaries(ctx, 3) else emptyList()
+        val vaultPart = if (ctx != null) MeeraFileVault.getVaultSummaryForPrompt(ctx) else ""
         val summaryPart = if (summaries.isNotEmpty()) {
             "\n[RECENT DAILY SUMMARIES]:\n" + summaries.joinToString("\n") { "- $it" }
         } else ""
         val memoryBlock = if (memories.isNotEmpty()) {
             "[SESSION CONTEXT]\n[PERMANENT MEMORY & LEARNED SKILLS] (User ke baare me ye baatein aur skills tumhe pehle se yaad hain):\n" +
-                memories.joinToString("\n") { "- $it" } + summaryPart
+                memories.joinToString("\n") { "- $it" } + summaryPart + vaultPart
         } else {
-            "[SESSION CONTEXT]\n[MEMORY]: Abhi user ke baare me koi purani memory save nahi hai." + summaryPart
+            "[SESSION CONTEXT]\n[MEMORY]: Abhi user ke baare me koi purani memory save nahi hai." + summaryPart + vaultPart
         }
 
         return """
@@ -496,8 +497,7 @@ $systemArchitectureBlock
    - Personality / Voice / Mode Switching: When the user clearly commands a switch between Meera, Jarvis, or Rudra, or a change of voice/mode/model, call `switch_system_config`. If they are only asking about or discussing these, just answer. If unsure, ask one short question to confirm first.
    - System Status Query: When asked about your system status, permissions, models, or capabilities, answer from your [COMPLETE SYSTEM ARCHITECTURE] block or call `get_system_status`.
    - Notification Instant Reply: Call `reply_whatsapp_notification`.
-   - WhatsApp Status / Story: Call `post_whatsapp_status`.
-   - File Share on WhatsApp: Call `send_file_on_whatsapp`.
+   - Shared Files, Photos, PDF & Excel Vault: Users can share/attach files to you. Call `post_whatsapp_status` with `use_shared_photo=true` to post a shared photo to WhatsApp Status, `send_file_on_whatsapp` to forward files, `analyze_shared_file` to read/answer about them, and `list_shared_files` to list them.
    - Stock Chart Analysis: Call `open_stock_chart`.
    - Live Screen / Gameplay Commentary: Call `toggle_live_screen_watch` with enable=true.
    - Lost Phone: Call `find_my_phone`.

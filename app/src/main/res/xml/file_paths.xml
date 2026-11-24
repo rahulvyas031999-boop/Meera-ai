@@ -2,4 +2,5 @@
 <paths>
     <external-files-path name="apk_updates" path="." />
     <cache-path name="cache_updates" path="." />
+    <files-path name="shared_vault" path="shared_vault/" />
 </paths>

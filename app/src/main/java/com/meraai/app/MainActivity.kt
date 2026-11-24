@@ -21,6 +21,7 @@ class MainActivity : ComponentActivity() {
         MeeraCrashLog.install(this)
         MeeraReelManager.initInActivity(this)
         handleWakeIntent(intent)
+        handleShareIntent(intent)
         MeeraWake.ensureRunning(this)
         setContent {
             MeraTheme { MeraApp(vm, onMic = ::onMic) }
@@ -31,6 +32,23 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleWakeIntent(intent)
+        handleShareIntent(intent)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun handleShareIntent(i: android.content.Intent?) {
+        if (i == null) return
+        val act = i.action ?: return
+        if (act != android.content.Intent.ACTION_SEND && act != android.content.Intent.ACTION_SEND_MULTIPLE) return
+        val uris = mutableListOf<android.net.Uri>()
+        if (act == android.content.Intent.ACTION_SEND) {
+            i.getParcelableExtra<android.net.Uri>(android.content.Intent.EXTRA_STREAM)?.let { uris.add(it) }
+        } else {
+            i.getParcelableArrayListExtra<android.net.Uri>(android.content.Intent.EXTRA_STREAM)?.let { uris.addAll(it) }
+        }
+        val sharedText = i.getStringExtra(android.content.Intent.EXTRA_TEXT)?.trim()
+        i.action = android.content.Intent.ACTION_MAIN
+        if (uris.isNotEmpty() || !sharedText.isNullOrBlank()) vm.onSharedUrisReceived(uris, sharedText)
     }
 
     @Suppress("DEPRECATION")

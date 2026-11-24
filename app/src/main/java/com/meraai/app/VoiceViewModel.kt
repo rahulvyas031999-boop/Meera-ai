@@ -87,6 +87,7 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
     init {
         MeeraWake.syncFromPrefs(appCtx)
         installConfigBridge()
+        MeeraFileVault.ensureLoaded(appCtx)
         MeeraAgentFactory.onDeliverToChat = { roleTitle, fullOut ->
             appendChatLog("model", fullOut)
             _ui.update { it.copy(lastToolStatus = "🤖 $roleTitle") }
@@ -346,6 +347,26 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
         }
     }
 
+    fun onSharedUrisReceived(uris: List<android.net.Uri>, extraText: String? = null) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val saved = uris.mapNotNull { MeeraFileVault.ingestUri(appCtx, it) }
+            if (saved.isNotEmpty()) {
+                val latest = saved.last()
+                val label = if (saved.size == 1) "📎 ${latest.name} (${latest.kind})" else "📎 ${saved.size} फ़ाइलें (Latest: ${latest.name})"
+                _ui.update { it.copy(lastToolStatus = label) }
+                appendChatLog("user", "📎 फ़ाइल शेयर की गई: ${latest.name} [${latest.kind}]")
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    android.widget.Toast.makeText(appCtx, "✅ Meera को मिली: ${latest.name}", android.widget.Toast.LENGTH_SHORT).show()
+                }
+                if (active && prefs.mode == Mode.LIVE && live?.ready == true) {
+                    if (latest.kind == "IMAGE") MeeraFileVault.compressImageForLiveOrGemini(latest, 960)?.let { live?.sendVideoFrame(it) }
+                    live?.sendClientText("[SYSTEM NOTICE: Rahul shared file '${latest.name}' (${latest.kind}). Active Shared File in Vault. Preview: ${latest.extractedPreview.take(350)}. Confirm warmly in 1 short sentence.]", turnComplete = true)
+                }
+            }
+            if (!extraText.isNullOrBlank()) sendTextQuery(extraText, speakAloud = false)
+        }
+    }
+
     /** टेक्स्ट चैट या Quick Action बटन से सीधे कमांड/मैसेज भेजना */
     fun sendTextQuery(query: String, speakAloud: Boolean = false) {
         val clean = query.trim()
@@ -375,6 +396,22 @@ class VoiceViewModel(private val appCtx: Application) : AndroidViewModel(appCtx)
                         val pcm = rest.tts(toolRes.spokenReply, prefs.voice, prefs.ttsModel, prefs.persona, prefs.girlfriendMode)
                         val tempPlayer = player ?: PcmPlayer().also { player = it }
                         tempPlayer.enqueue(pcm)
+                    } catch (_: Exception) {}
+                }
+                return@launch
+            }
+
+            val attachedFile = if (!toolRes.executed && MeeraFileVault.chipVisibleFlow.value) MeeraFileVault.activeFileFlow.value else null
+            if (attachedFile != null) {
+                val analysis = MeeraFileVault.analyzeFileWithGemini(appCtx, attachedFile, clean)
+                _ui.update { it.copy(ai = analysis, lastToolStatus = "📎 ${attachedFile.name}", latencyMs = System.currentTimeMillis() - startAt) }
+                history.add("user" to "[Attached File: ${attachedFile.name}] $clean")
+                history.add("model" to analysis)
+                appendChatLog("model", analysis)
+                if (speakAloud) {
+                    try {
+                        val pcm = rest.tts(analysis.replace(Regex("[*#_`~]"), "").take(600), prefs.voice, prefs.ttsModel, prefs.persona, prefs.girlfriendMode)
+                        (player ?: PcmPlayer().also { player = it }).enqueue(pcm)
                     } catch (_: Exception) {}
                 }
                 return@launch
