@@ -123,6 +123,49 @@ object MeeraFileVault {
 
     fun dismissChip() { chipVisibleFlow.value = false }
 
+    fun registerLocalFile(
+        ctx: Context,
+        sourceFile: File,
+        displayName: String,
+        mimeType: String,
+        kind: String,
+        preview: String
+    ): SharedFileItem? {
+        ensureLoaded(ctx)
+        if (!sourceFile.exists()) return null
+        return try {
+            val app = ctx.applicationContext
+            val ts = System.currentTimeMillis()
+            val safeName = displayName.replace(Regex("[^a-zA-Z0-9._-]"), "_").takeLast(64)
+            val dest = File(vaultDir(app), "${ts}_$safeName")
+            sourceFile.copyTo(dest, overwrite = true)
+            val item = SharedFileItem(
+                id = ts.toString(),
+                name = displayName,
+                mimeType = mimeType,
+                kind = kind,
+                localPath = dest.absolutePath,
+                sizeBytes = dest.length(),
+                timestamp = ts,
+                timeLabel = SimpleDateFormat("dd MMM, HH:mm", Locale.getDefault()).format(Date(ts)),
+                extractedPreview = preview
+            )
+            val updated = (listOf(item) + filesFlow.value).toMutableList()
+            while (updated.size > MAX_ITEMS) {
+                val old = updated.removeAt(updated.lastIndex)
+                try { File(old.localPath).delete() } catch (_: Exception) {}
+            }
+            filesFlow.value = updated
+            activeFileFlow.value = item
+            chipVisibleFlow.value = true
+            persistIndex(app, updated)
+            item
+        } catch (e: Exception) {
+            MeeraDebugLog.log("VAULT", "registerLocalFile error: ${e.message}")
+            null
+        }
+    }
+
     fun selectActiveFile(item: SharedFileItem) {
         activeFileFlow.value = item
         chipVisibleFlow.value = true
