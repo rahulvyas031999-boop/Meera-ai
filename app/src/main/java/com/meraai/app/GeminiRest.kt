@@ -257,8 +257,8 @@ Reply with ONLY valid compact JSON: {"tool":"...","args":{...},"mark_done_step":
             .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", sys))))
             .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", JSONArray().put(JSONObject().put("text", userPayload)))))
             .put("generationConfig", JSONObject().put("responseMimeType", "application/json").put("temperature", 0.1))
-        kotlinx.coroutines.withTimeoutOrNull(18000L) {
-            for (m in listOf("gemini-3.5-flash", "gemini-flash-lite-latest", "gemini-3.5-flash-lite", "gemini-3.8-flash")) {
+        for (m in listOf("gemini-flash-lite-latest", "gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-3.8-flash")) {
+            val picked = kotlinx.coroutines.withTimeoutOrNull(7500L) {
                 try {
                     val resp = http.newCall(request(m, "generateContent", body)).await().okOrThrow()
                     val txt = resp.use { textOf(JSONObject(it.body!!.string())).trim() }
@@ -268,14 +268,17 @@ Reply with ONLY valid compact JSON: {"tool":"...","args":{...},"mark_done_step":
                     if (doneStep > 0) MeeraMission.markDone(doneStep)
                     val tool = o.optString("tool", "none")
                     if (tool.isNotBlank() && tool != "none") {
-                        return@withTimeoutOrNull Pair(tool, o.optJSONObject("args") ?: JSONObject())
-                    }
+                        Pair(tool, o.optJSONObject("args") ?: JSONObject())
+                    } else null
                 } catch (e: CancellationException) {
                     throw e
-                } catch (_: Exception) {}
+                } catch (_: Exception) {
+                    null
+                }
             }
-            null
+            if (picked != null) return@withContext picked
         }
+        null
     }
 
     // ---------- 2.8 Task Planner ----------
@@ -290,17 +293,21 @@ Reply with ONLY valid compact JSON: {"tool":"...","args":{...},"mark_done_step":
             Task: $task
         """.trimIndent()
         val body = JSONObject().put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", JSONArray().put(JSONObject().put("text", prompt))))).put("generationConfig", JSONObject().put("responseMimeType", "application/json"))
-        for (pm in listOf("gemini-3.5-flash", "gemini-flash-lite-latest", "gemini-3.5-flash-lite", "gemini-3.8-flash")) {
-            try {
-                val resp = http.newCall(request(pm, "generateContent", body)).await().okOrThrow()
-                val raw = resp.use { textOf(JSONObject(it.body!!.string())).trim() }
-                    .removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
-                val arr = JSONArray(raw)
-                val list = (0 until arr.length()).mapNotNull { arr.optString(it).trim().takeIf { s -> s.isNotBlank() } }
-                if (list.isNotEmpty()) return@withContext list
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {}
+        for (pm in listOf("gemini-flash-lite-latest", "gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-3.8-flash")) {
+            val planList = kotlinx.coroutines.withTimeoutOrNull(8500L) {
+                try {
+                    val resp = http.newCall(request(pm, "generateContent", body)).await().okOrThrow()
+                    val raw = resp.use { textOf(JSONObject(it.body!!.string())).trim() }
+                        .removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
+                    val arr = JSONArray(raw)
+                    (0 until arr.length()).mapNotNull { arr.optString(it).trim().takeIf { s -> s.isNotBlank() } }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    emptyList()
+                }
+            }
+            if (!planList.isNullOrEmpty()) return@withContext planList
         }
         listOf(task.lineSequence().firstOrNull()?.trim().orEmpty().ifBlank { "Execute task" })
     }

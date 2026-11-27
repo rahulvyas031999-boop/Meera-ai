@@ -272,7 +272,7 @@ object MeeraFileStudio {
         val safeSheet = xmlEsc(sheetName.replace(Regex("[\\\\/*?:\\[\\]]"), " ").trim().ifBlank { "Sheet1" })
         val sheetXml = StringBuilder()
         sheetXml.append("""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>""")
-        sheetXml.append("""<worksheet xmlns="[http://schemas.openxmlformats.org/spreadsheetml/2006/main](http://schemas.openxmlformats.org/spreadsheetml/2006/main)"><sheetData>""")
+        sheetXml.append("""<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>""")
         for ((rIdx, row) in rows.withIndex()) {
             val rNum = rIdx + 1
             sheetXml.append("""<row r="$rNum">""")
@@ -295,7 +295,7 @@ object MeeraFileStudio {
         sheetXml.append("</sheetData></worksheet>")
 
         val contentTypes = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="[http://schemas.openxmlformats.org/package/2006/content-types](http://schemas.openxmlformats.org/package/2006/content-types)">
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
   <Default Extension="xml" ContentType="application/xml"/>
   <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
@@ -304,23 +304,23 @@ object MeeraFileStudio {
 </Types>"""
 
         val rootRels = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="[http://schemas.openxmlformats.org/package/2006/relationships](http://schemas.openxmlformats.org/package/2006/relationships)">
-  <Relationship Id="rId1" Type="[http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument](http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument)" Target="xl/workbook.xml"/>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
 </Relationships>"""
 
         val workbook = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<workbook xmlns="[http://schemas.openxmlformats.org/spreadsheetml/2006/main](http://schemas.openxmlformats.org/spreadsheetml/2006/main)" xmlns:r="[http://schemas.openxmlformats.org/officeDocument/2006/relationships](http://schemas.openxmlformats.org/officeDocument/2006/relationships)">
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
   <sheets><sheet name="$safeSheet" sheetId="1" r:id="rId1"/></sheets>
 </workbook>"""
 
         val wbRels = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="[http://schemas.openxmlformats.org/package/2006/relationships](http://schemas.openxmlformats.org/package/2006/relationships)">
-  <Relationship Id="rId1" Type="[http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet](http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet)" Target="worksheets/sheet1.xml"/>
-  <Relationship Id="rId2" Type="[http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles](http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles)" Target="styles.xml"/>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
 </Relationships>"""
 
         val styles = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<styleSheet xmlns="[http://schemas.openxmlformats.org/spreadsheetml/2006/main](http://schemas.openxmlformats.org/spreadsheetml/2006/main)">
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
   <fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts>
   <fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>
   <borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
@@ -431,18 +431,18 @@ object MeeraFileStudio {
         }
 
         val docXml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="[http://schemas.openxmlformats.org/wordprocessingml/2006/main](http://schemas.openxmlformats.org/wordprocessingml/2006/main)"><w:body>$body</w:body></w:document>"""
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>$body</w:body></w:document>"""
 
         val contentTypes = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="[http://schemas.openxmlformats.org/package/2006/content-types](http://schemas.openxmlformats.org/package/2006/content-types)">
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
   <Default Extension="xml" ContentType="application/xml"/>
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
 </Types>"""
 
         val rootRels = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="[http://schemas.openxmlformats.org/package/2006/relationships](http://schemas.openxmlformats.org/package/2006/relationships)">
-  <Relationship Id="rId1" Type="[http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument](http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument)" Target="word/document.xml"/>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
 </Relationships>"""
 
         ZipOutputStream(FileOutputStream(outFile)).use { zos ->

@@ -126,6 +126,7 @@ class GeminiLive(private val http: OkHttpClient, private val ev: Events) {
         val gen = ++socketGen
         val url = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=$cKey"
         val setup = buildSetup()
+        try { ws?.cancel() } catch (_: Exception) {}
         ws = http.newWebSocket(Request.Builder().url(url).build(), object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 if (gen != socketGen || closedByUs) return
@@ -174,10 +175,14 @@ class GeminiLive(private val http: OkHttpClient, private val ev: Events) {
         if (dropStartAt == 0L) dropStartAt = now
         reconnecting = true
         dropAttempts++
-        if (dropAttempts > 2) resumeHandle = null
+        val isCollision = msg.contains("1008") || msg.contains("already connected", ignoreCase = true)
+        if (isCollision || dropAttempts >= 2) resumeHandle = null
+        try { ws?.cancel() } catch (_: Exception) {}
+        ws = null
         ev.onReconnecting(dropAttempts)
         val waitMs = when {
             !networkUp -> 1500L
+            isCollision -> 600L
             dropAttempts <= 2 -> 800L
             dropAttempts <= 5 -> 1800L
             else -> 3000L
