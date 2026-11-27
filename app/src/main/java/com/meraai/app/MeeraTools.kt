@@ -992,7 +992,16 @@ object MeeraTools {
                     ToolExecutionResult(true, name, "अभी मेरे पास कोई शेयर की हुई फ़ाइल नहीं है। पहले Share मेन्यू या 📎 बटन से कोई फोटो, PDF या Excel शेयर करें!", "FAILED: Shared vault is empty.")
                 } else {
                     val ans = MeeraFileVault.analyzeFileWithGemini(ctx, item, q)
-                    ToolExecutionResult(true, name, ans, "VERIFIED_SUCCESS: Analyzed '${item.name}' (${item.kind}) -> $ans")
+                    val isErr = ans.startsWith("फ़ाइल पढ़ने में दिक्कत आई") ||
+                        ans.startsWith("पहले Gemini API Key") ||
+                        ans.startsWith("यह इमेज फ़ाइल पढ़ी नहीं जा सकी") ||
+                        ans.startsWith("PDF फ़ाइल बहुत बड़ी है") ||
+                        ans.contains("से टेक्स्ट नहीं निकल पाया")
+                    ToolExecutionResult(
+                        true, name, ans,
+                        if (isErr) "FAILED: Could not analyze '${item.name}' -> $ans"
+                        else "VERIFIED_SUCCESS: Analyzed '${item.name}' (${item.kind}) -> $ans"
+                    )
                 }
             }
             "list_shared_files" -> {
@@ -1579,6 +1588,9 @@ object MeeraTools {
 
     fun openAppByName(ctx: Context, rawName: String): Boolean {
         MeeraDebugLog.log("OPEN_APP", "request='$rawName'")
+        val svc = MeeraAccessibilityService.instance
+        val ownPkg = ctx.packageName
+        val beforePkg = svc?.getActivePackage().orEmpty()
         val ok = try {
             openAppByNameInner(ctx, rawName)
         } catch (e: Exception) {
@@ -1586,16 +1598,42 @@ object MeeraTools {
             false
         }
         MeeraDebugLog.log("OPEN_APP", "startActivity returned=$ok")
-        val appCtx = ctx.applicationContext
-        Thread {
-            try {
-                Thread.sleep(2500)
-                val svc = MeeraAccessibilityService.instance
-                val pkg = if (svc == null) "(Accessibility OFF)" else svc.getActivePackage()
-                MeeraDebugLog.log("OPEN_APP", "2.5s baad ASLI foreground app=$pkg")
-            } catch (_: Exception) {}
-        }.start()
-        return ok
+        if (!ok) return false
+
+        val isMainThread = android.os.Looper.myLooper() == android.os.Looper.getMainLooper()
+        val wantsSelf = rawName.lowercase().let { it.contains("meera") || it.contains("मीरा") }
+        if (svc == null || isMainThread || wantsSelf) return true
+
+        // बैकग्राउंड थ्रेड (UI Worker / Live Tool): Vivo बैकग्राउंड लॉन्च ब्लॉक होने पर वेरीफाई व रीट्राई करें
+        if (beforePkg == ownPkg) {
+            var curPkg = ownPkg
+            for (i in 1..4) {
+                try { Thread.sleep(400) } catch (_: Exception) {}
+                curPkg = svc.getActivePackage().orEmpty()
+                if (curPkg.isNotBlank() && curPkg != ownPkg) {
+                    MeeraDebugLog.log("OPEN_APP", "VERIFIED foreground app=$curPkg (${i * 400}ms)")
+                    return true
+                }
+            }
+            MeeraDebugLog.log("OPEN_APP", "Vivo retry: still on $curPkg -> Home + relaunch '$rawName'")
+            svc.performSystemAction("home")
+            try { Thread.sleep(550) } catch (_: Exception) {}
+            try { openAppByNameInner(ctx, rawName) } catch (_: Exception) {}
+            for (i in 1..4) {
+                try { Thread.sleep(450) } catch (_: Exception) {}
+                curPkg = svc.getActivePackage().orEmpty()
+                if (curPkg.isNotBlank() && curPkg != ownPkg) {
+                    MeeraDebugLog.log("OPEN_APP", "VERIFIED after Vivo retry: foreground app=$curPkg")
+                    return true
+                }
+            }
+            MeeraDebugLog.log("OPEN_APP", "FAILED to leave $ownPkg -> curPkg=$curPkg")
+            return false
+        }
+
+        try { Thread.sleep(900) } catch (_: Exception) {}
+        MeeraDebugLog.log("OPEN_APP", "ASLI foreground app=${svc.getActivePackage()}")
+        return true
     }
 
     private fun openAppByNameInner(ctx: Context, rawName: String): Boolean {
@@ -2158,19 +2196,20 @@ object MeeraTools {
 
             val svc = MeeraAccessibilityService.instance
             if (svc != null) {
-                Thread.sleep(1500)
+                Thread.sleep(1400)
                 var clickedStatus = false
-                for (attempt in 1..4) {
-                    clickedStatus = svc.clickByText("My status") || svc.clickByText("मेरा स्टेटस") || svc.clickByText("My Status")
-                    if (clickedStatus) break
-                    if (attempt == 1) {
+                for (attempt in 1..5) {
+                    val curPkg = svc.getActivePackage().orEmpty().lowercase()
+                    if (curPkg == "android" || curPkg.contains("chooser") || curPkg.contains("resolver")) {
                         val pickedWa = svc.clickByText("WhatsApp") || svc.clickByText("व्हाट्सएप")
                         if (pickedWa) {
-                            Thread.sleep(1800)
+                            Thread.sleep(1700)
                             continue
                         }
                     }
-                    Thread.sleep(900)
+                    clickedStatus = svc.clickByText("My status") || svc.clickByText("मेरा स्टेटस") || svc.clickByText("My Status")
+                    if (clickedStatus) break
+                    Thread.sleep(850)
                 }
                 if (clickedStatus) {
                     Thread.sleep(1200)
@@ -2636,9 +2675,9 @@ object MeeraMission {
         return failedTargets.any { it.equals(label, ignoreCase = true) }
     }
 
-    @Synchronized fun set(raw: String) {
+    @Synchronized fun set(raw: String, trackInMonitor: Boolean = true) {
         if (monitorTaskId > 0) {
-            MeeraBackgroundMonitor.completeTask(monitorTaskId, true, "नए टास्क से रिप्लेस किया गया")
+            MeeraBackgroundMonitor.completeTask(monitorTaskId, false, "नए टास्क से रिप्लेस किया गया")
             monitorTaskId = -1L
         }
         steps.clear(); done.clear(); failedTargets.clear()
@@ -2651,7 +2690,7 @@ object MeeraMission {
             .forEach { steps.add(it) }
         updatedAt = System.currentTimeMillis()
         lastGuidePkg = ""
-        if (steps.isNotEmpty()) {
+        if (trackInMonitor && steps.isNotEmpty()) {
             monitorTaskId = MeeraBackgroundMonitor.startTask(
                 title = steps.first().take(50),
                 category = "UI Automation Mission",

@@ -48,8 +48,8 @@ object MeeraTaskOrchestrator {
     @Volatile var onTaskUpdate: ((title: String, ok: Boolean, summary: String) -> Unit)? = null
 
     private val workerHttp = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
         .build()
 
     @Synchronized
@@ -216,7 +216,7 @@ object MeeraTaskOrchestrator {
         val bgId = MeeraBackgroundMonitor.startTask(
             title = "UI Worker: ${job.goal.take(42)}",
             category = "Screen Worker Queue",
-            modelUsed = "gemini-3.5-flash",
+            modelUsed = "gemini-flash-lite-latest",
             initialStep = "मेमोरी और स्क्रीन देखकर प्लान बना रहा है...",
             initialPercent = 10
         )
@@ -248,7 +248,7 @@ object MeeraTaskOrchestrator {
 
             val initialScreen = svc.readScreenElements(60)
             val plan = rest.generatePlan(job.goal, initialScreen)
-            MeeraMission.set(plan.joinToString("\n"))
+            MeeraMission.set(plan.joinToString("\n"), trackInMonitor = false)
 
             var stepIdx = 0
             var executedSteps = 0
