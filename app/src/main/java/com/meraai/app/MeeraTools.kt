@@ -491,6 +491,24 @@ object MeeraTools {
         )
         funcs.put(
             JSONObject()
+                .put("name", "live_web_search")
+                .put("description", "Search live Google/web for latest news, AI news, cricket scores, weather, current prices, or real-time facts and automatically open Meera's visual Information Panel with structured cards and clickable source links.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("query", JSONObject().put("type", "STRING").put("description", "Search query, e.g. 'latest AI news today', 'India cricket match score', 'Jaipur weather today'"))
+                        .put("panel_title", JSONObject().put("type", "STRING").put("description", "Optional short heading for the visual Information Panel")))
+                    .put("required", JSONArray().put("query")))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "open_info_panel")
+                .put("description", "Open or close Meera's visual Information Panel showing the latest live search/news cards.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("open", JSONObject().put("type", "BOOLEAN").put("description", "true to open panel, false to close"))))
+        )
+        funcs.put(
+            JSONObject()
                 .put("name", "open_stock_chart")
                 .put("description", "Open the live stock chart for a company/symbol (e.g., HAL, Tata Motors, Nifty) and visually analyze its trend, support, and resistance levels.")
                 .put("parameters", JSONObject().put("type", "OBJECT")
@@ -1048,6 +1066,20 @@ object MeeraTools {
                         ToolExecutionResult(true, name, "फ़ाइल एक्सपोर्ट करने में दिक्कत आई।", "ERROR: Failed to export file.")
                     }
                 }
+            }
+            "live_web_search" -> {
+                val q = args.optString("query", "").trim()
+                val title = args.optString("panel_title", "").trim()
+                MeeraInfoPanel.searchAndShow(ctx, q, title)
+            }
+            "open_info_panel" -> {
+                val shouldOpen = args.optBoolean("open", true)
+                if (shouldOpen) MeeraInfoPanel.openPanel() else MeeraInfoPanel.closePanel()
+                ToolExecutionResult(
+                    true, name,
+                    if (shouldOpen) "मैंने Information Panel खोल दिया है!" else "Information Panel बंद कर दिया है।",
+                    "VERIFIED_SUCCESS: Info panel visible=$shouldOpen"
+                )
             }
             "open_stock_chart" -> {
                 val stock = args.optString("stock_name", "").trim()

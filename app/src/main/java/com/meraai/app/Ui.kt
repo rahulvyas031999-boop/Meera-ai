@@ -67,6 +67,7 @@ import androidx.compose.material.icons.rounded.TableChart
 import androidx.compose.material.icons.rounded.BatteryChargingFull
 import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.BugReport
+import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.ChatBubble
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Close
@@ -454,6 +455,9 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
                     ) { scope.launch { drawer.close() }; MeeraFileVault.openVaultScreen() }
                     MeeraFileVaultOverlay(vm)
 
+                    DrawerMenuItem("Live Info Panel", Icons.Rounded.Public, "News", p.accentSecondary) {
+                        scope.launch { drawer.close() }; MeeraInfoPanel.openPanel()
+                    }
                     DrawerMenuItem("Debug Log कॉपी करें", Icons.Rounded.BugReport) {
                         scope.launch { drawer.close() }; MeeraDebugLog.copyNow(logCtx)
                     }
@@ -736,6 +740,8 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
             onDismiss = { showKey = false }
         )
     }
+
+    MeeraInfoPanelOverlay()
 
     val exportDialogState by MeeraRepoExporter.state.collectAsState()
     if (showGitHubVault) {
