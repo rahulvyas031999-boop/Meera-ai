@@ -688,7 +688,7 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
 
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     when (currentTab) {
-                        NavTab.HOME -> HomeTabContent(ui, vm, orbStyle, orbSizeDp)
+                        NavTab.HOME -> HomeTabContent(ui, vm, orbStyle, orbSizeDp, onOpenVision = { currentTab = NavTab.VISION }, onOpenYaadein = { currentTab = NavTab.YAADEIN })
                         NavTab.VISION -> VisionCameraTab(vm)
                         NavTab.YAADEIN -> YaadeinTabContent(vm)
                         NavTab.CHAT -> ChatTabContent(ui, vm)
@@ -818,7 +818,7 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
 }
 
 @Composable
-private fun HomeTabContent(ui: UiState, vm: VoiceViewModel, orbStyle: String = "LIQUID_PLASMA", orbSizeDp: Float = 220f) {
+private fun HomeTabContent(ui: UiState, vm: VoiceViewModel, orbStyle: String = "DOT_GLOBE_HUD", orbSizeDp: Float = 220f, onOpenVision: () -> Unit = {}, onOpenYaadein: () -> Unit = {}) {
     val p = LocalMeeraColors.current
     var quickInput by remember { mutableStateOf("") }
     val ctx = LocalContext.current
@@ -896,13 +896,14 @@ private fun HomeTabContent(ui: UiState, vm: VoiceViewModel, orbStyle: String = "
 
         Spacer(Modifier.weight(0.55f))
 
-        MeeraDynamicOrb(
-            state = ui.state,
+        MeeraHudOrbStage(
+            ui = ui,
             vm = vm,
             orbStyle = orbStyle,
-            persona = ui.persona,
+            orbSizeDp = orbSizeDp,
             isDark = p.isDark,
-            modifier = Modifier.size(orbSizeDp.dp)
+            onOpenVision = onOpenVision,
+            onOpenYaadein = onOpenYaadein
         )
 
         Spacer(Modifier.height(10.dp))
