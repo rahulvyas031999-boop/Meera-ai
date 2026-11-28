@@ -748,6 +748,7 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
     }
 
     MeeraInfoPanelOverlay()
+    MeeraAutoVisionOverlay(vm)
 
     val exportDialogState by MeeraRepoExporter.state.collectAsState()
     if (showGitHubVault) {

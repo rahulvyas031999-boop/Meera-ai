@@ -528,6 +528,27 @@ object MeeraTools {
         )
         funcs.put(
             JSONObject()
+                .put("name", "look_through_camera")
+                .put("description", "Automatically open Meera's live floating camera HUD, capture a live frame, stream it, and see/describe what is visible. Use camera='front' when user asks 'kya tum mujhe dekh pa rahi ho?', 'main kaisa lag raha hoon?', or about themselves; use camera='back' when user asks 'mere samne kya hai?', 'ye kya hai?', or to read/see objects in front.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("camera", JSONObject().put("type", "STRING").put("description", "front or back"))
+                        .put("question", JSONObject().put("type", "STRING").put("description", "Exact visual question the user asked"))
+                        .put("keep_open", JSONObject().put("type", "BOOLEAN").put("description", "true to keep live camera HUD open for follow-up visual chat (default true)")))
+                    .put("required", JSONArray().put("camera").put("question")))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "toggle_camera_vision")
+                .put("description", "Turn Meera's floating live camera vision HUD ON/OFF or switch between front and back camera (e.g. 'camera band kar do', 'front camera on karo', 'back camera karo').")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("enable", JSONObject().put("type", "BOOLEAN").put("description", "true to turn camera vision on, false to close/stop it"))
+                        .put("camera", JSONObject().put("type", "STRING").put("description", "front, back, or auto")))
+                    .put("required", JSONArray().put("enable")))
+        )
+        funcs.put(
+            JSONObject()
                 .put("name", "open_stock_chart")
                 .put("description", "Open the live stock chart for a company/symbol (e.g., HAL, Tata Motors, Nifty) and visually analyze its trend, support, and resistance levels.")
                 .put("parameters", JSONObject().put("type", "OBJECT")
@@ -1151,6 +1172,17 @@ object MeeraTools {
                     }
                 }
             }
+            "look_through_camera" -> {
+                val cam = args.optString("camera", "front").trim().ifBlank { "front" }
+                val q = args.optString("question", "Describe clearly what you see right now.").trim()
+                val keep = args.optBoolean("keep_open", true)
+                MeeraVision.lookThroughCameraTool(ctx, cam, q, keep)
+            }
+            "toggle_camera_vision" -> {
+                val en = args.optBoolean("enable", true)
+                val cam = args.optString("camera", "auto").trim().ifBlank { "auto" }
+                MeeraVision.toggleCameraVisionTool(ctx, en, cam)
+            }
             "open_stock_chart" -> {
                 val stock = args.optString("stock_name", "").trim()
                 analyzeStockChartTool(ctx, stock)
@@ -1552,6 +1584,16 @@ object MeeraTools {
                 else -> "auto"
             }
             return MeeraDailyTasks.buildDailyBriefingTool(ctx, slot)
+        }
+        // 0A1. Voice Auto-Camera Vision Direct Fast-Path
+        if (low.contains("कैमरा बंद") || low.contains("camera band") || low.contains("close camera") || low.contains("विज़न बंद") || low.contains("vision band") || low.contains("vision off")) {
+            return MeeraVision.toggleCameraVisionTool(ctx, false, "auto")
+        }
+        if (low.contains("क्या तुम मुझे देख") || low.contains("मुझे देख पा रही") || low.contains("kya tum mujhe dekh") || low.contains("mujhe dekh pa rahi") || low.contains("can you see me") || low.contains("मैं कैसा लग रहा")) {
+            return MeeraVision.lookThroughCameraTool(ctx, "front", raw, keepOpen = true)
+        }
+        if (low.contains("मेरे सामने क्या है") || low.contains("mere samne kya hai") || low.contains("mere saamne kya hai") || low.contains("कैमरा से देखो")) {
+            return MeeraVision.lookThroughCameraTool(ctx, "back", raw, keepOpen = true)
         }
         // 0A. Find My Phone ("मेरा फोन कहाँ है")
         if (low.contains("मेरा फोन कहां") || low.contains("मेरा फ़ोन कहां") || low.contains("मेरा फोन कहाँ") || low.contains("mera phone kahan") || low.contains("phone kahan hai")) {
