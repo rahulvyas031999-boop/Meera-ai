@@ -12,9 +12,28 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
@@ -25,11 +44,31 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
+import kotlin.math.sqrt
+
+private data class GlobeDot3D(val x: Float, val y: Float, val z: Float, val lat: Float)
+
+private object GlobeMeshCache {
+    val dots: List<GlobeDot3D> = buildList {
+        val count = 190
+        val goldenAngle = (PI * (3.0 - sqrt(5.0))).toFloat()
+        for (i in 0 until count) {
+            val y = 1f - (i.toFloat() / (count - 1).toFloat()) * 2f
+            val r = sqrt((1f - y * y).coerceAtLeast(0f))
+            val theta = goldenAngle * i
+            val x = cos(theta) * r
+            val z = sin(theta) * r
+            add(GlobeDot3D(x, y, z, y))
+        }
+    }
+}
 
 object MeeraOrbPrefs {
     private const val PREF_NAME = "meera_orb_settings"
@@ -37,6 +76,7 @@ object MeeraOrbPrefs {
     private const val KEY_SIZE = "orb_size_dp"
 
     val STYLES = listOf(
+        "DOT_GLOBE_HUD" to "3D Dot-Globe HUD (आर्चर / जार्विस)",
         "LIQUID_PLASMA" to "3D Liquid Plasma (लिक्विड ऊर्जा)",
         "CLASSIC" to "Classic 3D Glass Sphere (ग्लास स्फीयर)",
         "CYBER_CORE" to "Jarvis Cyber Core (होलोग्राफिक)",
@@ -45,7 +85,7 @@ object MeeraOrbPrefs {
 
     fun getStyle(ctx: Context): String =
         ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-            .getString(KEY_STYLE, "LIQUID_PLASMA") ?: "LIQUID_PLASMA"
+            .getString(KEY_STYLE, "DOT_GLOBE_HUD") ?: "DOT_GLOBE_HUD"
 
     fun setStyle(ctx: Context, style: String) {
         ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
@@ -62,14 +102,195 @@ object MeeraOrbPrefs {
     }
 
     fun styleLabel(code: String): String =
-        STYLES.firstOrNull { it.first == code }?.second ?: "3D Liquid Plasma"
+        STYLES.firstOrNull { it.first == code }?.second ?: "3D Dot-Globe HUD"
+}
+
+@Composable
+fun MeeraHudOrbStage(
+    ui: UiState,
+    vm: VoiceViewModel,
+    orbStyle: String,
+    orbSizeDp: Float,
+    isDark: Boolean,
+    onOpenVision: () -> Unit = {},
+    onOpenYaadein: () -> Unit = {}
+) {
+    if (orbStyle != "DOT_GLOBE_HUD") {
+        MeeraDynamicOrb(
+            state = ui.state,
+            vm = vm,
+            orbStyle = orbStyle,
+            persona = ui.persona,
+            isDark = isDark,
+            modifier = Modifier.size(orbSizeDp.dp)
+        )
+        return
+    }
+
+    val p = LocalMeeraColors.current
+    val muted by MicMute.flow.collectAsState()
+    val bgTasks by MeeraBackgroundMonitor.tasks.collectAsState()
+    val runningTask = bgTasks.firstOrNull { it.status == "RUNNING" }
+
+    val micActive = !muted && (ui.state == VState.LISTENING || ui.state == VState.USER_SPEAKING || ui.state == VState.ASSISTANT_SPEAKING)
+    val toolActive = ui.state == VState.PROCESSING || runningTask != null
+    val visionActive = MeeraVision.cameraOn
+    val memActive = ui.memoryCount > 0
+
+    val stageHeight = (orbSizeDp + 44f).coerceIn(210f, 310f)
+    val globeSize = (orbSizeDp * 0.90f).coerceIn(145f, 250f)
+
+    val lineBase = if (isDark) Color(0xFF38BDF8) else p.accentPrimary
+
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(stageHeight.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(Modifier.fillMaxSize()) {
+            val cx = size.width / 2f
+            val cy = size.height / 2f
+            val orbR = (globeSize.dp.toPx() / 2f) * 0.66f
+            val strokeW = 1.4.dp.toPx()
+
+            fun drawHudBranch(
+                dirX: Float,
+                dirY: Float,
+                active: Boolean,
+                activeCol: Color
+            ) {
+                val col = if (active) activeCol.copy(alpha = 0.85f) else lineBase.copy(alpha = if (isDark) 0.28f else 0.32f)
+                val start = Offset(cx + dirX * orbR * 0.85f, cy + dirY * orbR * 0.65f)
+                val elbow = Offset(cx + dirX * (size.width * 0.30f), cy + dirY * (size.height * 0.33f))
+                val end = Offset(cx + dirX * (size.width * 0.41f), elbow.y)
+                drawLine(col, start, elbow, strokeW, StrokeCap.Round)
+                drawLine(col, elbow, end, strokeW, StrokeCap.Round)
+                drawCircle(col, radius = if (active) 3.4.dp.toPx() else 2.2.dp.toPx(), center = start)
+                drawCircle(col, radius = if (active) 3.4.dp.toPx() else 2.2.dp.toPx(), center = end)
+            }
+
+            drawHudBranch(-1f, -1f, micActive, Color(0xFF2EE6A8))
+            drawHudBranch(1f, -1f, toolActive, Color(0xFFF59E0B))
+            drawHudBranch(-1f, 1f, visionActive, Color(0xFF38BDF8))
+            drawHudBranch(1f, 1f, memActive, Color(0xFFA855F7))
+        }
+
+        MeeraDynamicOrb(
+            state = ui.state,
+            vm = vm,
+            orbStyle = "DOT_GLOBE_HUD",
+            persona = ui.persona,
+            isDark = isDark,
+            modifier = Modifier.size(globeSize.dp)
+        )
+
+        HudNodePill(
+            label = "MIC",
+            sub = when {
+                muted -> "MUTE"
+                ui.state == VState.USER_SPEAKING -> "VOICE"
+                micActive -> "LIVE"
+                else -> "IDLE"
+            },
+            active = micActive,
+            activeColor = Color(0xFF2EE6A8),
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(top = 6.dp),
+            onClick = { if (ui.state != VState.IDLE) vm.toggleMute() }
+        )
+
+        HudNodePill(
+            label = "TOOL",
+            sub = if (runningTask != null) "${runningTask.percent}%" else if (toolActive) "RUN" else "READY",
+            active = toolActive,
+            activeColor = Color(0xFFF59E0B),
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 6.dp),
+            onClick = { MeeraBackgroundMonitor.openMonitor() }
+        )
+
+        HudNodePill(
+            label = "VISION",
+            sub = if (visionActive) "ON" else "SCAN",
+            active = visionActive,
+            activeColor = Color(0xFF38BDF8),
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(bottom = 6.dp),
+            onClick = onOpenVision
+        )
+
+        HudNodePill(
+            label = "MEMORY",
+            sub = "${ui.memoryCount}",
+            active = memActive,
+            activeColor = Color(0xFFA855F7),
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(bottom = 6.dp),
+            onClick = onOpenYaadein
+        )
+    }
+}
+
+@Composable
+private fun HudNodePill(
+    label: String,
+    sub: String,
+    active: Boolean,
+    activeColor: Color,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val p = LocalMeeraColors.current
+    val borderCol = if (active) activeColor.copy(alpha = 0.85f) else p.cardBorder
+    val bgCol = if (active) activeColor.copy(alpha = if (p.isDark) 0.16f else 0.12f) else p.card.copy(alpha = 0.90f)
+
+    Surface(
+        color = bgCol,
+        shape = RoundedCornerShape(12.dp),
+        modifier = modifier
+            .border(1.dp, borderCol, RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+    ) {
+        Row(
+            Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp)
+        ) {
+            Box(
+                Modifier
+                    .size(7.dp)
+                    .clip(CircleShape)
+                    .background(if (active) activeColor else p.textSecondary.copy(alpha = 0.45f))
+            )
+            Column {
+                Text(
+                    label,
+                    color = if (active) activeColor else p.textSecondary,
+                    fontSize = 9.5.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = 0.6.sp
+                )
+                Text(
+                    sub,
+                    color = p.textPrimary,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    }
 }
 
 @Composable
 fun MeeraDynamicOrb(
     state: VState,
     vm: VoiceViewModel,
-    orbStyle: String = "LIQUID_PLASMA",
+    orbStyle: String = "DOT_GLOBE_HUD",
     persona: String = "Meera",
     isDark: Boolean = true,
     modifier: Modifier = Modifier
@@ -87,7 +308,7 @@ fun MeeraDynamicOrb(
         VState.ASSISTANT_SPEAKING -> when (persona) {
             "Jarvis" -> Color(0xFF0EA5E9)
             "Rudra" -> Color(0xFFF97316)
-            else -> Color(0xFF8B5CF6)
+            else -> Color(0xFF38BDF8)
         }
         VState.ERROR -> Color(0xFFEF4444)
         VState.LISTENING -> Color(0xFF06B6D4)
@@ -104,9 +325,9 @@ fun MeeraDynamicOrb(
         VState.ASSISTANT_SPEAKING -> when (persona) {
             "Jarvis" -> Color(0xFF6366F1)
             "Rudra" -> Color(0xFFEF4444)
-            else -> Color(0xFF06B6D4)
+            else -> Color(0xFF2EE6A8)
         }
-        else -> Color(0xFFA855F7)
+        else -> Color(0xFF38BDF8)
     }
 
     val primaryColor by animateColorAsState(targetPrimary, tween(400), label = "p_col")
@@ -122,7 +343,7 @@ fun MeeraDynamicOrb(
     val spin by inf.animateFloat(
         initialValue = 0f,
         targetValue = 360f,
-        animationSpec = infiniteRepeatable(tween(6400, easing = LinearEasing), RepeatMode.Restart),
+        animationSpec = infiniteRepeatable(tween(7200, easing = LinearEasing), RepeatMode.Restart),
         label = "spin"
     )
     val breathe by inf.animateFloat(
@@ -142,12 +363,139 @@ fun MeeraDynamicOrb(
 
     Canvas(modifier = modifier) {
         when (orbStyle) {
+            "DOT_GLOBE_HUD" -> drawDotGlobeHudOrb(primaryColor, secondaryColor, lvl, phase, spin, breathe, state, activeRipple, isDark)
             "LIQUID_PLASMA" -> drawLiquidPlasmaOrb(primaryColor, secondaryColor, lvl, phase, spin, breathe, state, activeRipple, isDark)
             "CYBER_CORE" -> drawCyberCoreOrb(primaryColor, secondaryColor, lvl, spin, breathe, activeRipple, isDark)
             "SOLAR_NEBULA" -> drawNebulaOrb(primaryColor, secondaryColor, lvl, phase, breathe, isDark)
             else -> drawClassicEnhancedOrb(primaryColor, secondaryColor, lvl, spin, breathe, ring, state, activeRipple, isDark)
         }
     }
+}
+
+private fun DrawScope.drawDotGlobeHudOrb(
+    c1: Color,
+    c2: Color,
+    lvl: Float,
+    phase: Float,
+    spin: Float,
+    breathe: Float,
+    state: VState,
+    rippling: Boolean,
+    isDark: Boolean
+) {
+    val c = center
+    val baseR = size.minDimension / 2f * 0.62f
+    val r = baseR * (1f + 0.035f * breathe + 0.22f * lvl)
+
+    // 1. Ambient Holographic Core Glow
+    drawCircle(
+        brush = Brush.radialGradient(
+            colors = listOf(
+                c2.copy(alpha = if (isDark) 0.34f else 0.22f),
+                c1.copy(alpha = if (isDark) 0.16f else 0.10f),
+                Color.Transparent
+            ),
+            center = c,
+            radius = r * 1.55f
+        ),
+        radius = r * 1.55f,
+        center = c
+    )
+
+    // 2. Outer Calibration HUD Ring + Segmented Arcs
+    val outerR = r * 1.18f
+    drawCircle(
+        color = c1.copy(alpha = if (isDark) 0.22f else 0.28f),
+        radius = outerR,
+        center = c,
+        style = Stroke(width = 1.dp.toPx())
+    )
+    rotate(degrees = spin * (if (state == VState.PROCESSING) 1.8f else 0.85f), pivot = c) {
+        for (i in 0 until 4) {
+            drawArc(
+                color = if (i % 2 == 0) c2.copy(alpha = 0.85f) else c1.copy(alpha = 0.65f),
+                startAngle = i * 90f + 12f,
+                sweepAngle = if (rippling) 44f else 30f,
+                useCenter = false,
+                topLeft = c - Offset(outerR, outerR),
+                size = Size(outerR * 2f, outerR * 2f),
+                style = Stroke(width = (2.2f + lvl * 1.8f).dp.toPx(), cap = StrokeCap.Round)
+            )
+        }
+    }
+
+    val innerHudR = r * 1.07f
+    rotate(degrees = -spin * 1.15f, pivot = c) {
+        for (t in 0 until 24) {
+            val ang = (t * 15.0 * PI / 180.0).toFloat()
+            val tickLen = if (t % 3 == 0) 6.dp.toPx() else 3.dp.toPx()
+            val p1 = c + Offset(cos(ang) * (innerHudR - tickLen), sin(ang) * (innerHudR - tickLen))
+            val p2 = c + Offset(cos(ang) * innerHudR, sin(ang) * innerHudR)
+            drawLine(
+                color = c2.copy(alpha = if (t % 3 == 0) 0.65f else 0.28f),
+                start = p1,
+                end = p2,
+                strokeWidth = 1.2.dp.toPx(),
+                cap = StrokeCap.Round
+            )
+        }
+    }
+
+    // 3. 3D Rotating Fibonacci Dot-Globe (Audio Reactive)
+    val rotY = (spin * PI / 180.0).toFloat()
+    val rotX = 0.34f + 0.10f * sin(phase)
+    val cosY = cos(rotY)
+    val sinY = sin(rotY)
+    val cosX = cos(rotX)
+    val sinX = sin(rotX)
+
+    val dotBasePx = (2.1f + lvl * 1.1f).dp.toPx()
+
+    for (d in GlobeMeshCache.dots) {
+        val wave = if (rippling) 1f + lvl * 0.18f * sin(d.lat * 5.5f + phase * 2.2f) else 1f
+        val x0 = d.x * wave
+        val y0 = d.y * wave
+        val z0 = d.z * wave
+
+        val x1 = x0 * cosY + z0 * sinY
+        val z1 = -x0 * sinY + z0 * cosY
+        val y2 = y0 * cosX - z1 * sinX
+        val z2 = y0 * sinX + z1 * cosX
+
+        val depth = ((z2 + 1.15f) / 2.3f).coerceIn(0.08f, 1f)
+        val persp = 0.86f + 0.24f * depth
+        val sx = c.x + x1 * r * persp
+        val sy = c.y + y2 * r * persp
+
+        val dotCol = if (d.lat > 0f) c2 else c1
+        val alpha = (0.14f + 0.86f * depth * depth).coerceIn(0.12f, 1f)
+        val dotR = dotBasePx * (0.45f + 0.78f * depth)
+
+        if (depth > 0.72f) {
+            drawCircle(
+                color = dotCol.copy(alpha = alpha * 0.28f),
+                radius = dotR * 2.1f,
+                center = Offset(sx, sy)
+            )
+        }
+        drawCircle(
+            color = if (depth > 0.86f && rippling) Color.White.copy(alpha = alpha * 0.92f) else dotCol.copy(alpha = alpha),
+            radius = dotR,
+            center = Offset(sx, sy)
+        )
+    }
+
+    // 4. Center Reactor Core Pulse
+    val coreR = r * (0.19f + 0.14f * lvl + 0.03f * breathe)
+    drawCircle(
+        brush = Brush.radialGradient(
+            colors = listOf(Color.White.copy(alpha = 0.90f), c2.copy(alpha = 0.70f), Color.Transparent),
+            center = c,
+            radius = coreR * 2.1f
+        ),
+        radius = coreR * 2.1f,
+        center = c
+    )
 }
 
 private fun DrawScope.drawOrbParticles(c: Color, centerPt: Offset, radius: Float, phase: Float, isDark: Boolean) {
