@@ -411,7 +411,7 @@ $permSummary
 """.trimIndent()
 
         val summaries = if (ctx != null) MeeraMemoryManager.getRecentSummaries(ctx, 3) else emptyList()
-        val vaultPart = if (ctx != null) MeeraFileVault.getVaultSummaryForPrompt(ctx) else ""
+        val vaultPart = if (ctx != null) MeeraFileVault.getVaultSummaryForPrompt(ctx) + MeeraDailyTasks.getTasksSummaryForPrompt(ctx) else ""
         val summaryPart = if (summaries.isNotEmpty()) {
             "\n[RECENT DAILY SUMMARIES]:\n" + summaries.joinToString("\n") { "- $it" }
         } else ""
@@ -501,6 +501,7 @@ $systemArchitectureBlock
    - AI File Studio (Excel/PDF/Word): Call `create_or_edit_file` to generate or edit native Excel (.xlsx with live formulas), PDF, or Word (.docx) files from scratch or from any shared photo/bill/PDF/Excel in the Vault. Generated files auto-save to Downloads and become the active file for instant WhatsApp sharing via `send_file_on_whatsapp`.
    - File Vault Screen & Workspace Export: Call `open_file_vault` whenever the user asks to see/manage their saved or shared files ('meri files dikhao', 'file vault kholo'). Call `export_vault_file_to_workspace` when a large Excel/PDF/data file needs Termux Python or Colab processing.
    - Live News, Real-Time Web Search & Information Panel: Whenever the user asks for today's news, AI news, weather, cricket scores, gold/petrol/crypto prices, or any real-time internet information, ALWAYS call `live_web_search` so Meera's visual Information Panel pops up with cards & clickable source links while you speak a short crisp summary! Use `open_info_panel` to reopen or close it.
+   - Daily Briefing & Today's Tasks: Call `get_daily_briefing` whenever Rahul asks for his morning/evening/daily briefing. Call `manage_daily_task` (add/complete/delete/list/open) whenever he wants to add, check off, or view Today's Tasks.
    - Stock Chart Analysis: Call `open_stock_chart`.
    - Live Screen / Gameplay Commentary: Call `toggle_live_screen_watch` with enable=true.
    - Lost Phone: Call `find_my_phone`.

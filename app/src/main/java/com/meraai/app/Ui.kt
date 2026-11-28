@@ -67,6 +67,7 @@ import androidx.compose.material.icons.rounded.TableChart
 import androidx.compose.material.icons.rounded.BatteryChargingFull
 import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.BugReport
+import androidx.compose.material.icons.rounded.TaskAlt
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.ChatBubble
 import androidx.compose.material.icons.rounded.ChevronRight
@@ -458,6 +459,9 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
                     DrawerMenuItem("Live Info Panel", Icons.Rounded.Public, "News", p.accentSecondary) {
                         scope.launch { drawer.close() }; MeeraInfoPanel.openPanel()
                     }
+                    DrawerMenuItem("Today's Tasks", Icons.Rounded.TaskAlt, "Daily", p.accentSuccess) {
+                        scope.launch { drawer.close() }; MeeraDailyTasks.openDialog()
+                    }
                     DrawerMenuItem("Debug Log कॉपी करें", Icons.Rounded.BugReport) {
                         scope.launch { drawer.close() }; MeeraDebugLog.copyNow(logCtx)
                     }
@@ -733,6 +737,8 @@ fun Dashboard(vm: VoiceViewModel, onMic: () -> Unit, onOpenSetup: () -> Unit = {
         }
     }
 
+    MeeraDailyTasksDialog(vm)
+
     if (showKey) {
         KeyDialog(
             hasKey = ui.hasKey,
@@ -845,6 +851,9 @@ private fun HomeTabContent(ui: UiState, vm: VoiceViewModel, orbStyle: String = "
                 }
             }
         }
+
+        Spacer(Modifier.height(8.dp))
+        HomeDailyTasksCard(vm)
 
         val deepSleepHome by MeeraWake.deepSleepFlow.collectAsState()
         if (deepSleepHome) {

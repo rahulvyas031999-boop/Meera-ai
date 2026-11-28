@@ -509,6 +509,25 @@ object MeeraTools {
         )
         funcs.put(
             JSONObject()
+                .put("name", "get_daily_briefing")
+                .put("description", "Give Rahul his Morning, Afternoon, Evening, or Night Daily Briefing combining Today's Tasks checklist, unread notifications, File Vault, and background tasks, and open the visual briefing cards.")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("period", JSONObject().put("type", "STRING").put("description", "auto, morning, afternoon, evening, or night"))))
+        )
+        funcs.put(
+            JSONObject()
+                .put("name", "manage_daily_task")
+                .put("description", "Add, mark done, delete, list, or open Rahul's Today's Tasks checklist (e.g. 'aaj ke task me gym add karo', 'gym wala task done kar do', 'aaj ke tasks dikhao').")
+                .put("parameters", JSONObject().put("type", "OBJECT")
+                    .put("properties", JSONObject()
+                        .put("action", JSONObject().put("type", "STRING").put("description", "add, complete, delete, list, or open"))
+                        .put("task_title", JSONObject().put("type", "STRING").put("description", "Task description or keyword to match"))
+                        .put("time_hint", JSONObject().put("type", "STRING").put("description", "Optional time like '6 PM' or 'shaam 7 baje'")))
+                    .put("required", JSONArray().put("action")))
+        )
+        funcs.put(
+            JSONObject()
                 .put("name", "open_stock_chart")
                 .put("description", "Open the live stock chart for a company/symbol (e.g., HAL, Tata Motors, Nifty) and visually analyze its trend, support, and resistance levels.")
                 .put("parameters", JSONObject().put("type", "OBJECT")
@@ -1081,6 +1100,57 @@ object MeeraTools {
                     "VERIFIED_SUCCESS: Info panel visible=$shouldOpen"
                 )
             }
+            "get_daily_briefing" -> {
+                val period = args.optString("period", "auto").trim().ifBlank { "auto" }
+                MeeraDailyTasks.buildDailyBriefingTool(ctx, period)
+            }
+            "manage_daily_task" -> {
+                val act = args.optString("action", "list").trim().lowercase()
+                val title = args.optString("task_title", "").trim()
+                val timeHint = args.optString("time_hint", "").trim()
+                when (act) {
+                    "add" -> {
+                        val added = MeeraDailyTasks.addTask(ctx, title, timeHint)
+                        if (added != null) {
+                            val tNote = if (added.timeHint.isNotBlank()) " (${added.timeHint})" else ""
+                            ToolExecutionResult(true, name, "हो गया! मैंने '${added.title}'$tNote को आज के टास्क में जोड़ दिया है।", "VERIFIED_SUCCESS: Added task '${added.title}'$tNote.")
+                        } else {
+                            ToolExecutionResult(true, name, "टास्क का नाम स्पष्ट बताइए ताकि जोड़ सकूँ।", "FAILED: empty task title")
+                        }
+                    }
+                    "complete", "done" -> {
+                        val doneItem = MeeraDailyTasks.markDoneByQuery(ctx, title)
+                        if (doneItem != null) {
+                            ToolExecutionResult(true, name, "बढ़िया! '${doneItem.title}' को पूरा (Done) मार्क कर दिया है।", "VERIFIED_SUCCESS: Completed task '${doneItem.title}'.")
+                        } else {
+                            ToolExecutionResult(true, name, "'$title' से मिलता कोई टास्क लिस्ट में नहीं मिला।", "FAILED: Task '$title' not found.")
+                        }
+                    }
+                    "delete", "remove" -> {
+                        val del = MeeraDailyTasks.deleteByQuery(ctx, title)
+                        if (del != null) {
+                            ToolExecutionResult(true, name, "'${del.title}' को टास्क लिस्ट से हटा दिया है।", "VERIFIED_SUCCESS: Deleted task '${del.title}'.")
+                        } else {
+                            ToolExecutionResult(true, name, "'$title' नाम का कोई टास्क नहीं मिला।", "FAILED: Task '$title' not found.")
+                        }
+                    }
+                    "open" -> {
+                        MeeraDailyTasks.ensureLoaded(ctx)
+                        MeeraDailyTasks.openDialog()
+                        ToolExecutionResult(true, name, "मैंने आज के टास्क की लिस्ट खोल दी है!", "VERIFIED_SUCCESS: Opened Today's Tasks dialog.")
+                    }
+                    else -> {
+                        MeeraDailyTasks.ensureLoaded(ctx)
+                        val all = MeeraDailyTasks.tasksFlow.value
+                        val pending = all.filterNot { it.done }
+                        MeeraDailyTasks.openDialog()
+                        val msg = if (all.isEmpty()) "अभी आज की लिस्ट में कोई टास्क नहीं है।"
+                        else if (pending.isEmpty()) "शाबाश! आज के सारे ${all.size} टास्क पूरे हो चुके हैं।"
+                        else "आज के ${all.size} में से ${pending.size} टास्क बाकी हैं: ${pending.take(4).joinToString(", ") { it.title }}।"
+                        ToolExecutionResult(true, name, msg, "VERIFIED_SUCCESS: Listed tasks -> $msg")
+                    }
+                }
+            }
             "open_stock_chart" -> {
                 val stock = args.optString("stock_name", "").trim()
                 analyzeStockChartTool(ctx, stock)
@@ -1472,6 +1542,16 @@ object MeeraTools {
         // 00B. Voice Unlock Screen ("अनलॉक करो" / "लॉक खोलो")
         if (low == "अनलॉक करो" || low == "अनलॉक कर दो" || low == "लॉक खोलो" || low == "फोन अनलॉक करो" || low == "unlock karo" || low == "unlock phone") {
             return unlockPhoneScreenTool(ctx)
+        }
+        // 0A0. Direct Voice Daily Briefing ("मेरा डेली/इवनिंग/मॉर्निंग ब्रीफिंग बताओ")
+        if (low.contains("ब्रीफिंग") || low.contains("briefing")) {
+            val slot = when {
+                low.contains("मॉर्निंग") || low.contains("सुबह") || low.contains("morning") -> "morning"
+                low.contains("इवनिंग") || low.contains("शाम") || low.contains("evening") -> "evening"
+                low.contains("नाइट") || low.contains("रात") || low.contains("night") -> "night"
+                else -> "auto"
+            }
+            return MeeraDailyTasks.buildDailyBriefingTool(ctx, slot)
         }
         // 0A. Find My Phone ("मेरा फोन कहाँ है")
         if (low.contains("मेरा फोन कहां") || low.contains("मेरा फ़ोन कहां") || low.contains("मेरा फोन कहाँ") || low.contains("mera phone kahan") || low.contains("phone kahan hai")) {
